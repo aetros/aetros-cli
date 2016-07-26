@@ -1,7 +1,7 @@
 # AETROS CLI
 
 <p align="center">
-<img src="https://avatars2.githubusercontent.com/u/17340113?v=3&s=200 />
+<img src="https://avatars2.githubusercontent.com/u/17340113?v=3&s=200" />
 </p>
 
 This package is a python application you need to use when you want to train your deep artificial neural networks locally.
