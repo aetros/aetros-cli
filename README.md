@@ -65,11 +65,11 @@ Theano supports NVIDIA GPUs starting with 600 model.
 
 Installation:
 
-# Install CUDA https://developer.nvidia.com/cuda-downloads (we assume you have 7.5)
-# Add cuda to your $PATH
-## Mac OSX: `export PATH=$PATH:/Developer/NVIDIA/CUDA-7.5/bin` (place it into `~/.bash_profile` or `~/.zshrc` if you use zsh - restart terminal after change)
-## Linux: `export PATH=$PATH:/usr/local/cuda-7.5/bin` (place it into `~/.bash_profile` or `~/.zshrc` if you use zsh - restart terminal after change)
-# Run aetros with `--gpu`: `API_KEY='MY_API_KEY' aetros start my/my-network --gpu`
+* Install CUDA https://developer.nvidia.com/cuda-downloads (we assume you have 7.5)
+* Add cuda to your $PATH
+ * Mac OSX: `export PATH=$PATH:/Developer/NVIDIA/CUDA-7.5/bin` (place it into `~/.bash_profile` or `~/.zshrc` if you use zsh - restart terminal after change)
+ * Linux: `export PATH=$PATH:/usr/local/cuda-7.5/bin` (place it into `~/.bash_profile` or `~/.zshrc` if you use zsh - restart terminal after change)
+* Run aetros with `--gpu`: `API_KEY='MY_API_KEY' aetros start my/my-network --gpu`
 
 ### CPU Multithreading
 
