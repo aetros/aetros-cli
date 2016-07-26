@@ -1,4 +1,4 @@
-# AETROS Worker
+# AETROS CLI
 
 This package is a python application you need to use when you want to train your deep artificial neural networks locally.
 
@@ -61,7 +61,7 @@ In front of each command you need to provide `API_KEY="mykey"` as environment va
 ### GPU
 
 If you have setup CUDA correctly, you can train on NVIDIA GPUs to improve drastically the training speed.
-Theano supports NVIDIA GPUs starting with 600 model.
+Theano supports NVIDIA GPUs starting with Kepla cores (>600 models).
 
 Installation:
 
@@ -73,10 +73,10 @@ Installation:
 
 ### CPU Multithreading
 
-Theano supports multithreading to speed up training, however you need to make sure you have OpenMP installed.
+Theano supports multithreading to speed up training. To use it you need to make sure you have OpenMP installed.
 
 To activate multithreading you can pass `--mp 4` to say it should use 4 threads.
-This sets the `THEANO_FLAGS` and `OMP_NUM_THREADS` accordingly and may overwrites your settings in `~/.theanorc`.
+This sets the `THEANO_FLAGS` and `OMP_NUM_THREADS` accordingly and may overwrite your settings in `~/.theanorc`.
 
 ```bash
 $ API_KEY='MY_API_KEY' aetros start my/my-network --mp 4
