@@ -1,12 +1,16 @@
 # AETROS CLI
 
+<p align="center">
+<img src="https://avatars2.githubusercontent.com/u/17340113?v=3&s=200 />
+</p>
+
 This package is a python application you need to use when you want to train your deep artificial neural networks locally.
 
 It basically retrieves all model information from AETROS, compiles and starts the training, attached with a special logger
 callback that sends all information to AETROS Trainer so you can monitor the whole training.
 
 It also contains dataset provider (`aetros.auto_dataset`, with downloader, generator, in-memory iterator and augmentor) for image datasets
-which is used if you have a image dataset configured in AETROS TRAINER.
+which is used if you have a image dataset configured in AETROS Trainer.
 
 More information at: http://aetros.com/trainer
 
@@ -48,7 +52,7 @@ $ API_KEY='MY_API_KEY' aetros start x82d04
 > Training 'x82d0r' restarted. Open http://aetros.com/trainer/app?training=x82d0r to monitor the training.
 ```
 
-Use CTRL+C stop gracefully stop the job. Press CTRL+C again to force shutdown.
+Use CTRL+C to stop gracefully the job (it will sync latest monitoring information, insights and weights). Press CTRL+C again to force shutdown.
 
 Please note: If you use image datasets AETROS is downloading all images to current working directory at `./datasets/`.
 Also you'll find after you handle with networks two additional folders in the current working directory `./networks` and `./weights`.
