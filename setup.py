@@ -3,7 +3,7 @@ from setuptools import find_packages
 
 setup(name='aetros',
       version='0.1.0',
-      description='Deep Learning end-to-end application: Worker',
+      description='Console application to manage deep neural network trainings in AETROS TRAINER',
       author='Marc J. Schmidt',
       author_email='marc@marcjschmidt.de',
       url='https://github.com/aetros/aetros-cli',
