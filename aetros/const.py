@@ -1,5 +1,5 @@
 __version__ = '0.1.0'
-__prog__ = "API_KEY='key' python -m aetros"
+__prog__ = "API_KEY='key' aetros"
 
 class bcolors:
     HEADER = '\033[95m'

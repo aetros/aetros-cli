@@ -49,7 +49,7 @@ def parseopts(args):
     if len(args) == 0:
 
         description = [''] + ['%-27s %s' % (i, j) for i, j in command_summaries]
-        print("usage: API_KEY='key' python -m aetros [command]\n")
+        print("usage: API_KEY='key' aetros [command]\n")
         print('Please don not forget to provide API_KEY as environment variable.\n\nPossible commands:\n' + ('\n'.join(description)))
 
         sys.exit(1)

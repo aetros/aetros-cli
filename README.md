@@ -25,8 +25,8 @@ If you want to install current master (which is recommended during the closed-be
 ```bash
 $ git clone https://github.com/aetros/aetros-cli.git
 $ cd aetros-cli
-$ python setup.py
-$ python -m aetros
+$ python setup.py install
+$ aetros --help
 ```
 
 You can alternatively to `git clone` download the zip at https://github.com/aetros/aetros-cli/archive/master.zip.

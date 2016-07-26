@@ -9,6 +9,9 @@ setup(name='aetros',
       url='https://github.com/aetros/aetros-cli',
       download_url='https://github.com/aetros/worker/tarball/0.1.0',
       license='MIT',
+          entry_points = {
+              'console_scripts': ['aetros = aetros:main'],
+          },
       install_requires=(
             'keras>=1.0.6',
             'requests',
