@@ -2,7 +2,7 @@ from setuptools import setup
 from setuptools import find_packages
 
 setup(name='aetros',
-      version='0.1.0',
+      version='0.1.1',
       description='Console application to manage deep neural network trainings in AETROS TRAINER',
       author='Marc J. Schmidt',
       author_email='marc@marcjschmidt.de',
