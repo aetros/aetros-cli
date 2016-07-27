@@ -54,7 +54,7 @@ class Trainer():
     def set_status(self, status):
         self.lock.acquire()
 
-        print 'Job status changed to %s ' % (status,)
+        print 'Training status changed to %s ' % (status,)
         self.aetros_backend.job_add_status('status', status)
 
         self.lock.release()

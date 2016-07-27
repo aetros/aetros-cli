@@ -25,17 +25,17 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
     aetros_backend = AetrosBackend(job_id)
 
     if '/' in job_id:
-        print("create job for %s ..." % (job_id,))
+        print("...")
         response = aetros_backend.create_job(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
         if response.status_code != 200:
             print("Could not create job: %s " % (response.content,))
             exit(1)
 
         job_id = response.json()
-        print("Training '%d' created and started. Open http://%d/trainer/app?training=%d to monitor the training." %
+        print("Training '%s' created and started. Open http://%s/trainer/app?training=%s to monitor the training." %
               (job_id, aetros_backend.host, job_id))
     else:
-        print("Training '%d' restarted. Open http://%d/trainer/app?training=%d to monitor the training." %
+        print("Training '%s' restarted. Open http://%s/trainer/app?training=%s to monitor the training." %
               (job_id, aetros_backend.host, job_id))
 
     aetros_backend.job_id = job_id
@@ -86,10 +86,10 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
     signal.signal(signal.SIGINT, ctrlc)
 
     try:
-        print("Setup job")
+        print("Setup training")
         network.job_prepare(job)
 
-        print("Start job")
+        print("Start training")
         network.job_start(job_model, trainer, keras_logger, general_logger)
 
         job['running'] = False
