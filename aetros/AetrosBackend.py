@@ -41,7 +41,7 @@ class AetrosBackend:
         self.queueLock = Lock()
         self.active_syncer = True
 
-        self.host = 'dev.aetros.com'
+        self.host = 'aetros.com'
 
         self.thread = Thread(target=self.syncer)
         self.thread.daemon = True
