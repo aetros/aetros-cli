@@ -18,6 +18,9 @@ More information at: http://aetros.com/trainer
 
 ```bash
 $ pip install aetros
+
+# update
+$ pip install aetros --upgrade
 ```
 
 Requirement: Python v2.x, Theano
