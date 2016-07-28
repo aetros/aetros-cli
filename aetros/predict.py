@@ -77,8 +77,8 @@ def predict(job_id, file_path, insights=False):
     output_dataset = job_model.get_dataset(first_output_layer['datasetId'])
 
     if output_dataset:
-        if 'categories' in job['info']:
-            trainer.output_size = len(job['info']['categories'])
+        if 'classes' in job['info']:
+            trainer.output_size = len(job['info']['classes'])
 
     model_provider = job_model.get_model_provider()
     model = model_provider.get_model(trainer)
@@ -117,13 +117,13 @@ def predict(job_id, file_path, insights=False):
     image = image / 255
 
     input = {}
-    for input_layer in model.inputs:
+    for input_layer in model.input_layers:
         input[input_layer.name] = np.array([image])
 
     print("Start prediction ...")
     prediction = model.predict(input)
 
-    output = dict(zip(job['info']['categories'], prediction[0].tolist()))
+    output = dict(zip(job['info']['classes'], prediction[0].tolist()))
     output = sorted(output.items(), reverse=True, key=lambda (k, v): v)
     print(json.dumps(output, indent=4))
 

@@ -17,7 +17,7 @@ from PIL import Image
 from aetros.utils import get_option
 from network import ensure_dir
 
-from threading import Thread
+from threading import Thread, Lock
 from Queue import Queue
 
 def download_image(url, path):
@@ -64,7 +64,7 @@ class ImageDownloaderWorker(Thread):
             return
 
         local_name = image['id']
-        local_image_path = '%s/%s' % (self.trainer.jobModel.get_dataset_downloads_dir(self.dataset), local_name)
+        local_image_path = '%s/%s' % (self.trainer.job_model.get_dataset_downloads_dir(self.dataset), local_name)
 
         try:
             ensure_dir(os.path.dirname(local_image_path))
@@ -164,13 +164,14 @@ class ImageReadWorker(Thread):
             return
 
 class InMemoryDataGenerator():
-    def __init__(self, datagen, images, categories_count, batch_size):
+    def __init__(self, datagen, images, classes_count, batch_size):
         self.index = -1
         self.datagen = datagen
         self.images = images
         random.shuffle(self.images)
+        self.lock = Lock()
 
-        self.categories_count = categories_count
+        self.classes_count = classes_count
         self.batch_size = batch_size
 
     def __iter__(self):
@@ -182,11 +183,12 @@ class InMemoryDataGenerator():
 
         for i in range(self.batch_size):
 
-            self.index += 1
-            # reset iterator if necessary
-            if self.index == len(self.images):
-                self.index = 0
-                random.shuffle(self.images)
+            with self.lock:
+                self.index += 1
+                # reset iterator if necessary
+                if self.index == len(self.images):
+                    self.index = 0
+                    random.shuffle(self.images)
 
             image, class_idx = self.images[self.index]
             image = np.copy(image) # we need to copy it, otherwise we'd operate on the same object again and again
@@ -199,7 +201,7 @@ class InMemoryDataGenerator():
 
             batch_x.append(image)
 
-            y = np.zeros((self.categories_count,), dtype='float32')
+            y = np.zeros((self.classes_count,), dtype='float32')
             y[class_idx] = 1.
             batch_y.append(y)
 
@@ -240,13 +242,13 @@ def read_images_in_memory(job_config, dataset, node, trainer):
     images = []
     max = 0
 
-    path = trainer.jobModel.get_dataset_downloads_dir(dataset)
+    path = trainer.job_model.get_dataset_downloads_dir(dataset)
     if 'path' in dataset['config']:
         path = dataset['config']['path']
 
-    categories_count = 0
+    classes_count = 0
     category_map = {}
-    categories = {}
+    classes = []
 
     try:
         for i in range(concurrent):
@@ -260,12 +262,12 @@ def read_images_in_memory(job_config, dataset, node, trainer):
                     if os.path.isdir(path+'/'+validation_or_training+'/'+category_name):
 
                         if category_name not in category_map:
-                            category_map[category_name] = categories_count
+                            category_map[category_name] = classes_count
                             if 'category_' in category_name:
                                 category_map[category_name] = int(category_name.replace('category_', ''))
 
-                            categories[categories_count] = category_name
-                            categories_count += 1
+                            classes.append(category_name)
+                            classes_count += 1
 
                         for id in os.listdir(path+'/'+validation_or_training+'/'+category_name):
                             file_path = os.path.join(path, validation_or_training, category_name, id)
@@ -289,21 +291,21 @@ def read_images_in_memory(job_config, dataset, node, trainer):
         augmentation = bool(get_option(dataset_config, 'augmentation', False))
         if augmentation:
             train_datagen = get_image_data_augmentor_from_dataset(dataset)
-        train = InMemoryDataGenerator(train_datagen, train_images, categories_count, job_config['settings']['batchSize'])
+        train = InMemoryDataGenerator(train_datagen, train_images, classes_count, job_config['settings']['batchSize'])
 
-        test = InMemoryDataGenerator(None, test_images, categories_count, job_config['settings']['batchSize'])
-
-        print ("Found %d categories, %d images (%d in training [%saugmented], %d in validation). Read all images into memory from %s" %
-               (categories_count, max, len(train_images), 'not ' if augmentation is False else '', len(test_images), path))
-        pprint(category_map)
+        test = InMemoryDataGenerator(None, test_images, classes_count, job_config['settings']['batchSize'])
 
         nb_sample = len(train_images)
-        trainer.samples_per_epoch = nb_sample
+        trainer.set_generator_training_nb(nb_sample)
+        trainer.set_generator_validation_nb(len(test_images))
 
-        trainer.nb_val_samples = len(test_images)
-        trainer.output_size = categories_count
-        trainer.set_job_info('categories', categories)
-        pprint(categories)
+        print ("Found %d classes, %d images (%d in training [%saugmented], %d in validation). Read all images into memory from %s" %
+               (classes_count, max, len(train_images), 'not ' if augmentation is False else '', len(test_images), path))
+        pprint(category_map)
+
+        trainer.output_size = classes_count
+        trainer.set_job_info('classes', classes)
+        trainer.classes = classes
 
         result['X_train'] = train
         result['Y_train'] = train
@@ -367,16 +369,17 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
             color_mode='grayscale' if grayscale is True else 'rgb',
             class_mode='categorical')
 
-    categories = {}
+    classes = {}
     for folderName, outputNeuron in train_generator.class_indices.iteritems():
         if dataset['type'] == 'images_search' or dataset['type'] == 'images_upload':
             category_idx = int(folderName.replace('category_', ''))
-            target_category = dataset_config['categories'][category_idx]
-            categories[outputNeuron] = target_category['title'] or 'Category %s' % (category_idx, )
+            target_category = dataset_config['classes'][category_idx]
+            classes[outputNeuron] = target_category['title'] or 'Category %s' % (category_idx, )
         else:
-            categories[outputNeuron] = folderName
+            classes[outputNeuron] = folderName
 
-    trainer.set_job_info('categories', categories)
+    trainer.set_job_info('classes', classes)
+    trainer.classes = classes
     trainer.output_size = train_generator.nb_class
 
     # ensure_dir(dataset_config['path'] + '/preview')
@@ -386,18 +389,18 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
             directory=os.path.join(dataset_config['path'], 'validation'),
             # save_to_dir=dataset_config['path'] + '/preview',
             target_size=size,
-            batch_size=job_config['settings']['batchSize'],
+            batch_size=trainer.get_batch_size(),
             color_mode='grayscale' if grayscale is True else 'rgb',
             class_mode='categorical')
 
-    trainer.nb_val_samples = validation_generator.nb_sample
-    trainer.samples_per_epoch = train_generator.nb_sample
+    trainer.set_generator_validation_nb(validation_generator.nb_sample)
+    trainer.set_generator_training_nb(train_generator.nb_sample)
 
-    print ("Found %d categories, %d images (%d in training [%saugmented], %d in validation) in %s " %
-           (len(categories), trainer.nb_val_samples+trainer.samples_per_epoch, trainer.samples_per_epoch, 'not ' if augmentation is False else '', trainer.nb_val_samples, dataset_config['path']))
+    print ("Found %d classes, %d images (%d in training [%saugmented], %d in validation) in %s " %
+           (len(classes), validation_generator.nb_sample+train_generator.nb_sample, train_generator.nb_sample, 'not ' if augmentation is False else '', validation_generator.nb_sample, dataset_config['path']))
 
     pprint(train_generator.class_indices)
-    pprint(categories)
+    pprint(classes)
 
     return {
         'X_train': train_generator,
@@ -412,11 +415,11 @@ def get_images(job_config, dataset, node, trainer):
     q = Queue(concurrent)
     config = dataset['config']
 
-    dir = trainer.jobModel.get_dataset_downloads_dir(dataset)
+    dir = trainer.job_model.get_dataset_downloads_dir(dataset)
 
     ensure_dir(dir)
 
-    categories = config['categories']
+    classes = config['classes']
 
     size = (node['width'], node['height'])
 
@@ -432,13 +435,13 @@ def get_images(job_config, dataset, node, trainer):
     max = 0
     images = {}
 
-    dataset_path = trainer.jobModel.get_dataset_downloads_dir(dataset)
+    dataset_path = trainer.job_model.get_dataset_downloads_dir(dataset)
     meta_information_file = dataset_path + '/meta.json'
 
-    categories_changed = False
+    classes_changed = False
     config_changed = False
     had_previous = False
-    categories_md5 = hashlib.md5(json.dumps(categories)).hexdigest()
+    classes_md5 = hashlib.md5(json.dumps(classes)).hexdigest()
 
     validationFactor = 0.2
 
@@ -448,8 +451,8 @@ def get_images(job_config, dataset, node, trainer):
                 meta = json.load(f)
                 if meta:
                     had_previous = True
-                    if meta['categories_md5'] != categories_md5:
-                        categories_changed = True
+                    if meta['classes_md5'] != classes_md5:
+                        classes_changed = True
 
                     trigger_changed = ['resize', 'resizeWidth', 'resizeHeight', 'resizeCompression']
                     for i in trigger_changed:
@@ -460,13 +463,13 @@ def get_images(job_config, dataset, node, trainer):
         else:
             config_changed = True
 
-    need_download = categories_changed or config_changed
+    need_download = classes_changed or config_changed
 
     if need_download:
         if had_previous:
             print "Reset dataset and re-download images to " + dir
-            if categories_changed:
-                print (" .. because categories changed")
+            if classes_changed:
+                print (" .. because classes changed")
             if config_changed:
                 print (" .. because settings changed")
         else:
@@ -482,7 +485,7 @@ def get_images(job_config, dataset, node, trainer):
 
         controller = {'running': True}
         try:
-            for category in categories:
+            for category in classes:
                 max += len(category['images'])
 
             for i in range(concurrent):
@@ -490,7 +493,7 @@ def get_images(job_config, dataset, node, trainer):
                 t.daemon = True
                 t.start()
 
-            for category_idx, category in enumerate(categories):
+            for category_idx, category in enumerate(classes):
                 for image in category['images']:
                     q.put([image, category_idx])
 
@@ -503,7 +506,7 @@ def get_images(job_config, dataset, node, trainer):
                     ensure_dir(os.path.dirname(target_path))
                     os.rename(images[image['id']], target_path)
 
-            for category_idx, category in enumerate(categories):
+            for category_idx, category in enumerate(classes):
                 random.shuffle(category['images'])
                 position = int(math.ceil(len(category['images']) * validationFactor))
 
@@ -520,8 +523,8 @@ def get_images(job_config, dataset, node, trainer):
 
             with open(meta_information_file, 'w') as f:
                 meta = {
-                    'loaded_at': categories_md5,
-                    'categories_md5': categories_md5,
+                    'loaded_at': classes_md5,
+                    'classes_md5': classes_md5,
                     'config': config
                 }
                 json.dump(meta, f)
@@ -533,7 +536,7 @@ def get_images(job_config, dataset, node, trainer):
         print "Downloaded images up2date in " + dir
         print " - Remove this directory if you want to re-download all images of your dataset and re-shuffle training/validation images."
 
-    trainer.output_size = len(categories)
+    trainer.output_size = len(classes)
     trainer.set_status('LOAD IMAGE DONE')
 
     # change to type local_images

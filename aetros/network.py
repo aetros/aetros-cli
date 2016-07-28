@@ -36,7 +36,10 @@ def collect_system_information(trainer):
         if cuda.cuda_ndarray.cuda_ndarray.mem_info:
             gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
             trainer.set_job_info('cuda_device_max_memory', gpu[1])
-            print("%.2fGB GPU memory free of %.2fGB" %(gpu[0]/1024/1024/1024, gpu[1]/1024/1024/1024))
+            free = gpu[0]/1024/1024/1024
+            total = gpu[1]/1024/1024/1024
+            used = total-free
+            print("%.2fGB GPU memory used of %.2fGB" %(used, total))
 
     trainer.set_job_info('on_gpu', trainer.on_gpu)
 

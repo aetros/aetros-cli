@@ -26,12 +26,10 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
 
     if '/' in job_id:
         print("...")
-        response = aetros_backend.create_job(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
-        if response.status_code != 200:
-            print("Could not create job: %s " % (response.content,))
+        job_id = aetros_backend.create_job(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
+        if job_id is None:
             exit(1)
 
-        job_id = response.json()
         print("Training '%s' created and started. Open http://%s/trainer/app?training=%s to monitor the training." %
               (job_id, aetros_backend.host, job_id))
     else:
@@ -40,6 +38,8 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
 
     aetros_backend.job_id = job_id
     job = aetros_backend.get_job()
+    if job is None:
+        exit(1)
 
     if job == 'Job not found':
         raise Exception('Training not found. Have you configured your token correctly?')
@@ -112,7 +112,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
         monitoringThread.stop()
         job_model.sync_weights()
         aetros_backend.stop_syncer()
-        aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'KILLED'})
+        aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'EARLY STOP'})
         print("out.")
         sys.exit(1)
     except Exception as e:
@@ -128,4 +128,4 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
         aetros_backend.stop_syncer()
         aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'CRASHED', 'error': e.message})
         print("out.")
-        sys.exit(1)
+        raise e

@@ -41,7 +41,7 @@ class AetrosBackend:
         self.queueLock = Lock()
         self.active_syncer = True
 
-        self.host = 'aetros.com'
+        self.host = os.getenv('API_HOST') if os.getenv('API_HOST') else 'aetros.com'
 
         self.thread = Thread(target=self.syncer)
         self.thread.daemon = True
@@ -172,10 +172,19 @@ class AetrosBackend:
         return requests.put(self.get_url(url), data=data, auth=self.auth, **kwargs)
 
     def create_job(self, name, server_id ='local', dataset_id = None, insights = False):
-        return self.put('job', {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+        response =  self.put('job', {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+        if response.status_code != 200:
+            print("Could not create training: %s" % (response.content, ))
+            return None
+
+        return response.json()
 
     def get_job(self):
         response = self.get('job', {'id': self.job_id})
+        if response.status_code != 200:
+            print("Could not find training: %s" % (response.content,))
+            return None
+
         return response.json()
 
     def job_started(self, id, pid):

@@ -14,6 +14,17 @@ class JobModel:
         self.job_id = job_id
         pass
 
+    def get_model_node(self, name):
+        for nodes in self.job['config']['layer']:
+            for node in nodes:
+                if node['name'] == name:
+                    return node
+
+        raise Exception('Could not found node name=%s in model.' % (name,))
+
+    def get_batch_size(self):
+        return self.job['config']['settings']['batchSize']
+
     def get_network_h5_path(self):
         return os.getcwd() + '/networks/%s/%s/network.h5' % (self.network_id, self.job_id)
 

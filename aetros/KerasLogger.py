@@ -192,19 +192,71 @@ class KerasLogger(Callback):
         input_name = None
 
         if self.job_model.job['insights']:
+
             #Todo, support multiple inputs
             first_input = self.model.inputs[0]
+            first_input_layer = self.model.input_layers[0]
+            first_output_layer = self.model.output_layers[0]
 
-            if first_input != None:
+            if first_input_layer != None:
+                input_data_x = self.trainer.data_validation['x'][first_input_layer.name]
+                input_data_y = self.trainer.data_validation['y'][first_output_layer.name]
+                confusion_matrix = {}
 
                 if self.insight_sample_input_item is None:
-                    input_data = self.trainer.data_train['x'][first_input.name]
-
-                    if self.trainer.is_generator(input_data):
-                        batch_x, batch_y = input_data.next()
+                    if self.trainer.is_generator(input_data_x):
+                        batch_x, batch_y = input_data_x.next()
                         self.insight_sample_input_item = batch_x[0]
                     else:
-                        self.insight_sample_input_item = input_data[0]
+                        self.insight_sample_input_item = input_data_x[0]
+
+                # build confusion matrix
+                node = self.job_model.get_model_node(first_output_layer.name)
+                if node['classificationMode'] == 'categorical':
+                    matrix = np.zeros((len(trainer.classes), len(trainer.classes)))
+                    if self.trainer.is_generator(input_data_x):
+                        processed_samples = 0
+
+                        while processed_samples < trainer.nb_val_samples:
+                            generator_output = input_data_x.next()
+                            if len(generator_output) == 2:
+                                x, y = generator_output
+                                sample_weight = None
+                            elif len(generator_output) == 3:
+                                x, y, sample_weight = generator_output
+                            else:
+                                self.model._stop.set()
+                                raise Exception('output of generator should be a tuple '
+                                                '(x, y, sample_weight) '
+                                                'or (x, y). Found: ' + str(generator_output))
+
+                            if type(x) is list:
+                                nb_samples = len(x[0])
+                            elif type(x) is dict:
+                                nb_samples = len(list(x.values())[0])
+                            else:
+                                nb_samples = len(x)
+
+                            processed_samples += nb_samples
+
+                            prediction = trainer.model.predict_on_batch(x)
+                            predicted_classes = prediction.argmax(axis=-1)
+                            expected_classes = y.argmax(axis=-1)
+
+                            for sample_idx, predicted_class in enumerate(predicted_classes):
+                                expected_class = expected_classes[sample_idx]
+                                matrix[expected_class, predicted_class] += 1
+
+                    else:
+                        prediction = trainer.model.predict(input_data_x, batch_size=self.job_model.get_batch_size())
+                        predicted_classes = prediction.argmax(axis=-1)
+                        expected_classes = input_data_y.argmax(axis=-1)
+
+                        for sample_idx, predicted_class in enumerate(predicted_classes):
+                            expected_class = expected_classes[sample_idx]
+                            matrix[expected_class, predicted_class] += 1
+
+                    confusion_matrix[first_output_layer.name] = matrix.tolist()
 
                 images = []
 
@@ -212,6 +264,7 @@ class KerasLogger(Callback):
                     image = self.make_image(self.insight_sample_input_item)
                     images.append({
                         'id': input_name,
+                        'title': input_name,
                         'image': self.to_base64(image)
                     })
                 except:
@@ -219,27 +272,48 @@ class KerasLogger(Callback):
 
                 uses_learning_phase = self.model.uses_learning_phase
                 inputs = [first_input]
-                input_data = [[self.insight_sample_input_item]]
+                input_data_x_sample = [[self.insight_sample_input_item]]
 
                 if uses_learning_phase:
                     inputs += [K.learning_phase()]
-                    input_data += [0.]  # disable learning_phase
+                    input_data_x_sample += [0.]  # disable learning_phase
 
                 for layer in self.model.layers:
-                    if isinstance(layer, keras.layers.convolutional.Convolution2D):
+                    if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
 
                         fn = K.function(inputs, [layer.output])
-                        Y = fn(input_data)[0]
+                        Y = fn(input_data_x_sample)[0]
 
-                        image = self.make_mosaic(np.squeeze(Y))
+                        image = self.make_mosaic_from_convolution(np.squeeze(Y))
 
                         images.append({
                             'id': layer.name,
+                            'type': 'convolution',
+                            'title': layer.name,
                             'image': self.to_base64(image)
                         })
 
-                if len(images) > 0:
-                    self.backend.job_add_insight({'epoch': log['epoch']}, images)
+                    if isinstance(layer, keras.layers.Dense):
+
+                        fn = K.function(inputs, [layer.output])
+                        Y = fn(input_data_x_sample)[0]
+
+                        node = self.job_model.get_model_node(layer.name)
+                        if node and node['activationFunction'] == 'softmax':
+                            image = self.make_image_from_dense_softmax(np.squeeze(Y))
+                        else:
+                            image = self.make_image_from_dense(np.squeeze(Y))
+
+                        images.append({
+                            'id': layer.name,
+                            'type': 'dense',
+                            'title': layer.name,
+                            'image': self.to_base64(image)
+                        })
+
+                self.backend.job_add_insight({'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
+
+
 
     def filterInvalidJsonValues(self, dict):
         for k,v in dict.iteritems():
@@ -248,7 +322,7 @@ class KerasLogger(Callback):
 
     def to_base64(self, image):
         buffer = cStringIO.StringIO()
-        image.save(buffer, format="JPEG")
+        image.save(buffer, format="JPEG", optimize=True, quality=80)
         return base64.b64encode(buffer.getvalue())
 
     def make_image(self, data):
@@ -262,7 +336,29 @@ class KerasLogger(Callback):
 
         return image
 
-    def make_mosaic(self, images):
+    def make_image_from_dense_softmax(self, neurons):
+        from keras.preprocessing.image import array_to_img
+
+        img = array_to_img(neurons.reshape((1, len(neurons), 1)))
+        img = img.resize((9, len(neurons)*8))
+
+        return img
+
+    def make_image_from_dense(self, neurons):
+        from keras.preprocessing.image import array_to_img
+        cols = int(math.ceil(math.sqrt(len(neurons))))
+
+        even_length = cols*cols
+        diff = even_length - len(neurons)
+        if diff > 0:
+            neurons = np.append(neurons, np.zeros(diff, dtype=neurons.dtype))
+
+        img = array_to_img(neurons.reshape((1, cols, cols)))
+        img = img.resize((cols*8, cols*8))
+
+        return img
+
+    def make_mosaic_from_convolution(self, images):
         from keras.preprocessing.image import array_to_img
 
         height = images[0].shape[1]
