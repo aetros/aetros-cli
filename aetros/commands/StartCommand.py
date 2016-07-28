@@ -14,6 +14,7 @@ class StartCommand:
         parser.add_argument('--insights', action='store_true', help="activates insights")
         parser.add_argument('--dataset', help="Dataset id when network has placeholders")
         parser.add_argument('--gpu', action='store_true', help="Activates GPU if available")
+        parser.add_argument('--device', help="Which device index should be used. Default 0 (which means with --gpu => 'gpu0')")
         parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
         parser.add_argument('--mp', help="Activates multithreading if available with given thread count.")
 
@@ -26,7 +27,10 @@ class StartCommand:
         import os
         flags = os.environ['THEANO_FLAGS'] if 'THEANO_FLAGS' in os.environ else ''
         if parsed_args.gpu:
-            flags += ",device=gpu"
+            if parsed_args.device:
+                flags += ",device=gpu" + parsed_args.device
+            else:
+                flags += ",device=gpu"
 
         if parsed_args.mp:
             flags += ",openmp=True"

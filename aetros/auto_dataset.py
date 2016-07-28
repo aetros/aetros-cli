@@ -451,7 +451,7 @@ def get_images(job_config, dataset, node, trainer):
                 meta = json.load(f)
                 if meta:
                     had_previous = True
-                    if meta['classes_md5'] != classes_md5:
+                    if 'classes_md5' in meta and meta['classes_md5'] != classes_md5:
                         classes_changed = True
 
                     trigger_changed = ['resize', 'resizeWidth', 'resizeHeight', 'resizeCompression']
