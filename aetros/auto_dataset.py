@@ -264,9 +264,13 @@ def read_images_in_memory(job_config, dataset, node, trainer):
                         if category_name not in category_map:
                             category_map[category_name] = classes_count
                             if 'category_' in category_name:
-                                category_map[category_name] = int(category_name.replace('category_', ''))
+                                category_idx = int(category_name.replace('category_', ''))
+                                category_map[category_name] = category_idx
+                                target_category = dataset_config['classes'][category_idx]
+                                classes.append(target_category['title'] or 'Class %s' % (category_idx, ))
+                            else:
+                                classes.append(category_name)
 
-                            classes.append(category_name)
                             classes_count += 1
 
                         for id in os.listdir(path+'/'+validation_or_training+'/'+category_name):
@@ -369,14 +373,14 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
             color_mode='grayscale' if grayscale is True else 'rgb',
             class_mode='categorical')
 
-    classes = {}
+    classes = []
     for folderName, outputNeuron in train_generator.class_indices.iteritems():
         if dataset['type'] == 'images_search' or dataset['type'] == 'images_upload':
             category_idx = int(folderName.replace('category_', ''))
             target_category = dataset_config['classes'][category_idx]
-            classes[outputNeuron] = target_category['title'] or 'Category %s' % (category_idx, )
+            classes.append(target_category['title'] or 'Category %s' % (category_idx, ))
         else:
-            classes[outputNeuron] = folderName
+            classes.append(folderName)
 
     trainer.set_job_info('classes', classes)
     trainer.classes = classes

@@ -67,6 +67,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     trainer.set_status('LOAD DATA')
     datasets = job_model.network_get_datasets(trainer)
     general_logger.write('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape),))
+    general_logger.write('trainer.classes = %s\n' % (json.dumps(trainer.classes),))
 
     dataset_infos = {}
     for idx, dataset in datasets.iteritems():
