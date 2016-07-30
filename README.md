@@ -17,10 +17,10 @@ More information at: http://aetros.com/trainer
 ## Installation
 
 ```bash
-$ pip install aetros
+$ sudo pip install aetros
 
 # update
-$ pip install aetros --upgrade
+$ sudo pip install aetros --upgrade
 ```
 
 Requirement: Python v2.x, Theano
