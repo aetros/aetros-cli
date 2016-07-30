@@ -25,7 +25,7 @@ def download_image(url, path):
         return True
 
     try:
-        r = requests.get(url, stream=True)
+        r = requests.get(url, stream=True, timeout=9)
         if r.status_code == 200:
             with open(path, 'wb') as f:
                 r.raw.decode_content = True
@@ -263,7 +263,7 @@ def read_images_in_memory(job_config, dataset, node, trainer):
 
                         if category_name not in category_map:
                             category_map[category_name] = classes_count
-                            if 'category_' in category_name:
+                            if 'classes' in dataset_config and 'category_' in category_name:
                                 category_idx = int(category_name.replace('category_', ''))
                                 category_map[category_name] = category_idx
                                 target_category = dataset_config['classes'][category_idx]
