@@ -12,6 +12,8 @@ from keras import backend as K
 import keras.layers.convolutional
 
 import numpy as np
+
+from aetros.utils.image import get_layer_vis_square
 from network import ensure_dir
 
 class KerasLogger(Callback):
@@ -284,7 +286,9 @@ class KerasLogger(Callback):
                         fn = K.function(inputs, [layer.output])
                         Y = fn(input_data_x_sample)[0]
 
-                        image = self.make_mosaic_from_convolution(np.squeeze(Y))
+                        data = np.squeeze(Y)
+                        # print("Layer Activations " + layer.name)
+                        image = PIL.Image.fromarray(get_layer_vis_square(data))
 
                         images.append({
                             'id': layer.name,
@@ -292,6 +296,18 @@ class KerasLogger(Callback):
                             'title': layer.name,
                             'image': self.to_base64(image)
                         })
+
+                        if hasattr(layer, 'W') and layer.W:
+                            # print("Layer Weights " + layer.name)
+                            data = layer.W.get_value()
+                            image = PIL.Image.fromarray(get_layer_vis_square(data))
+                            images.append({
+                                'id': layer.name+'_weights',
+                                'type': 'convolution',
+                                'title': layer.name + ' weights',
+                                'image': self.to_base64(image)
+                            })
+
 
                     if isinstance(layer, keras.layers.Dense):
 
@@ -337,7 +353,7 @@ class KerasLogger(Callback):
         return image
 
     def make_image_from_dense_softmax(self, neurons):
-        from keras.preprocessing.image import array_to_img
+        from aetros.utils import array_to_img
 
         img = array_to_img(neurons.reshape((1, len(neurons), 1)))
         img = img.resize((9, len(neurons)*8))
@@ -345,7 +361,7 @@ class KerasLogger(Callback):
         return img
 
     def make_image_from_dense(self, neurons):
-        from keras.preprocessing.image import array_to_img
+        from aetros.utils import array_to_img
         cols = int(math.ceil(math.sqrt(len(neurons))))
 
         even_length = cols*cols
@@ -357,35 +373,3 @@ class KerasLogger(Callback):
         img = img.resize((cols*8, cols*8))
 
         return img
-
-    def make_mosaic_from_convolution(self, images):
-        from keras.preprocessing.image import array_to_img
-
-        height = images[0].shape[1]
-        width = images[0].shape[1]
-
-        cols = int(math.ceil(math.sqrt(len(images))))
-
-        total_height = int(math.ceil(len(images) / cols) * (height + 1))
-        total_width = int(cols * (width + 1))
-
-        new_im = PIL.Image.new('L', (total_width, total_height))
-
-        x = 0
-        y = 0
-
-        for idx, im in enumerate(images):
-
-            try:
-                im = im.reshape((1,width,height))
-                im = array_to_img(im)
-                new_im.paste(im, (x, y))
-            except:
-                pass
-
-            x += width + 1
-            if idx > 0 and idx % cols == 0:
-                y += height + 1
-                x = 0
-
-        return new_im
