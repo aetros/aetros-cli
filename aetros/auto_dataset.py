@@ -307,6 +307,10 @@ def read_images_in_memory(job_config, dataset, node, trainer):
                (classes_count, max, len(train_images), 'not ' if augmentation is False else '', len(test_images), path))
         pprint(category_map)
 
+        if classes_count == 0:
+            print("Could not find any classes. Does the directory contains images?")
+            sys.exit(1)
+
         trainer.output_size = classes_count
         trainer.set_job_info('classes', classes)
         trainer.classes = classes
@@ -384,6 +388,7 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
 
     trainer.set_job_info('classes', classes)
     trainer.classes = classes
+
     trainer.output_size = train_generator.nb_class
 
     # ensure_dir(dataset_config['path'] + '/preview')
@@ -402,6 +407,10 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
 
     print ("Found %d classes, %d images (%d in training [%saugmented], %d in validation) in %s " %
            (len(classes), validation_generator.nb_sample+train_generator.nb_sample, train_generator.nb_sample, 'not ' if augmentation is False else '', validation_generator.nb_sample, dataset_config['path']))
+
+    if trainer.output_size == 0:
+        print("Could not find any classes. Does the directory contains images?")
+        sys.exit(1)
 
     pprint(train_generator.class_indices)
     pprint(classes)

@@ -1,4 +1,4 @@
-__version__ = '0.1.6'
+__version__ = '0.1.7'
 __prog__ = "API_KEY='key' aetros"
 
 class bcolors:
