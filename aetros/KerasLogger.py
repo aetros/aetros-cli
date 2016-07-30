@@ -215,7 +215,7 @@ class KerasLogger(Callback):
                 # build confusion matrix
                 node = self.job_model.get_model_node(first_output_layer.name)
                 if node['classificationMode'] == 'categorical':
-                    matrix = np.zeros((len(trainer.classes), len(trainer.classes)))
+                    matrix = np.zeros((first_output_layer.output_shape[1], first_output_layer.output_shape[1]))
                     if self.trainer.is_generator(input_data_x):
                         processed_samples = 0
 
@@ -245,18 +245,24 @@ class KerasLogger(Callback):
                             predicted_classes = prediction.argmax(axis=-1)
                             expected_classes = y.argmax(axis=-1)
 
-                            for sample_idx, predicted_class in enumerate(predicted_classes):
-                                expected_class = expected_classes[sample_idx]
-                                matrix[expected_class, predicted_class] += 1
+                            try:
+                                for sample_idx, predicted_class in enumerate(predicted_classes):
+                                    expected_class = expected_classes[sample_idx]
+                                    matrix[expected_class, predicted_class] += 1
+                            except:
+                                pass
 
                     else:
                         prediction = trainer.model.predict(input_data_x, batch_size=self.job_model.get_batch_size())
                         predicted_classes = prediction.argmax(axis=-1)
                         expected_classes = input_data_y.argmax(axis=-1)
 
-                        for sample_idx, predicted_class in enumerate(predicted_classes):
-                            expected_class = expected_classes[sample_idx]
-                            matrix[expected_class, predicted_class] += 1
+                        try:
+                            for sample_idx, predicted_class in enumerate(predicted_classes):
+                                expected_class = expected_classes[sample_idx]
+                                matrix[expected_class, predicted_class] += 1
+                        except:
+                            pass
 
                     confusion_matrix[first_output_layer.name] = matrix.tolist()
 
