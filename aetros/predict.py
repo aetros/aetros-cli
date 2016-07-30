@@ -20,7 +20,9 @@ from AetrosBackend import AetrosBackend
 def predict(job_id, file_path, insights=False):
     print("Prepare network ...")
     aetros_backend = AetrosBackend(job_id)
-    job = aetros_backend.get_job()
+
+    job = aetros_backend.get_light_job()
+    job_id = job['id']
 
     if job == 'Job not found':
         raise Exception('Job not found. Have you configured your token correctly?')
@@ -126,31 +128,3 @@ def predict(job_id, file_path, insights=False):
     output = dict(zip(job['info']['classes'], prediction[0].tolist()))
     output = sorted(output.items(), reverse=True, key=lambda (k, v): v)
     print(json.dumps(output, indent=4))
-
-    # dataset = job_model.get_dataset(first_input_layer['datasetId'])
-    # if dataset['type'] == 'images_upload' or dataset['type'] == 'images_search':
-    #     config = dataset['config']
-    #     categories = config['categories']
-    #
-    #     result = {
-    #         'best': {
-    #             'prediction': 0
-    #         },
-    #         'predictions': []
-    #     }
-    #
-    #     for category_idx, category in enumerate(categories):
-    #         title = category['title'] if 'title' in category else category_idx
-    #         result['predictions'].append({
-    #             'title': title,
-    #             'prediction': prediction[0][category_idx].tolist()
-    #         })
-    #
-    #         if (prediction[0][category_idx] > result['best']['prediction']):
-    #             result['best'] = {
-    #                 'title': title,
-    #                 'prediction': prediction[0][category_idx].tolist()
-    #             }
-    #
-    #     print(json.dumps(result, indent=4))
-    # else:

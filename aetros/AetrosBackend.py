@@ -49,8 +49,6 @@ class AetrosBackend:
         self.in_request = False
         self.stop_requested = False
 
-        self.auth = HTTPBasicAuth('stage', 'moep')
-
     def syncer(self):
         while (self.active_syncer):
             self.sync()
@@ -156,20 +154,20 @@ class AetrosBackend:
 
         files = {}
         files[name] = open(file_path, 'r')
-        return requests.post(self.get_url('job/weights?id=%s' % (self.job_id,)), auth=self.auth, files=files)
+        return requests.post(self.get_url('job/weights?id=%s' % (self.job_id,)), files=files)
 
     def get_best_weight_url(self, job_id):
         response = self.get('job/weight-best', {'id': job_id})
         return response.json()
 
     def get(self, url, params=None, **kwargs):
-        return requests.get(self.get_url(url), params=params, auth=self.auth, **kwargs)
+        return requests.get(self.get_url(url), params=params, **kwargs)
 
     def post(self, url, data=None, **kwargs):
-        return requests.post(self.get_url(url), data=data, auth=self.auth, **kwargs)
+        return requests.post(self.get_url(url), data=data, **kwargs)
 
     def put(self, url, data=None, **kwargs):
-        return requests.put(self.get_url(url), data=data, auth=self.auth, **kwargs)
+        return requests.put(self.get_url(url), data=data, **kwargs)
 
     def create_job(self, name, server_id ='local', dataset_id = None, insights = False):
         response =  self.put('job', {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
@@ -181,6 +179,14 @@ class AetrosBackend:
 
     def get_job(self):
         response = self.get('job', {'id': self.job_id})
+        if response.status_code != 200:
+            print("Could not find training: %s" % (response.content,))
+            return None
+
+        return response.json()
+
+    def get_light_job(self):
+        response = self.get('job', {'id': self.job_id, 'light': 1})
         if response.status_code != 200:
             print("Could not find training: %s" % (response.content,))
             return None
