@@ -38,10 +38,8 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
 
     aetros_backend.job_id = job_id
     job = aetros_backend.get_job()
-    if job is None:
-        exit(1)
 
-    if job == 'Job not found':
+    if job is None or job == 'Job not found':
         raise Exception('Training not found. Have you configured your token correctly?')
 
     if not isinstance(job, dict):

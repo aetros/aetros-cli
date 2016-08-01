@@ -214,7 +214,7 @@ class KerasLogger(Callback):
 
                 # build confusion matrix
                 node = self.job_model.get_model_node(first_output_layer.name)
-                if node['classificationMode'] == 'categorical':
+                if node and node['classificationMode'] == 'categorical':
                     matrix = np.zeros((first_output_layer.output_shape[1], first_output_layer.output_shape[1]))
                     if self.trainer.is_generator(input_data_x):
                         processed_samples = 0

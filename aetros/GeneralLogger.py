@@ -3,7 +3,7 @@ import time
 import datetime
 
 class GeneralLogger():
-    def __init__(self, job, logFD, aetros_backend, error=False):
+    def __init__(self, job, logFD=None, aetros_backend=None, error=False):
         self.error = error
         self.job = job
         self.aetros_backend = aetros_backend
@@ -24,7 +24,9 @@ class GeneralLogger():
         return line
 
     def flush(self):
-        self.logFD.flush()
+        if self.logFD:
+            self.logFD.flush()
+
         self.terminal.flush()
 
     def write(self, message):
@@ -37,6 +39,9 @@ class GeneralLogger():
         # if not self.error:
         #     message = self.get_line(message)
 
-        self.logFD.write(message)
         self.terminal.write(message)
-        self.aetros_backend.write_log(self.job['id'], message)
+        if self.logFD:
+            self.logFD.write(message)
+
+        if self.aetros_backend:
+            self.aetros_backend.write_log(self.job['id'], message)

@@ -1,5 +1,11 @@
 import os
 import sys
+import tempfile
+import urllib
+
+from PIL import Image
+
+import numpy as np
 
 class JobModel:
     def __init__(self, backend, job):
@@ -16,9 +22,10 @@ class JobModel:
 
     def get_model_node(self, name):
         for nodes in self.job['config']['layer']:
-            for node in nodes:
-                if node['name'] == name:
-                    return node
+            if isinstance(nodes, list):
+                for node in nodes:
+                    if node['id'] == name or node['name'] == name:
+                        return node
 
         raise Exception('Could not found node name=%s in model.' % (name,))
 
@@ -26,22 +33,130 @@ class JobModel:
         return self.job['config']['settings']['batchSize']
 
     def get_network_h5_path(self):
-        return os.getcwd() + '/networks/%s/%s/network.h5' % (self.network_id, self.job_id)
+        return os.getcwd() + '/aetros-cli-data/networks/%s/%s/network.h5' % (self.network_id, self.job_id)
 
     def get_dataset_dir(self):
-        return os.getcwd() + '/networks/%s/%s/datasets' % (self.network_id, self.job_id)
+        return os.getcwd() + '/aetros-cli-data/networks/%s/%s/datasets' % (self.network_id, self.job_id)
 
     def get_base_dir(self):
-        return os.getcwd() + '/networks/%s/%s' % (self.network_id, self.job_id)
+        return os.getcwd() + '/aetros-cli-data/networks/%s/%s' % (self.network_id, self.job_id)
 
     def get_dataset_downloads_dir(self, dataset):
-        return os.getcwd() + '/datasets/%s/datasets_downloads' % (dataset['id'],)
+        return os.getcwd() + '/aetros-cli-data/datasets/%s/datasets_downloads' % (dataset['id'],)
 
     def get_weights_filepath_latest(self):
-        return os.getcwd() + '/weights/%s/latest.hdf5' % (self.job_id,)
+        return os.getcwd() + '/aetros-cli-data/weights/%s/latest.hdf5' % (self.job_id,)
 
     def get_weights_filepath_best(self):
-        return os.getcwd() + '/weights/%s/best.hdf5' % (self.job_id,)
+        return os.getcwd() + '/aetros-cli-data/weights/%s/best.hdf5' % (self.job_id,)
+
+    def set_input_shape(self, trainer):
+
+        first_input_layer = self.get_first_input_layer()
+
+        size = (int(first_input_layer['width']), (first_input_layer['height']))
+        if first_input_layer['inputType'] == 'image':
+            trainer.input_shape = (1, size[0], size[1])
+        elif first_input_layer['inputType'] == 'image_rgb':
+            trainer.input_shape = (3, size[0], size[1])
+        else:
+            trainer.input_shape = (size[0] * size[1],)
+
+    def load_weights(self, model, weights_path=None):
+        from keras import backend as K
+
+        if not weights_path:
+            weights_path = self.get_weights_filepath_best()
+
+        if not os.path.isfile(weights_path):
+            raise Exception("File does not exist.")
+
+        import h5py
+        f = h5py.File(weights_path, mode='r')
+
+        # new file format
+        layer_names = [n.decode('utf8') for n in f.attrs['layer_names']]
+        if len(layer_names) != len(model.layers):
+            print ("Warning: Layer count different")
+
+        # we batch weight value assignments in a single backend call
+        # which provides a speedup in TensorFlow.
+        weight_value_tuples = []
+        for k, name in enumerate(layer_names):
+            g = f[name]
+            weight_names = [n.decode('utf8') for n in g.attrs['weight_names']]
+
+            layer = model.get_layer(name=name)
+            if len(weight_names):
+                weight_values = [g[weight_name] for weight_name in weight_names]
+                symbolic_weights = layer.trainable_weights + layer.non_trainable_weights
+
+                if len(weight_values) != len(symbolic_weights):
+                    raise Exception('Layer #' + str(k) +
+                                    ' (named "' + layer.name +
+                                    '" in the current model) was found to '
+                                    'correspond to layer ' + name +
+                                    ' in the save file. '
+                                    'However the new layer ' + layer.name +
+                                    ' expects ' + str(len(symbolic_weights)) +
+                                    ' weights, but the saved weights have ' +
+                                    str(len(weight_values)) +
+                                    ' elements.')
+
+                weight_value_tuples += zip(symbolic_weights, weight_values)
+        K.batch_set_value(weight_value_tuples)
+
+        f.close()
+
+    def convert_file_to_input(self, file_path, model):
+
+        first_input_layer = self.get_first_input_layer()
+        size = (int(first_input_layer['width']), int(first_input_layer['height']))
+
+        if 'http://' in file_path or 'https://' in file_path:
+            local_path = tempfile.mktemp()
+            print("Download input ...")
+            f = open(local_path, 'wb')
+            f.write(urllib.urlopen(file_path).read())
+            f.close()
+        else:
+            local_path = file_path
+
+
+        if first_input_layer['inputType'] == 'list':
+            raise Exception("List input not yet available")
+        else:
+            image = Image.open(local_path)
+            image = image.resize(size, Image.ANTIALIAS)
+
+            if first_input_layer['inputType'] == 'image':
+                image = image.convert("L")
+                image = np.asarray(image, dtype='float32')
+                image = image.reshape(size[0] * size[1])
+            elif first_input_layer['inputType'] == 'image_bgr':
+                image = image.convert("RGB")
+                image = np.asarray(image, dtype='float32')
+                image = image[:, :, ::-1].copy()
+                image = image.transpose(2, 0, 1)
+            else:
+                image = image.convert("RGB")
+                image = np.asarray(image, dtype='float32')
+                image = image.transpose(2, 0, 1)
+
+            if 'imageScale' not in first_input_layer:
+                first_input_layer['imageScale'] = 255
+
+            if float(first_input_layer['imageScale']) > 0:
+                image = image / float(first_input_layer['imageScale'])
+
+            input = {}
+            if len(model.input_layers) != 1:
+                raise Exception('The model needs exactly one input.')
+
+            for input_layer in model.input_layers:
+                input[input_layer.name] = np.array([image])
+
+        return input
 
     def get_model_provider(self):
 
@@ -56,7 +171,7 @@ class JobModel:
     def sync_weights(self):
         self.backend.job_add_status('status', 'SYNC WEIGHTS')
         print "Sync weights ..."
-        self.backend.upload_weights('latest', self.get_weights_filepath_latest())
+        # self.backend.upload_weights('latest', self.get_weights_filepath_latest())
         self.backend.upload_weights('best', self.get_weights_filepath_best())
         print "Weights synced."
 
@@ -106,6 +221,30 @@ class JobModel:
 
 
         return datasets
+
+    def get_dataset_class_label(self, output_layer, prediction):
+        config = self.job['config']
+
+        dataset_id = output_layer['datasetId']
+        dataset = config['datasets'][dataset_id]
+        if not dataset:
+            raise Exception('Dataset of id %s does not exists. Available %s' % (dataset_id, ','.join(config['datasets'].keys())))
+
+        if 'classes' in self.job['info']:
+            return self.job['info']['classes'][prediction]
+
+        elif dataset['type'] == 'python':
+            name = dataset['id'].replace('/', '__')
+
+            datasets_dir = self.get_dataset_dir()
+            try:
+                sys.path.append(datasets_dir)
+                data_provider = __import__(name, '')
+                sys.path.pop()
+                return data_provider.get_class_label(prediction)
+            except Exception as e:
+                print("Method get_class_label failed in %s " % (datasets_dir + '/' + name + '.py', ))
+                raise e
 
     def get_first_input_layer(self):
         config = self.job['config']

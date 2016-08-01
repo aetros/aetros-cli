@@ -122,11 +122,10 @@ def job_prepare(job):
     :return:
     """
 
-    path = 'networks/%s/%s' % (job['networkId'], job['id'])
+    path = 'aetros-cli-data/networks/%s/%s' % (job['networkId'], job['id'])
     datasets_path = path + '/datasets'
     config = job['config']
 
-    ensure_dir('networks/%s/' % job['networkId'])
     ensure_dir(path)
     ensure_dir(datasets_path)
 

@@ -3,17 +3,22 @@ import os
 from argparse import RawTextHelpFormatter
 
 import aetros.const
+from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
 from aetros.commands.PredictCommand import PredictCommand
+from aetros.commands.ServerCommand import ServerCommand
 from aetros.commands.StartCommand import StartCommand
 
 commands_dict = {
     'start': StartCommand,
-    'predict': PredictCommand
+    'predict': PredictCommand,
+    'upload-weights': UploadWeightsCommand,
+    'server': ServerCommand
 }
 command_summaries = [
     ['start', 'Starts a training of a network in current working directory'],
-    ['stop', 'Stops a training'],
-    ['predict', 'Runs a prediction locally']
+    ['predict', 'Runs a prediction locally'],
+    ['upload-weights', 'Uploads weights as new or existing job.'],
+    ['server', 'Spawns a http server that handles incoming data as input and predicts output.'],
 ]
 
 def create_main_parser():
@@ -33,17 +38,10 @@ def create_main_parser():
     # parser.add_option_group(gen_opts)
 
     # parser.main = True  # so the help formatter knows
-
-    # create command listing for description
-    command_summaries = [
-        ['start', 'Starts a training of a network'],
-        ['stop', 'Stops a tranining']
-    ]
     description = [''] + ['%-27s %s' % (i, j) for i, j in command_summaries]
     parser.description = 'Please don not forget to provide API_KEY as environment variable.\nPossible commands:\n' + ('\n'.join(description))
 
     return parser
-
 
 def parseopts(args):
     if len(args) == 0:
@@ -71,6 +69,10 @@ def main(args=None):
         args = sys.argv[1:]
 
     cmd_name, cmd_args = parseopts(args)
+
+    if cmd_name not in commands_dict:
+        print("Command %s not found" % (cmd_name, ))
+        sys.exit(1)
 
     command = commands_dict[cmd_name]()
 

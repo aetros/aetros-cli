@@ -19,6 +19,7 @@ setup(name='aetros',
             'numpy',
             'scipy',
             'h5py',
+            'cherrypy>=7.1.0',
             'py-cpuinfo==0.2.3'
       ),
       packages=find_packages())

@@ -11,6 +11,7 @@ class PredictCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' predict')
         parser.add_argument('job', nargs='?', help='the job id, e.g. GoVDO1Njm')
         parser.add_argument('--insights', action='store_true', help="activates insights")
+        parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
         parser.add_argument('-i', nargs='+', help="Input (path or url). Multiple allowed")
 
         parsed_args = parser.parse_args(args)
@@ -19,4 +20,4 @@ class PredictCommand:
             parser.print_help()
             sys.exit()
 
-        predict(parsed_args.job, parsed_args.i[0], parsed_args.insights)
+        predict(parsed_args.job, parsed_args.i[0], parsed_args.insights, parsed_args.weights)

@@ -220,7 +220,7 @@ def read_images_in_memory(job_config, dataset, node, trainer):
     config = dataset['config']
     q = Queue(concurrent)
 
-    size = (node['width'], node['height'])
+    size = (int(node['width']), int(node['height']))
 
     if node['inputType'] == 'image':
         trainer.input_shape = (1, size[0], size[1])
@@ -348,7 +348,7 @@ def get_image_data_augmentor_from_dataset(dataset):
 def read_images_keras_generator(job_config, dataset, node, trainer):
     from keras.preprocessing.image import ImageDataGenerator
 
-    size = (node['width'], node['height'])
+    size = (int(node['width']), int(node['height']))
 
     if node['inputType'] == 'image':
         trainer.input_shape = (1, size[0], size[1])
@@ -434,7 +434,7 @@ def get_images(job_config, dataset, node, trainer):
 
     classes = config['classes']
 
-    size = (node['width'], node['height'])
+    size = (int(node['width']), int(node['height']))
 
     trainer.set_status('PREPARE_IMAGES')
 

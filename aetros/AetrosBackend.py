@@ -7,7 +7,9 @@ import signal
 import json
 import time
 
+from io import BytesIO
 from requests.auth import HTTPBasicAuth
+
 
 def dict_factory(cursor, row):
     d = {}
@@ -81,9 +83,10 @@ class AetrosBackend:
                         print "Job deleted meanwhile. Stop current job."
                         os.kill(os.getpid(), signal.SIGINT)
                     elif 'stop' in content:
-                        print "Job stopped through trainer."
-                        self.stop_requested = True
-                        os.kill(os.getpid(), signal.SIGINT)
+                        if not self.stop_requested:
+                            print "Job stopped through trainer."
+                            self.stop_requested = True
+                            os.kill(os.getpid(), signal.SIGINT)
                     else:
                         if 'result' in content and content['result'] is True:
                             if len(self.queue) > 0:
@@ -148,13 +151,83 @@ class AetrosBackend:
         })
         self.queueLock.release()
 
-    def upload_weights(self, name, file_path):
+    def upload_weights(self, name, file_path, with_status=False):
         if not os.path.isfile(file_path):
             return
 
         files = {}
         files[name] = open(file_path, 'r')
-        return requests.post(self.get_url('job/weights?id=%s' % (self.job_id,)), files=files)
+
+        class CancelledError(Exception):
+            def __init__(self, msg):
+                self.msg = msg
+                Exception.__init__(self, msg)
+
+            def __str__(self):
+                return self.msg
+
+            __repr__ = __str__
+
+        class BufferReader(BytesIO):
+            def __init__(self, buf=b'',
+                         callback=None,
+                         cb_args=(),
+                         cb_kwargs={}):
+                self._callback = callback
+                self._cb_args = cb_args
+                self._cb_kwargs = cb_kwargs
+                self._progress = 0
+                self._len = len(buf)
+                BytesIO.__init__(self, buf)
+
+            def __len__(self):
+                return self._len
+
+            def read(self, n=-1):
+                chunk = BytesIO.read(self, n)
+                self._progress += int(len(chunk))
+                self._cb_kwargs.update({
+                    'size': self._len,
+                    'progress': self._progress
+                })
+                if self._callback:
+                    try:
+                        self._callback(*self._cb_args, **self._cb_kwargs)
+                    except:
+                        raise CancelledError('The upload was cancelled.')
+                return chunk
+
+        state = {'progress': -1}
+
+        def progress(size=None, progress=None):
+            current_progress = int(progress / size * 100)
+            if state['progress'] != current_progress:
+                state['progress'] = current_progress
+
+                if with_status:
+                    self.set_status('UPLOAD WEIGHTS ' + str(current_progress) + '%')
+                else:
+                    print("{0}%".format(current_progress))
+
+        files = {"upfile": (name, open(file_path, 'rb').read())}
+
+        (data, ctype) = requests.packages.urllib3.filepost.encode_multipart_formdata(files)
+
+        headers = {
+            "Content-Type": ctype
+        }
+
+        body = BufferReader(data, progress)
+
+        url = self.get_url('job/weights?id=%s' % (self.job_id,))
+        response = requests.post(url, data=body, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception('Uploading of weights failed: ' + response.content)
+
+    def set_status(self, status):
+        print 'Training status changed to %s ' % (status,)
+        self.job_add_status('status', status)
 
     def get_best_weight_url(self, job_id):
         response = self.get('job/weight-best', {'id': job_id})
@@ -169,10 +242,11 @@ class AetrosBackend:
     def put(self, url, data=None, **kwargs):
         return requests.put(self.get_url(url), data=data, **kwargs)
 
-    def create_job(self, name, server_id ='local', dataset_id = None, insights = False):
-        response =  self.put('job', {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+    def create_job(self, name, server_id='local', dataset_id=None, insights=False):
+        response = self.put('job',
+                            {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
         if response.status_code != 200:
-            print("Could not create training: %s" % (response.content, ))
+            print("Could not create training: %s" % (response.content,))
             return None
 
         return response.json()
@@ -191,7 +265,17 @@ class AetrosBackend:
             print("Could not find training: %s" % (response.content,))
             return None
 
-        return response.json()
+        job = response.json()
+        if job == 'Job not found':
+            raise Exception('Job not found. Have you configured your token correctly?')
+
+        if not isinstance(job, dict):
+            raise Exception('Job does not exist. Make sure you created the job via AETROS TRAINER')
+
+        if not len(job['config']):
+            raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
+
+        return job
 
     def job_started(self, id, pid):
         return self.post('job/started', {'id': id, 'pid': pid})
