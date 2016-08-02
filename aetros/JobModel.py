@@ -108,10 +108,25 @@ class JobModel:
 
         f.close()
 
-    def convert_file_to_input(self, file_path, model):
+    def predict(self,model, input):
 
-        first_input_layer = self.get_first_input_layer()
-        size = (int(first_input_layer['width']), int(first_input_layer['height']))
+        prediction = model.predict(input)
+
+        top5 = np.argsort(-prediction[0])[:5]
+
+        result = []
+        for i in top5:
+            result.append({
+                'class': self.get_dataset_class_label(self.get_first_output_layer(), i),
+                'prediction': float(prediction[0][i])
+            })
+
+        return result
+
+
+    def convert_file_to_input_node(self, file_path, input_node):
+
+        size = (int(input_node['width']), int(input_node['height']))
 
         if 'http://' in file_path or 'https://' in file_path:
             local_path = tempfile.mktemp()
@@ -123,17 +138,18 @@ class JobModel:
             local_path = file_path
 
 
-        if first_input_layer['inputType'] == 'list':
+        if input_node['inputType'] == 'list':
             raise Exception("List input not yet available")
         else:
             image = Image.open(local_path)
             image = image.resize(size, Image.ANTIALIAS)
 
-            if first_input_layer['inputType'] == 'image':
+            if input_node['inputType'] == 'image':
                 image = image.convert("L")
                 image = np.asarray(image, dtype='float32')
                 image = image.reshape(size[0] * size[1])
-            elif first_input_layer['inputType'] == 'image_bgr':
+
+            elif input_node['inputType'] == 'image_bgr':
                 image = image.convert("RGB")
                 image = np.asarray(image, dtype='float32')
                 image = image[:, :, ::-1].copy()
@@ -143,20 +159,13 @@ class JobModel:
                 image = np.asarray(image, dtype='float32')
                 image = image.transpose(2, 0, 1)
 
-            if 'imageScale' not in first_input_layer:
-                first_input_layer['imageScale'] = 255
+            if 'imageScale' not in input_node:
+                input_node['imageScale'] = 255
 
-            if float(first_input_layer['imageScale']) > 0:
-                image = image / float(first_input_layer['imageScale'])
+            if float(input_node['imageScale']) > 0:
+                image = image / float(input_node['imageScale'])
 
-            input = {}
-            if len(model.input_layers) != 1:
-                raise Exception('The model needs exactly one input.')
-
-            for input_layer in model.input_layers:
-                input[input_layer.name] = np.array([image])
-
-        return input
+            return np.array([image])
 
     def get_model_provider(self):
 
@@ -199,16 +208,16 @@ class JobModel:
                         # this input is not in use, so we dont need to calculate its dataset
                         continue
 
-                    datasets[net['datasetId']] = get_images(config, dataset, net, trainer)
+                    datasets[net['datasetId']] = get_images(self, dataset, net, trainer)
 
                 elif dataset['type'] == 'images_local':
 
                     all_memory = get_option(dataset['config'], 'allMemory', False, 'bool')
 
                     if all_memory:
-                        datasets[net['datasetId']] = read_images_in_memory(config, dataset, net, trainer)
+                        datasets[net['datasetId']] = read_images_in_memory(self, dataset, net, trainer)
                     else:
-                        datasets[net['datasetId']] = read_images_keras_generator(config, dataset, net, trainer)
+                        datasets[net['datasetId']] = read_images_keras_generator(self, dataset, net, trainer)
 
                 elif dataset['type'] == 'python':
                     name = dataset['id'].replace('/', '__')

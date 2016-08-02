@@ -266,7 +266,8 @@ class AetrosBackend:
             return None
 
         job = response.json()
-        if job == 'Job not found':
+
+        if job is None or job == 'Job not found':
             raise Exception('Job not found. Have you configured your token correctly?')
 
         if not isinstance(job, dict):

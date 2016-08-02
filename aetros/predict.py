@@ -64,26 +64,13 @@ def predict(job_id, file_path, insights=False, weights_path=None):
     model_provider.compile(trainer, model, loss, optimizer)
     job_model.load_weights(model, weights_path)
 
-    input = job_model.convert_file_to_input(file_path, model)
+    input = job_model.convert_file_to_input_node(file_path, model.get_first_input_layer())
 
     print("Start prediction ...")
-    prediction = model.predict(input)
 
-    if 'classes' in job['info']:
-        output = dict(zip(job['info']['classes'], prediction[0].tolist()))
-        output = sorted(output.items(), reverse=True, key=lambda (k, v): v)
-        print(json.dumps(output, indent=4))
+    prediction = job_model.predict(model, input)
+    print(json.dumps(prediction, indent=4))
 
-    else:
-        top5 = np.argsort(-prediction[0])[:5]
 
-        result = []
-        for i in top5:
-            result.append({
-                'class': job_model.get_dataset_class_label(job_model.get_first_output_layer(), i),
-                'prediction': float(prediction[0][i])
-            })
-
-        print(json.dumps(result, indent=4))
 
 

@@ -1,9 +1,12 @@
 import argparse
+import json
 import os
 import sys
 import urllib
+from threading import Lock
 
 import cherrypy
+import time
 
 from aetros import network
 
@@ -16,6 +19,9 @@ from aetros.network import ensure_dir
 
 class ServerCommand:
 
+    model = None
+    job_model = None
+
     def main(self, args):
 
         from aetros.starter import start
@@ -23,18 +29,24 @@ class ServerCommand:
         parser.add_argument('id', nargs='?', help='Training id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
+        parser.add_argument('--port', help="Changes port. Default 8000")
 
         parsed_args = parser.parse_args(args)
+        self.lock = Lock()
+
+        sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
 
         if not parsed_args.id:
             parser.print_help()
             sys.exit()
 
-        # model = self.start_model(parsed_args)
-        self.start_webserver()
+        self.model = self.start_model(parsed_args)
+        self.start_webserver(8000 if not parsed_args.port else int(parsed_args.port))
 
     def start_model(self, parsed_args):
 
+        print ("...")
+        self.lock.acquire()
         aetros_backend = AetrosBackend(parsed_args.id)
         job = aetros_backend.get_light_job()
         job_id = job['id']
@@ -44,14 +56,16 @@ class ServerCommand:
         if job is None:
             raise Exception("Training not found")
 
-        job_model = JobModel(aetros_backend, job)
+        self.job_model = JobModel(aetros_backend, job)
 
         if parsed_args.weights:
             weights_path = parsed_args.weights
         elif parsed_args.latest:
-            weights_path = job_model.get_weights_filepath_latest()
+            weights_path = self.job_model.get_weights_filepath_latest()
         else:
-            weights_path = job_model.get_weights_filepath_best()
+            weights_path = self.job_model.get_weights_filepath_best()
+
+        print ("Check weights ...")
 
         if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
             weight_url = aetros_backend.get_best_weight_url(job_id)
@@ -66,15 +80,15 @@ class ServerCommand:
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-        network.job_prepare(job_model.job)
+        network.job_prepare(self.job_model.job)
 
         general_logger = GeneralLogger(job)
-        trainer = Trainer(aetros_backend, job_model, general_logger)
+        trainer = Trainer(aetros_backend, self.job_model, general_logger)
 
-        job_model.set_input_shape(trainer)
+        self.job_model.set_input_shape(trainer)
 
         print ("Loading model ...")
-        model_provider = job_model.get_model_provider()
+        model_provider = self.job_model.get_model_provider()
         model = model_provider.get_model(trainer)
 
         loss = model_provider.get_loss(trainer)
@@ -84,18 +98,50 @@ class ServerCommand:
         model_provider.compile(trainer, model, loss, optimizer)
 
         print ("Load weights %s ..." %(weights_path,))
-        job_model.load_weights(model, weights_path)
-        print ("Loaded and ready to go.")
+        self.job_model.load_weights(model, weights_path)
+        print ("Locked and loaded.")
+
+        self.lock.release()
 
         return model
 
+    def start_webserver(self, port):
 
-    def start_webserver(self):
         class WebServer(object):
+            def __init__(self, lock, job_model, model):
+                self.job_model = job_model
+                self.model = model
+                self.lock = lock
 
             @cherrypy.expose
-            def index(self):
-                return "Hello world!"
+            def predict(self, path):
+                if not path:
+                    return json.dumps({'error': 'not_input_given'})
 
+                self.lock.acquire()
+                result = {'times': {}}
+                try:
+                    print("Start prediction of %s" % (path,))
 
-        cherrypy.quickstart(WebServer())
+                    start = time.time()
+                    input = self.job_model.convert_file_to_input_node(path, self.job_model.get_first_input_layer())
+                    result['times']['prepare_fetch_input'] = time.time() - start
+
+                    start = time.time()
+                    prediction = self.job_model.predict(self.model, input)
+                    result['times']['prediction'] = time.time() - start
+
+                    self.lock.release()
+                except Exception as e:
+                    self.lock.release()
+                    return json.dumps({'error': type(e).__name__, 'message': e.message})
+
+                result['prediction'] = prediction
+
+                return json.dumps(result)
+
+        cherrypy.config.update({
+            'server.socket_port': port
+        })
+
+        cherrypy.quickstart(WebServer(self.lock, self.job_model, self.model))

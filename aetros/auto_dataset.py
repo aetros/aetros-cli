@@ -93,51 +93,14 @@ class ImageDownloaderWorker(Thread):
         self.images[image['id']] = local_image_path
         self.trainer.set_status('LOAD IMAGE %d/%d' % (len(self.images), self.max))
 
-def read_image(path, size, target_shape, grayscale=False, dim_ordering=None):
-    if dim_ordering is None:
-        import keras.backend
-        dim_ordering = keras.backend.image_dim_ordering()
-
-    try:
-        image = Image.open(path)
-    except:
-        return None
-
-    # do not only resize, maintain aspect ratio
-    image = image.resize(size, Image.ANTIALIAS)
-
-    if grayscale:
-        image = image.convert("L")
-    else:
-        image = image.convert("RGB")
-
-    image = np.asarray(image, dtype='float32')
-
-    if len(target_shape) > 1:
-        # RGB: height, width, channel -> channel, height, width
-        if grayscale:
-            if dim_ordering == 'th':
-                image = image.reshape((1, size[0], size[0]))
-            else:
-                image = image.reshape((size[0], size[0], 1))
-        else:
-            if dim_ordering == 'th':
-                image = image.transpose(2, 0, 1)
-    else:
-        # L: height, width => height*width
-        image = image.reshape(size[0] * size[1])
-
-    return image
-
 # class to read all images in the ram at once
 class ImageReadWorker(Thread):
-    def __init__(self, q, trainer, path, grayscale, size, images, controller):
+    def __init__(self, q, job_model, input_node, path, images, controller):
         Thread.__init__(self)
         self.q = q
-        self.trainer = trainer
+        self.job_model = job_model
+        self.input_node = input_node
         self.path = path
-        self.grayscale = grayscale
-        self.size = size
         self.images = images
         self.controller = controller
 
@@ -151,16 +114,16 @@ class ImageReadWorker(Thread):
 
         try:
             if os.path.isfile(path):
-                image = read_image(path, self.size, self.trainer.input_shape, grayscale=self.grayscale)
+                input = self.job_model.convert_file_to_input_node(path, self.input_node)
             else:
                 return
 
-            if image is None:
+            if input is None:
                 return
 
-            self.images.append([image, validation, category_dir])
+            self.images.append([input, validation, category_dir])
         except IOError as e:
-            self.trainer.logger.write('Could not open %s due to %s' % (path, e.message))
+            print('Could not open %s due to %s' % (path, e.message))
             return
 
 class InMemoryDataGenerator():
@@ -208,7 +171,7 @@ class InMemoryDataGenerator():
         return np.array(batch_x), np.array(batch_y)
 
 
-def read_images_in_memory(job_config, dataset, node, trainer):
+def read_images_in_memory(job_model, dataset, node, trainer):
     """
     Reads all images into memory and applies augmentation if enabled
     """
@@ -219,18 +182,6 @@ def read_images_in_memory(job_config, dataset, node, trainer):
     controller = {'running': True}
     config = dataset['config']
     q = Queue(concurrent)
-
-    size = (int(node['width']), int(node['height']))
-
-    if node['inputType'] == 'image':
-        trainer.input_shape = (1, size[0], size[1])
-        grayscale = True
-    elif node['inputType'] == 'image_rgb':
-        grayscale = False
-        trainer.input_shape = (3, size[0], size[1])
-    else:
-        trainer.input_shape = (size[0] * size[1],)
-        grayscale = True
 
     result = {
         'X_train': [],
@@ -252,7 +203,7 @@ def read_images_in_memory(job_config, dataset, node, trainer):
 
     try:
         for i in range(concurrent):
-            t = ImageReadWorker(q, trainer, path, grayscale, size, images, controller)
+            t = ImageReadWorker(q, job_model, node, path, images, controller)
             t.daemon = True
             t.start()
 
@@ -295,9 +246,10 @@ def read_images_in_memory(job_config, dataset, node, trainer):
         augmentation = bool(get_option(dataset_config, 'augmentation', False))
         if augmentation:
             train_datagen = get_image_data_augmentor_from_dataset(dataset)
-        train = InMemoryDataGenerator(train_datagen, train_images, classes_count, job_config['settings']['batchSize'])
 
-        test = InMemoryDataGenerator(None, test_images, classes_count, job_config['settings']['batchSize'])
+        train = InMemoryDataGenerator(train_datagen, train_images, classes_count, job_model.job['config']['settings']['batchSize'])
+
+        test = InMemoryDataGenerator(None, test_images, classes_count, job_model.job['config']['settings']['batchSize'])
 
         nb_sample = len(train_images)
         trainer.set_generator_training_nb(nb_sample)
@@ -345,19 +297,13 @@ def get_image_data_augmentor_from_dataset(dataset):
             vertical_flip=augVerticalFlip
     )
 
-def read_images_keras_generator(job_config, dataset, node, trainer):
+def read_images_keras_generator(job_model, dataset, node, trainer):
     from keras.preprocessing.image import ImageDataGenerator
 
     size = (int(node['width']), int(node['height']))
 
+    grayscale = False
     if node['inputType'] == 'image':
-        trainer.input_shape = (1, size[0], size[1])
-        grayscale = True
-    elif node['inputType'] == 'image_rgb':
-        grayscale = False
-        trainer.input_shape = (3, size[0], size[1])
-    else:
-        trainer.input_shape = (size[0] * size[1],)
         grayscale = True
 
     dataset_config = dataset['config']
@@ -373,7 +319,7 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
     train_generator = train_datagen.flow_from_directory(
             directory=os.path.join(dataset_config['path'], 'training'),
             target_size=size,
-            batch_size=job_config['settings']['batchSize'],
+            batch_size=job_model.job['config']['settings']['batchSize'],
             color_mode='grayscale' if grayscale is True else 'rgb',
             class_mode='categorical')
 
@@ -422,7 +368,7 @@ def read_images_keras_generator(job_config, dataset, node, trainer):
         'Y_test': validation_generator,
     }
 
-def get_images(job_config, dataset, node, trainer):
+def get_images(job_model, dataset, node, trainer):
     concurrent = 15
 
     q = Queue(concurrent)
@@ -431,19 +377,9 @@ def get_images(job_config, dataset, node, trainer):
     dir = trainer.job_model.get_dataset_downloads_dir(dataset)
 
     ensure_dir(dir)
-
     classes = config['classes']
 
-    size = (int(node['width']), int(node['height']))
-
     trainer.set_status('PREPARE_IMAGES')
-
-    if node['inputType'] == 'image':
-        trainer.input_shape = (1, size[0], size[1])
-    elif node['inputType'] == 'image_rgb':
-        trainer.input_shape = (3, size[0], size[1])
-    else:
-        trainer.input_shape = (size[0] * size[1],)
 
     max = 0
     images = {}
@@ -559,6 +495,6 @@ def get_images(job_config, dataset, node, trainer):
     all_memory = get_option(dataset['config'], 'allMemory', False, 'bool')
 
     if all_memory:
-        return read_images_in_memory(job_config, dataset_transformed, node, trainer)
+        return read_images_in_memory(job_model, dataset_transformed, node, trainer)
     else:
-        return read_images_keras_generator(job_config, dataset_transformed, node, trainer)
+        return read_images_keras_generator(job_model, dataset_transformed, node, trainer)
