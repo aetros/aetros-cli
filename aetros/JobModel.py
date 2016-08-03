@@ -137,7 +137,6 @@ class JobModel:
         else:
             local_path = file_path
 
-
         if input_node['inputType'] == 'list':
             raise Exception("List input not yet available")
         else:
@@ -147,7 +146,7 @@ class JobModel:
             if input_node['inputType'] == 'image':
                 image = image.convert("L")
                 image = np.asarray(image, dtype='float32')
-                image = image.reshape(1, size[0], size[1])
+                image = image.reshape((1, size[0], size[1]))
 
             elif input_node['inputType'] == 'image_bgr':
                 image = image.convert("RGB")
@@ -165,7 +164,7 @@ class JobModel:
             if float(input_node['imageScale']) > 0:
                 image = image / float(input_node['imageScale'])
 
-            return np.array([image])
+            return image
 
     def get_model_provider(self):
 

@@ -102,6 +102,7 @@ class ServerCommand:
 
     def start_webserver(self, port):
         import cherrypy
+        import numpy
 
         class WebServer(object):
             def __init__(self, lock, job_model, model):
@@ -124,7 +125,7 @@ class ServerCommand:
                     result['times']['prepare_fetch_input'] = time.time() - start
 
                     start = time.time()
-                    prediction = self.job_model.predict(self.model, input)
+                    prediction = self.job_model.predict(self.model, numpy.array([input]))
                     result['times']['prediction'] = time.time() - start
 
                     self.lock.release()

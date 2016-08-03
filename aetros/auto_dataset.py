@@ -159,8 +159,6 @@ class InMemoryDataGenerator():
             if self.datagen is not None:
                 image = self.datagen.random_transform(image)
                 image = self.datagen.standardize(image)
-            else:
-                image /= 255.0
 
             batch_x.append(image)
 
@@ -289,7 +287,6 @@ def get_image_data_augmentor_from_dataset(dataset):
     augRotationRange = float(get_option(dataset_config, 'augRotationRange', 0.2))
 
     return ImageDataGenerator(
-            rescale=1./255,
             rotation_range=augRotationRange,
             shear_range=augShearRange,
             zoom_range=augZoomRange,
@@ -313,6 +310,12 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
 
     if augmentation:
         train_datagen = get_image_data_augmentor_from_dataset(dataset)
+
+        if 'imageScale' not in node:
+            node['imageScale'] = 255
+
+        if float(node['imageScale']) > 0:
+            train_datagen.rescale = 1.0 / float(node['imageScale'])
     else:
         train_datagen = ImageDataGenerator()
 

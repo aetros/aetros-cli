@@ -68,7 +68,7 @@ def predict(job_id, file_path, insights=False, weights_path=None):
 
     print("Start prediction ...")
 
-    prediction = job_model.predict(model, input)
+    prediction = job_model.predict(model, np.array([input]))
     print(json.dumps(prediction, indent=4))
 
 
