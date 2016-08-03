@@ -147,7 +147,7 @@ class JobModel:
             if input_node['inputType'] == 'image':
                 image = image.convert("L")
                 image = np.asarray(image, dtype='float32')
-                image = image.reshape(size[0] * size[1])
+                image = image.reshape(1, size[0], size[1])
 
             elif input_node['inputType'] == 'image_bgr':
                 image = image.convert("RGB")
@@ -250,7 +250,10 @@ class JobModel:
                 sys.path.append(datasets_dir)
                 data_provider = __import__(name, '')
                 sys.path.pop()
-                return data_provider.get_class_label(prediction)
+                if hasattr(data_provider, 'get_class_label'):
+                    return data_provider.get_class_label(prediction)
+                else:
+                    return prediction
             except Exception as e:
                 print("Method get_class_label failed in %s " % (datasets_dir + '/' + name + '.py', ))
                 raise e

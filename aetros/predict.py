@@ -64,7 +64,7 @@ def predict(job_id, file_path, insights=False, weights_path=None):
     model_provider.compile(trainer, model, loss, optimizer)
     job_model.load_weights(model, weights_path)
 
-    input = job_model.convert_file_to_input_node(file_path, model.get_first_input_layer())
+    input = job_model.convert_file_to_input_node(file_path, job_model.get_first_input_layer())
 
     print("Start prediction ...")
 
