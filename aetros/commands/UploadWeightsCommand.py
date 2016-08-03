@@ -68,7 +68,6 @@ class UploadWeightsCommand:
 
         print "Uploading weights to %s of %s ..." %(job_id, job['networkId'])
 
-        aetros_backend.upload_weights('best.g5', weights_path)
-
+        aetros_backend.upload_weights('best.hdf5', weights_path)
 
         print "Done"

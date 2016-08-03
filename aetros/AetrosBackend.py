@@ -43,7 +43,9 @@ class AetrosBackend:
         self.queueLock = Lock()
         self.active_syncer = True
 
-        self.host = os.getenv('API_HOST') if os.getenv('API_HOST') else 'aetros.com'
+        self.host = os.getenv('API_HOST')
+        if not self.host or self.host == 'false':
+            self.host = 'aetros.com'
 
         self.thread = Thread(target=self.syncer)
         self.thread.daemon = True

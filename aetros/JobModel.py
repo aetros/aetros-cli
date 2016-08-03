@@ -181,7 +181,7 @@ class JobModel:
         self.backend.job_add_status('status', 'SYNC WEIGHTS')
         print "Sync weights ..."
         # self.backend.upload_weights('latest', self.get_weights_filepath_latest())
-        self.backend.upload_weights('best', self.get_weights_filepath_best())
+        self.backend.upload_weights('best.hdf5', self.get_weights_filepath_best())
         print "Weights synced."
 
     def network_get_datasets(self, trainer):
