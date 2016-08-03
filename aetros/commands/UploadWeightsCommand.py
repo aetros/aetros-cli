@@ -1,20 +1,19 @@
 import argparse
 import os
 import sys
-
-from aetros import network
-
-import aetros.const
-from aetros.AetrosBackend import AetrosBackend
-from aetros.GeneralLogger import GeneralLogger
-from aetros.JobModel import JobModel
-from aetros.Trainer import Trainer
-from aetros.network import ensure_dir
-
-
 class UploadWeightsCommand:
 
     def main(self, args):
+
+        from aetros import network
+
+        import aetros.const
+        from aetros.AetrosBackend import AetrosBackend
+        from aetros.GeneralLogger import GeneralLogger
+        from aetros.JobModel import JobModel
+        from aetros.Trainer import Trainer
+        from aetros.network import ensure_dir
+
 
         from aetros.starter import start
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' upload-weights')

@@ -4,18 +4,7 @@ import os
 import sys
 import urllib
 from threading import Lock
-
-import cherrypy
 import time
-
-from aetros import network
-
-import aetros.const
-from aetros.AetrosBackend import AetrosBackend
-from aetros.GeneralLogger import GeneralLogger
-from aetros.JobModel import JobModel
-from aetros.Trainer import Trainer
-from aetros.network import ensure_dir
 
 class ServerCommand:
 
@@ -23,8 +12,8 @@ class ServerCommand:
     job_model = None
 
     def main(self, args):
+        import aetros.const
 
-        from aetros.starter import start
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' upload-weights')
         parser.add_argument('id', nargs='?', help='Training id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
@@ -44,6 +33,12 @@ class ServerCommand:
         self.start_webserver(8000 if not parsed_args.port else int(parsed_args.port))
 
     def start_model(self, parsed_args):
+        from aetros import network
+        from aetros.AetrosBackend import AetrosBackend
+        from aetros.GeneralLogger import GeneralLogger
+        from aetros.JobModel import JobModel
+        from aetros.Trainer import Trainer
+        from aetros.network import ensure_dir
 
         print ("...")
         self.lock.acquire()
@@ -106,6 +101,7 @@ class ServerCommand:
         return model
 
     def start_webserver(self, port):
+        import cherrypy
 
         class WebServer(object):
             def __init__(self, lock, job_model, model):

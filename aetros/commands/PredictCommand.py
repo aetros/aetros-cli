@@ -1,6 +1,5 @@
 import argparse
 import sys
-
 import aetros.const
 
 class PredictCommand:
