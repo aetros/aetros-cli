@@ -14,11 +14,12 @@ class ServerCommand:
     def main(self, args):
         import aetros.const
 
-        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' upload-weights')
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' server')
         parser.add_argument('id', nargs='?', help='Training id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
         parser.add_argument('--port', help="Changes port. Default 8000")
+        parser.add_argument('--host', help="Changes port. Default 127.0.0.1")
 
         parsed_args = parser.parse_args(args)
         self.lock = Lock()
@@ -30,7 +31,7 @@ class ServerCommand:
             sys.exit()
 
         self.model = self.start_model(parsed_args)
-        self.start_webserver(8000 if not parsed_args.port else int(parsed_args.port))
+        self.start_webserver('127.0.0.1' if not parsed_args.host else parsed_args.host, 8000 if not parsed_args.port else int(parsed_args.port))
 
     def start_model(self, parsed_args):
         from aetros import network
@@ -44,12 +45,6 @@ class ServerCommand:
         self.lock.acquire()
         aetros_backend = AetrosBackend(parsed_args.id)
         job = aetros_backend.get_light_job()
-        job_id = job['id']
-
-        aetros_backend.job_id = job_id
-        job = aetros_backend.get_job()
-        if job is None:
-            raise Exception("Training not found")
 
         self.job_model = JobModel(aetros_backend, job)
 
@@ -63,7 +58,7 @@ class ServerCommand:
         print ("Check weights ...")
 
         if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
-            weight_url = aetros_backend.get_best_weight_url(job_id)
+            weight_url = aetros_backend.get_best_weight_url(parsed_args.id)
             if not weight_url:
                 print("No weights available for this job.")
                 exit(1)
@@ -100,7 +95,7 @@ class ServerCommand:
 
         return model
 
-    def start_webserver(self, port):
+    def start_webserver(self, host, port):
         import cherrypy
         import numpy
 
@@ -138,6 +133,7 @@ class ServerCommand:
                 return json.dumps(result)
 
         cherrypy.config.update({
+            'server.socket_host': host,
             'server.socket_port': port
         })
 

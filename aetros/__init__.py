@@ -57,10 +57,6 @@ def parseopts(args):
     # all the args without the subcommand
     cmd_args = args[1:]
 
-    if not os.getenv('API_KEY'):
-        print aetros.const.bcolors.FAIL + "API_KEY not defined." + aetros.const.bcolors.ENDC
-        sys.exit(1)
-
     return cmd_name, cmd_args
 
 

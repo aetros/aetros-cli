@@ -38,6 +38,7 @@ class AetrosBackend:
     def __init__(self, job_id):
         self.event_listener = EventListener()
         self.api_token = os.getenv('API_KEY')
+
         self.job_id = job_id
         self.queue = []
         self.queueLock = Lock()
@@ -135,10 +136,11 @@ class AetrosBackend:
 
         url = 'http://%s/api/%s' % (self.host, affix)
 
-        if '?' in url:
-            url += '&token=' + self.api_token
-        else:
-            url += '?token=' + self.api_token
+        if self.api_token:
+            if '?' in url:
+                url += '&token=' + self.api_token
+            else:
+                url += '?token=' + self.api_token
 
         return url
 
@@ -256,27 +258,33 @@ class AetrosBackend:
     def get_job(self):
         response = self.get('job', {'id': self.job_id})
         if response.status_code != 200:
-            print("Could not find training: %s" % (response.content,))
-            return None
+            raise Exception("Could not find version: %s" % (response.content,))
+
+        job = response.json()
+
+        if  job is None or 'error' in job:
+            raise Exception('Training/Version not found. Have you configured your token correctly? %s: %s' % (job['error'], job['message']))
 
         return response.json()
 
     def get_light_job(self):
         response = self.get('job', {'id': self.job_id, 'light': 1})
         if response.status_code != 200:
-            print("Could not find training: %s" % (response.content,))
-            return None
+            raise Exception("Could not find version (%s): %s" % (self.job_id, response.content,))
 
         job = response.json()
 
         if job is None or job == 'Job not found':
-            raise Exception('Job not found. Have you configured your token correctly?')
+            raise Exception('Version not found. Have you configured your token correctly?')
+
+        if 'error' in job:
+            raise Exception('Version not found. Have you configured your token correctly? %s: %s' % (job['error'], job['message']))
 
         if not isinstance(job, dict):
-            raise Exception('Job does not exist. Make sure you created the job via AETROS TRAINER')
+            raise Exception('Version does not exist. Make sure you created the job via AETROS TRAINER')
 
         if not len(job['config']):
-            raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
+            raise Exception('Version does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
         return job
 
