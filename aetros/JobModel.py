@@ -24,7 +24,9 @@ class JobModel:
         for nodes in self.job['config']['layer']:
             if isinstance(nodes, list):
                 for node in nodes:
-                    if node['id'] == name or node['name'] == name:
+                    if 'varName' in node and node['varName'] == name:
+                        return node
+                    if node['id'] == name or ('name' in node and node['name'] == name):
                         return node
 
         raise Exception('Could not found node name=%s in model.' % (name,))
@@ -179,8 +181,7 @@ class JobModel:
     def sync_weights(self):
         self.backend.job_add_status('status', 'SYNC WEIGHTS')
         print "Sync weights ..."
-        # self.backend.upload_weights('latest', self.get_weights_filepath_latest())
-        self.backend.upload_weights('best.hdf5', self.get_weights_filepath_best())
+        self.backend.upload_weights('best.hdf5', self.get_weights_filepath_best(), with_status=True)
         print "Weights synced."
 
     def network_get_datasets(self, trainer):

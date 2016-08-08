@@ -23,6 +23,7 @@ class KerasLogger(Callback):
         self.ins = None
 
         self.trainer = None
+        self.insights_sample_path = None
 
         self.trainer = trainer
         self.backend = backend
@@ -205,12 +206,16 @@ class KerasLogger(Callback):
                 input_data_y = self.trainer.data_validation['y'][first_output_layer.name]
                 confusion_matrix = {}
 
+                input_node = self.job_model.get_model_node(first_input_layer.name)
                 if self.insight_sample_input_item is None:
-                    if self.trainer.is_generator(input_data_x):
-                        batch_x, batch_y = input_data_x.next()
-                        self.insight_sample_input_item = batch_x[0]
+                    if self.insights_sample_path:
+                        self.insight_sample_input_item = self.job_model.convert_file_to_input_node(self.insights_sample_path, input_node)
                     else:
-                        self.insight_sample_input_item = input_data_x[0]
+                        if self.trainer.is_generator(input_data_x):
+                            batch_x, batch_y = input_data_x.next()
+                            self.insight_sample_input_item = batch_x[0]
+                        else:
+                            self.insight_sample_input_item = input_data_x[0]
 
                 # build confusion matrix
                 node = self.job_model.get_model_node(first_output_layer.name)

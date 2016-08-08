@@ -155,7 +155,7 @@ class AetrosBackend:
         })
         self.queueLock.release()
 
-    def upload_weights(self, name, file_path, with_status=False):
+    def upload_weights(self, name, file_path, accuracy=None, with_status=False):
         if not os.path.isfile(file_path):
             return
 
@@ -223,11 +223,11 @@ class AetrosBackend:
 
         body = BufferReader(data, progress)
 
-        url = self.get_url('job/weights?id=%s' % (self.job_id,))
+        url = self.get_url('job/weights?id=%s&accuracy=%f.2' % (self.job_id, accuracy if accuracy is not None else -1))
         response = requests.post(url, data=body, headers=headers)
 
         if response.status_code != 200:
-            raise Exception('Uploading of weights failed: ' + response.content)
+            raise Exception('Uploading of weights failed: %d: %s' % (response.status_code,response.content))
 
     def set_status(self, status):
         print 'Training status changed to %s ' % (status,)
@@ -250,8 +250,7 @@ class AetrosBackend:
         response = self.put('job',
                             {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
         if response.status_code != 200:
-            print("Could not create training: %s" % (response.content,))
-            return None
+            raise Exception("Could not create training: %s" % (response.content,))
 
         return response.json()
 

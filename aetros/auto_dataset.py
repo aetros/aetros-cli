@@ -11,6 +11,7 @@ import math
 import numpy as np
 import sys
 
+import psutil
 import requests
 from PIL import Image
 
@@ -173,8 +174,7 @@ def read_images_in_memory(job_model, dataset, node, trainer):
     """
     Reads all images into memory and applies augmentation if enabled
     """
-    from keras.utils import np_utils
-    concurrent = 6
+    concurrent = psutil.cpu_count()
 
     dataset_config = dataset['config']
     controller = {'running': True}
@@ -255,7 +255,6 @@ def read_images_in_memory(job_model, dataset, node, trainer):
 
         print ("Found %d classes, %d images (%d in training [%saugmented], %d in validation). Read all images into memory from %s" %
                (classes_count, max, len(train_images), 'not ' if augmentation is False else '', len(test_images), path))
-        pprint(category_map)
 
         if classes_count == 0:
             print("Could not find any classes. Does the directory contains images?")

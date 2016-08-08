@@ -17,17 +17,18 @@ class UploadWeightsCommand:
 
         from aetros.starter import start
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' upload-weights')
-        parser.add_argument('id', nargs='?', help='Training id')
+        parser.add_argument('id', nargs='?', help='Network name or training id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
+        parser.add_argument('--accuracy', help="If you specified network name, you should also specify the accuracy this weights got.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
 
         parsed_args = parser.parse_args(args)
-
-        if not parsed_args.id:
-            parser.print_help()
-            sys.exit()
-
         aetros_backend = AetrosBackend(parsed_args.id)
+
+        if '/' in parsed_args.id and '@' not in parsed_args.id:
+            job_id = aetros_backend.create_job(parsed_args.id)
+            aetros_backend.job_id = job_id
+
         job = aetros_backend.get_light_job()
         job_id = job['id']
 
@@ -68,6 +69,6 @@ class UploadWeightsCommand:
 
         print "Uploading weights to %s of %s ..." %(job_id, job['networkId'])
 
-        aetros_backend.upload_weights('best.hdf5', weights_path)
+        aetros_backend.upload_weights('best.hdf5', weights_path, float(parsed_args.accuracy))
 
         print "Done"

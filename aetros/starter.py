@@ -17,7 +17,7 @@ from Trainer import Trainer
 from network import ensure_dir
 
 
-def start(job_id, dataset_id=None, server_id='local', insights=False):
+def start(job_id, dataset_id=None, server_id='local', insights=False, insights_sample_path=None):
     """
     Starts the training process with all logging of a job_id
     """
@@ -65,6 +65,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False):
     from KerasLogger import KerasLogger
     trainer = Trainer(aetros_backend, job_model, general_logger)
     keras_logger = KerasLogger(trainer, aetros_backend, job_model, general_logger)
+    keras_logger.insights_sample_path = insights_sample_path
     trainer.callbacks.append(keras_logger)
 
     sys.stdout = general_logger
