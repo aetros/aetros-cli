@@ -5,12 +5,10 @@ from threading import Thread
 import numpy as np
 
 class MonitoringThread(Thread):
-    def __init__(self, job, aetros_backend, trainer):
+    def __init__(self, aetros_backend, trainer):
         Thread.__init__(self)
         self.trainer = trainer
-        self.job = job
         self.aetros_backend = aetros_backend
-        self.job_id = job['id']
         self.second = 0
         self.running = True
 

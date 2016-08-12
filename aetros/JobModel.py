@@ -21,6 +21,9 @@ class JobModel:
         pass
 
     def get_model_node(self, name):
+        if not isinstance(self.job['config']['layer'], list):
+            return None
+
         for nodes in self.job['config']['layer']:
             if isinstance(nodes, list):
                 for node in nodes:
@@ -29,7 +32,7 @@ class JobModel:
                     if node['id'] == name or ('name' in node and node['name'] == name):
                         return node
 
-        raise Exception('Could not found node name=%s in model.' % (name,))
+        return None
 
     def get_batch_size(self):
         return self.job['config']['settings']['batchSize']

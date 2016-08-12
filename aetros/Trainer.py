@@ -56,16 +56,7 @@ class Trainer():
         self.model = model
 
     def is_generator(self, obj):
-        from keras.preprocessing.image import DirectoryIterator
-        from aetros.auto_dataset import InMemoryDataGenerator
-
-        if isinstance(obj, DirectoryIterator):
-            return True
-
-        if isinstance(obj, InMemoryDataGenerator):
-            return True
-
-        return False
+        return hasattr(obj, 'next') or hasattr(obj, '__next__')
 
     def has_generator(self, dict):
         for v in dict.values():

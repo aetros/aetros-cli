@@ -36,7 +36,6 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         print("Training '%s' restarted. Open http://%s/trainer/app?training=%s to monitor the training." %
               (job_id, aetros_backend.host, job_id))
 
-    aetros_backend.job_id = job_id
     job = aetros_backend.get_job()
 
     if job is None or job == 'Job not found':
@@ -73,7 +72,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
     job['running'] = True
 
-    monitoringThread = MonitoringThread(job, aetros_backend, trainer)
+    monitoringThread = MonitoringThread(aetros_backend, trainer)
     monitoringThread.daemon = True
     monitoringThread.start()
     network.collect_system_information(trainer)

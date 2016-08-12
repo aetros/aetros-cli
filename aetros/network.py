@@ -39,7 +39,8 @@ def collect_system_information(trainer):
             free = gpu[0]/1024/1024/1024
             total = gpu[1]/1024/1024/1024
             used = total-free
-            print("%.2fGB GPU memory used of %.2fGB" %(used, total))
+            if trainer.on_gpu:
+                print("%.2fGB GPU memory used of %.2fGB" %(used, total))
 
     trainer.set_job_info('on_gpu', trainer.on_gpu)
 
@@ -60,7 +61,6 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     :return:
     """
     trainer.set_status('STARTING')
-    keras_logger.set_trainer(trainer)
 
     model_provider = job_model.get_model_provider()
 

@@ -35,7 +35,7 @@ class EventListener:
 
 
 class AetrosBackend:
-    def __init__(self, job_id):
+    def __init__(self, job_id = None):
         self.event_listener = EventListener()
         self.api_token = os.getenv('API_KEY')
 
@@ -252,7 +252,24 @@ class AetrosBackend:
         if response.status_code != 200:
             raise Exception("Could not create training: %s" % (response.content,))
 
-        return response.json()
+        job_id = response.json()
+        self.job_id = job_id
+
+        return job_id
+
+    def ensure_network(self, network_name, settings, network_type='custom', layers=None, graph=None):
+        response = self.put('network/ensure', {
+            'id': network_name,
+            'type': network_type,
+            'settings': json.dumps(settings, allow_nan=False),
+            'layers': json.dumps(layers, allow_nan=False),
+            'graph': json.dumps(graph, allow_nan=False),
+        })
+
+        if response.status_code != 200:
+            raise Exception("Could not create network: %s" % (response.content,))
+
+        return True
 
     def get_job(self):
         response = self.get('job', {'id': self.job_id})

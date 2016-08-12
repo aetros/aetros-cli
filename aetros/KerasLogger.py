@@ -12,6 +12,7 @@ from keras import backend as K
 import keras.layers.convolutional
 
 import numpy as np
+from keras.models import Sequential
 
 from aetros.utils.image import get_layer_vis_square
 from network import ensure_dir
@@ -26,6 +27,9 @@ class KerasLogger(Callback):
         self.insights_sample_path = None
 
         self.trainer = trainer
+        self.current = {}
+        self.log_epoch = True
+
         self.backend = backend
         self.job_model = job_model
         self.general_logger = general_logger
@@ -36,23 +40,17 @@ class KerasLogger(Callback):
         self.batches_per_second = 0
         self.stats = []
         self.last_current = None
-        self.current = {}
         self.filepath_best = job_model.get_weights_filepath_best()
         self.filepath_latest = job_model.get_weights_filepath_latest()
 
         ensure_dir(os.path.dirname(self.filepath_best))
+        self.data_gathered = False
 
-        self.insight_sample_input_item = None
+        self.insights_x = None
 
         self.best_epoch = 0
         self.best_total_accuracy = 0
         self.worst_total_accuracy = 0
-
-    def set_trainer(self, trainer):
-        self.trainer = trainer
-        self.current['epoch'] = 0
-        self.current['started'] = self.start_time
-        self.trainer.set_job_info('current', self.current)
 
     def on_train_begin(self, logs={}):
         self.start_time = time.time()
@@ -62,6 +60,9 @@ class KerasLogger(Callback):
         # pprint(logs)
         # pprint(self.params)
 
+        self.current['epoch'] = 0
+        self.current['started'] = self.start_time
+        self.trainer.set_job_info('current', self.current)
         nb_sample = self.params['nb_sample'] #training samples total
         nb_epoch = self.params['nb_epoch'] #training samples total
 
@@ -73,6 +74,17 @@ class KerasLogger(Callback):
         # pprint('on_batch_begin')
         # pprint(logs)
         # pprint(self.current)
+
+        if not self.data_gathered:
+            # we need to do it in on_batch_begin due to the fact that self.model.validation_data is not availabe in on_train_begin
+            self.data_gathered = True
+            dataset_infos = {}
+            dataset_info = {
+                'Training': self.params['nb_sample'],
+                'Validation': len(self.model.validation_data[0]) if self.model.validation_data else 0,
+            }
+            dataset_infos['input1'] = dataset_info
+            self.trainer.set_job_info('datasets', dataset_infos)
 
         batch_size = logs['size']
         nb_batches = math.ceil(self.current['nb_sample'] / batch_size) #normal nb batches
@@ -134,7 +146,7 @@ class KerasLogger(Callback):
     def on_epoch_end(self, epoch, logs={}):
         log = logs.copy()
 
-        self.filterInvalidJsonValues(log)
+        self.filter_invalid_json_values(log)
 
         log['created'] = time.time()
         log['epoch'] = epoch+1
@@ -146,13 +158,12 @@ class KerasLogger(Callback):
         log['training_loss'] = {}
         log['training_accuracy'] = {}
 
-        trainer = self.trainer
         elapsed = time.time() - self.start_time
 
         total_loss = 0
         total_accuracy = 0
 
-        for layer in trainer.model.outputs:
+        for layer in self.model.output_layers:
             #todo, this is not very generic
             log['validation_loss'][layer.name] = log['val_loss'] #outs[0]
             log['validation_accuracy'][layer.name] = log['val_acc'] #outs[1]
@@ -183,166 +194,248 @@ class KerasLogger(Callback):
         self.current['elapsed'] = elapsed
         self.current['epoch'] = log['epoch']
 
-        self.filterInvalidJsonValues(self.current)
+        self.filter_invalid_json_values(self.current)
 
-        trainer.set_job_info('current', self.current)
+        self.trainer.set_job_info('current', self.current)
 
-        line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (log['epoch'], log['loss'], log.get('acc'), log['val_loss'], log.get('val_acc'), )
-        self.general_logger.write(line)
+        if self.log_epoch:
+            line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (log['epoch'], log['loss'], log.get('acc'), log['val_loss'], log.get('val_acc'), )
+            self.general_logger.write(line)
 
         self.backend.job_add_status('epoch', log)
-
-        input_name = None
 
         if self.job_model.job['insights']:
 
             #Todo, support multiple inputs
-            first_input = self.model.inputs[0]
             first_input_layer = self.model.input_layers[0]
-            first_output_layer = self.model.output_layers[0]
 
             if first_input_layer != None:
-                input_data_x = self.trainer.data_validation['x'][first_input_layer.name]
-                input_data_y = self.trainer.data_validation['y'][first_output_layer.name]
-                confusion_matrix = {}
-
-                input_node = self.job_model.get_model_node(first_input_layer.name)
-                if self.insight_sample_input_item is None:
-                    if self.insights_sample_path:
-                        self.insight_sample_input_item = self.job_model.convert_file_to_input_node(self.insights_sample_path, input_node)
-                    else:
-                        if self.trainer.is_generator(input_data_x):
-                            batch_x, batch_y = input_data_x.next()
-                            self.insight_sample_input_item = batch_x[0]
-                        else:
-                            self.insight_sample_input_item = input_data_x[0]
 
                 # build confusion matrix
-                node = self.job_model.get_model_node(first_output_layer.name)
-                if node and node['classificationMode'] == 'categorical':
-                    matrix = np.zeros((first_output_layer.output_shape[1], first_output_layer.output_shape[1]))
-                    if self.trainer.is_generator(input_data_x):
-                        processed_samples = 0
-
-                        while processed_samples < trainer.nb_val_samples:
-                            generator_output = input_data_x.next()
-                            if len(generator_output) == 2:
-                                x, y = generator_output
-                                sample_weight = None
-                            elif len(generator_output) == 3:
-                                x, y, sample_weight = generator_output
-                            else:
-                                self.model._stop.set()
-                                raise Exception('output of generator should be a tuple '
-                                                '(x, y, sample_weight) '
-                                                'or (x, y). Found: ' + str(generator_output))
-
-                            if type(x) is list:
-                                nb_samples = len(x[0])
-                            elif type(x) is dict:
-                                nb_samples = len(list(x.values())[0])
-                            else:
-                                nb_samples = len(x)
-
-                            processed_samples += nb_samples
-
-                            prediction = trainer.model.predict_on_batch(x)
-                            predicted_classes = prediction.argmax(axis=-1)
-                            expected_classes = y.argmax(axis=-1)
-
-                            try:
-                                for sample_idx, predicted_class in enumerate(predicted_classes):
-                                    expected_class = expected_classes[sample_idx]
-                                    matrix[expected_class, predicted_class] += 1
-                            except:
-                                pass
-
-                    else:
-                        prediction = trainer.model.predict(input_data_x, batch_size=self.job_model.get_batch_size())
-                        predicted_classes = prediction.argmax(axis=-1)
-                        expected_classes = input_data_y.argmax(axis=-1)
-
-                        try:
-                            for sample_idx, predicted_class in enumerate(predicted_classes):
-                                expected_class = expected_classes[sample_idx]
-                                matrix[expected_class, predicted_class] += 1
-                        except:
-                            pass
-
-                    confusion_matrix[first_output_layer.name] = matrix.tolist()
-
-                images = []
-
-                try:
-                    image = self.make_image(self.insight_sample_input_item)
-                    images.append({
-                        'id': input_name,
-                        'title': input_name,
-                        'image': self.to_base64(image)
-                    })
-                except:
-                    pass
-
-                uses_learning_phase = self.model.uses_learning_phase
-                inputs = [first_input]
-                input_data_x_sample = [[self.insight_sample_input_item]]
-
-                if uses_learning_phase:
-                    inputs += [K.learning_phase()]
-                    input_data_x_sample += [0.]  # disable learning_phase
-
-                for layer in self.model.layers:
-                    if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
-
-                        fn = K.function(inputs, [layer.output])
-                        Y = fn(input_data_x_sample)[0]
-
-                        data = np.squeeze(Y)
-                        # print("Layer Activations " + layer.name)
-                        image = PIL.Image.fromarray(get_layer_vis_square(data))
-
-                        images.append({
-                            'id': layer.name,
-                            'type': 'convolution',
-                            'title': layer.name,
-                            'image': self.to_base64(image)
-                        })
-
-                        if hasattr(layer, 'W') and layer.W:
-                            # print("Layer Weights " + layer.name)
-                            data = layer.W.get_value()
-                            image = PIL.Image.fromarray(get_layer_vis_square(data))
-                            images.append({
-                                'id': layer.name+'_weights',
-                                'type': 'convolution',
-                                'title': layer.name + ' weights',
-                                'image': self.to_base64(image)
-                            })
-
-
-                    if isinstance(layer, keras.layers.Dense):
-
-                        fn = K.function(inputs, [layer.output])
-                        Y = fn(input_data_x_sample)[0]
-
-                        node = self.job_model.get_model_node(layer.name)
-                        if node and node['activationFunction'] == 'softmax':
-                            image = self.make_image_from_dense_softmax(np.squeeze(Y))
-                        else:
-                            image = self.make_image_from_dense(np.squeeze(Y))
-
-                        images.append({
-                            'id': layer.name,
-                            'type': 'dense',
-                            'title': layer.name,
-                            'image': self.to_base64(image)
-                        })
+                confusion_matrix = self.build_confusion_matrix()
+                images = self.build_insight_images()
 
                 self.backend.job_add_insight({'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
 
+    def is_image_shape(self, x):
+        if len(x.shape[1]) != 4:
+            return False
+
+        #  check if it has either 1 or 3 channel
+        if K.image_dim_ordering() == 'th':
+            return (x.shape[1] == 1 or x.shape[1] == 3)
+
+        if K.image_dim_ordering() == 'tf':
+            return (x.shape[3] == 1 or x.shape[3] == 3)
+
+    def get_first_input_sample(self):
+        input_data_x = None
+
+        if self.model.validation_data:
+            input_data_x = []
+            for i, input in enumerate(self.model.inputs):
+                input_data_x.append([self.model.validation_data[i][0]])
+        else:
+            if isinstance(self.trainer.data_train['x'], dict):
+                input_data_x = []
+                for layer in self.model.input_layers:
+                    X = self.trainer.data_train['x'][layer.name]
+                    if self.trainer.is_generator(X):
+                        batch_x, batch_y = X.next()
+                        input_data_x.append([batch_x[0]])
+                    else:
+                        input_data_x.append([X[0]])
+            else:
+                input_data_x = []
+                for X in self.trainer.data_train['x']:
+                    if self.trainer.is_generator(X):
+                        batch_x, batch_y = X.next()
+                        input_data_x.append([batch_x[0]])
+                    else:
+                        input_data_x.append([X[0]])
+
+        return input_data_x
+
+    def build_insight_images(self):
+        if self.insights_x is None:
+            self.insights_x = self.get_first_input_sample()
+
+        images = []
+
+        try:
+            for i, layer in enumerate(self.model.input_layers):
+                x = self.insights_x[i]
+                if self.is_image_shape(x):
+                    image = self.make_image(x)
+                    images.append({
+                        'id': layer.name,
+                        'title': layer.name,
+                        'image': self.to_base64(image)
+                    })
+        except:
+            pass
+
+        uses_learning_phase = self.model.uses_learning_phase
+        inputs = self.model.inputs[:]
+        input_data_x_sample = self.insights_x[:]
+
+        if uses_learning_phase:
+            inputs += [K.learning_phase()]
+            input_data_x_sample += [0.]  # disable learning_phase
+
+        for layer in self.model.layers:
+            if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
+
+                fn = K.function(inputs, [layer.output])
+                Y = fn(input_data_x_sample)[0]
+
+                data = np.squeeze(Y)
+                # print("Layer Activations " + layer.name)
+                image = PIL.Image.fromarray(get_layer_vis_square(data))
+
+                images.append({
+                    'id': layer.name,
+                    'type': 'convolution',
+                    'title': layer.name,
+                    'image': self.to_base64(image)
+                })
+
+                if hasattr(layer, 'W') and layer.W:
+                    # print("Layer Weights " + layer.name)
+                    data = layer.W.get_value()
+                    image = PIL.Image.fromarray(get_layer_vis_square(data))
+                    images.append({
+                        'id': layer.name+'_weights',
+                        'type': 'convolution',
+                        'title': layer.name + ' weights',
+                        'image': self.to_base64(image)
+                    })
 
 
-    def filterInvalidJsonValues(self, dict):
+            if isinstance(layer, keras.layers.Dense):
+
+                fn = K.function(inputs, [layer.output])
+                Y = fn(input_data_x_sample)[0]
+
+                node = self.job_model.get_model_node(layer.name)
+                if node and node['activationFunction'] == 'softmax':
+                    image = self.make_image_from_dense_softmax(np.squeeze(Y))
+                else:
+                    image = self.make_image_from_dense(np.squeeze(Y))
+
+                images.append({
+                    'id': layer.name,
+                    'type': 'dense',
+                    'title': layer.name,
+                    'image': self.to_base64(image)
+                })
+
+        return images
+
+    def build_confusion_matrix(self):
+        confusion_matrix = {}
+
+        model_has_validation_data = hasattr(self.model, 'validation_data') and self.model.validation_data
+        if not model_has_validation_data and not self.trainer.data_validation:
+            return confusion_matrix
+
+        if len(self.model.output_layers) > 1:
+            return confusion_matrix
+
+        first_output_layer = self.model.output_layers[0]
+
+        if 'Softmax' not in str(first_output_layer.output) or len(first_output_layer.output_shape) != 2:
+            return confusion_matrix
+
+        input_data_x = None
+        input_data_y = []
+
+        if model_has_validation_data:
+            input_data_x = []
+            for i, layer in enumerate(self.model.input_layers):
+                input_data_x.append(self.model.validation_data[i])
+
+            input_data_y = self.model.validation_data[len(self.model.input_layers)]
+        else:
+            #model does not have validation_data attribute, which is the case when a generator is given
+            if self.trainer.is_generator(self.trainer.data_validation):
+                input_data_x = self.trainer.data_validation
+            else:
+                #it's probably struct of AETROS code generation
+                if 'x' in self.trainer.data_validation:
+                    if self.trainer.is_generator(self.trainer.data_validation['x']):
+                        input_data_x = self.trainer.data_validation['x']
+                    elif isinstance(self.trainer.data_validation['x'], dict):
+                        for k, X in self.trainer.data_validation['x'].iteritems():
+                            input_data_x = X
+
+                        if not self.trainer.is_generator(input_data_x):
+                            for k, Y in self.trainer.data_validation['y'].iteritems():
+                                input_data_y = Y
+
+                    elif isinstance(self.trainer.data_validation['x'], list):
+                        input_data_x = self.trainer.data_validation['x'][0]
+                        if not self.trainer.is_generator(input_data_x):
+                                input_data_y = self.trainer.data_validation['y'][0]
+
+        if input_data_x is None:
+            return confusion_matrix
+
+        matrix = np.zeros((first_output_layer.output_shape[1], first_output_layer.output_shape[1]))
+
+        if self.trainer.is_generator(input_data_x):
+            processed_samples = 0
+
+            while processed_samples < self.trainer.nb_val_samples:
+                generator_output = input_data_x.next()
+                if len(generator_output) == 2:
+                    x, y = generator_output
+                    sample_weight = None
+                elif len(generator_output) == 3:
+                    x, y, sample_weight = generator_output
+                else:
+                    self.model._stop.set()
+                    raise Exception('output of generator should be a tuple '
+                                    '(x, y, sample_weight) '
+                                    'or (x, y). Found: ' + str(generator_output))
+
+                if type(x) is list:
+                    nb_samples = len(x[0])
+                elif type(x) is dict:
+                    nb_samples = len(list(x.values())[0])
+                else:
+                    nb_samples = len(x)
+
+                processed_samples += nb_samples
+
+                prediction = self.model.predict_on_batch(x)
+                predicted_classes = prediction.argmax(axis=-1)
+                expected_classes = y.argmax(axis=-1)
+
+                try:
+                    for sample_idx, predicted_class in enumerate(predicted_classes):
+                        expected_class = expected_classes[sample_idx]
+                        matrix[expected_class, predicted_class] += 1
+                except:
+                    pass
+
+        else:
+            prediction = self.model.predict(input_data_x, batch_size=self.job_model.get_batch_size())
+            predicted_classes = prediction.argmax(axis=-1)
+            expected_classes = input_data_y.argmax(axis=-1)
+
+            try:
+                for sample_idx, predicted_class in enumerate(predicted_classes):
+                    expected_class = expected_classes[sample_idx]
+                    matrix[expected_class, predicted_class] += 1
+            except:
+                pass
+
+        confusion_matrix[first_output_layer.name] = matrix.tolist()
+
+        return confusion_matrix
+
+    def filter_invalid_json_values(self, dict):
         for k,v in dict.iteritems():
             if math.isnan(v) or math.isinf(v):
                 dict[k] = -1
