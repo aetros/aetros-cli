@@ -108,8 +108,6 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     model_provider.compile(trainer, model, loss, optimizer)
     model.summary()
 
-    trainer.set_job_info('total_params', get_total_params(model))
-
     model_provider.train(trainer, model, data_train, data_validation)
 
 def job_prepare(job):

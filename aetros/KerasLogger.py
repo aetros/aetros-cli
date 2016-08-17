@@ -15,7 +15,8 @@ import numpy as np
 from keras.models import Sequential
 
 from aetros.utils.image import get_layer_vis_square
-from network import ensure_dir
+from network import ensure_dir, get_total_params
+
 
 class KerasLogger(Callback):
     def __init__(self, trainer, backend, job_model, general_logger):
@@ -58,12 +59,13 @@ class KerasLogger(Callback):
         self.start_time = time.time()
         self.last_batch_time = time.time()
         self.trainer.set_status('TRAINING')
+        self.trainer.set_job_info('total_params', get_total_params(self.model))
 
         self.current['epoch'] = 0
         self.current['started'] = self.start_time
         self.trainer.set_job_info('current', self.current)
         nb_sample = self.params['nb_sample'] #training samples total
-        nb_epoch = self.params['nb_epoch'] #training samples total
+        nb_epoch = self.params['nb_epoch'] #training epoches total
 
         self.current['nb_sample'] = nb_sample
         self.current['nb_epoch'] = nb_epoch
