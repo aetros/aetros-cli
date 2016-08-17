@@ -68,7 +68,11 @@ class JobModel:
             else:
                 shape = (size[0] * size[1],)
 
-            trainer.input_shape[node['varName']] = shape
+            if 'varName' in node:
+                trainer.input_shape[node['varName']] = shape
+            else:
+                # older models
+                trainer.input_shape = shape
 
     def get_built_model(self, trainer):
 
