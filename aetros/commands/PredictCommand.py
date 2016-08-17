@@ -19,4 +19,4 @@ class PredictCommand:
             parser.print_help()
             sys.exit()
 
-        predict(parsed_args.job, parsed_args.i[0], parsed_args.insights, parsed_args.weights)
+        predict(parsed_args.job, parsed_args.i, parsed_args.insights, parsed_args.weights)

@@ -19,6 +19,7 @@ from network import ensure_dir
 
 class KerasLogger(Callback):
     def __init__(self, trainer, backend, job_model, general_logger):
+        self.params = {}
         super(KerasLogger, self).__init__()
         self.validation_per_batch = []
         self.ins = None
@@ -29,6 +30,7 @@ class KerasLogger(Callback):
         self.trainer = trainer
         self.current = {}
         self.log_epoch = True
+        self.confusion_matrix = True
 
         self.backend = backend
         self.job_model = job_model
@@ -55,10 +57,7 @@ class KerasLogger(Callback):
     def on_train_begin(self, logs={}):
         self.start_time = time.time()
         self.last_batch_time = time.time()
-
-        # pprint('on_train_begin')
-        # pprint(logs)
-        # pprint(self.params)
+        self.trainer.set_status('TRAINING')
 
         self.current['epoch'] = 0
         self.current['started'] = self.start_time
@@ -71,17 +70,13 @@ class KerasLogger(Callback):
 
     def on_batch_begin(self, batch, logs={}):
 
-        # pprint('on_batch_begin')
-        # pprint(logs)
-        # pprint(self.current)
-
         if not self.data_gathered:
             # we need to do it in on_batch_begin due to the fact that self.model.validation_data is not availabe in on_train_begin
             self.data_gathered = True
             dataset_infos = {}
             dataset_info = {
                 'Training': self.params['nb_sample'],
-                'Validation': len(self.model.validation_data[0]) if self.model.validation_data else 0,
+                'Validation': len(self.model.validation_data[0]) if self.model.validation_data else self.trainer.nb_val_samples,
             }
             dataset_infos['input1'] = dataset_info
             self.trainer.set_job_info('datasets', dataset_infos)
@@ -93,13 +88,8 @@ class KerasLogger(Callback):
         self.current['batch_size'] = batch_size
 
     def on_batch_end(self, batch, logs={}):
+        self.filter_invalid_json_values(logs)
         loss = logs['loss']
-        if math.isnan(loss) or math.isinf(loss):
-            loss = -1
-
-        # pprint('on_batch_end %d ' % (batch,))
-        # pprint(logs)
-        # pprint(self.current)
 
         self.validation_per_batch.append(loss)
 
@@ -150,7 +140,8 @@ class KerasLogger(Callback):
 
         log['created'] = time.time()
         log['epoch'] = epoch+1
-        log['loss'] = sum(self.validation_per_batch) / float(len(self.validation_per_batch))
+        if 'loss' not in log and len(self.validation_per_batch) > 0:
+            log['loss'] = sum(self.validation_per_batch) / float(len(self.validation_per_batch))
 
         self.validation_per_batch = []
         log['validation_accuracy'] = {}
@@ -205,32 +196,32 @@ class KerasLogger(Callback):
         self.backend.job_add_status('epoch', log)
 
         if self.job_model.job['insights']:
-
             #Todo, support multiple inputs
             first_input_layer = self.model.input_layers[0]
 
             if first_input_layer != None:
 
-                # build confusion matrix
-                confusion_matrix = self.build_confusion_matrix()
                 images = self.build_insight_images()
+                # build confusion matrix
+                confusion_matrix = self.build_confusion_matrix() if self.confusion_matrix else None
 
                 self.backend.job_add_insight({'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
 
     def is_image_shape(self, x):
-        if len(x.shape[1]) != 4:
+        if len(x.shape) != 3 and len(x.shape) != 2:
             return False
+
+        if len(x.shape) == 2:
+            return True
 
         #  check if it has either 1 or 3 channel
         if K.image_dim_ordering() == 'th':
-            return (x.shape[1] == 1 or x.shape[1] == 3)
+            return (x.shape[0] == 1 or x.shape[0] == 3)
 
         if K.image_dim_ordering() == 'tf':
-            return (x.shape[3] == 1 or x.shape[3] == 3)
+            return (x.shape[2] == 1 or x.shape[2] == 3)
 
     def get_first_input_sample(self):
-        input_data_x = None
-
         if self.model.validation_data:
             input_data_x = []
             for i, input in enumerate(self.model.inputs):
@@ -264,7 +255,7 @@ class KerasLogger(Callback):
 
         try:
             for i, layer in enumerate(self.model.input_layers):
-                x = self.insights_x[i]
+                x = np.squeeze(self.insights_x[i])
                 if self.is_image_shape(x):
                     image = self.make_image(x)
                     images.append({
@@ -355,7 +346,7 @@ class KerasLogger(Callback):
             for i, layer in enumerate(self.model.input_layers):
                 input_data_x.append(self.model.validation_data[i])
 
-            input_data_y = self.model.validation_data[len(self.model.input_layers)]
+            input_data_y = np.squeeze(self.model.validation_data[len(self.model.input_layers)])
         else:
             #model does not have validation_data attribute, which is the case when a generator is given
             if self.trainer.is_generator(self.trainer.data_validation):
@@ -422,7 +413,7 @@ class KerasLogger(Callback):
         else:
             prediction = self.model.predict(input_data_x, batch_size=self.job_model.get_batch_size())
             predicted_classes = prediction.argmax(axis=-1)
-            expected_classes = input_data_y.argmax(axis=-1)
+            expected_classes = np.array(input_data_y).argmax(axis=-1)
 
             try:
                 for sample_idx, predicted_class in enumerate(predicted_classes):
@@ -437,6 +428,8 @@ class KerasLogger(Callback):
 
     def filter_invalid_json_values(self, dict):
         for k,v in dict.iteritems():
+            if isinstance(v, (np.ndarray, np.generic)):
+                dict[k] = v.tolist()
             if math.isnan(v) or math.isinf(v):
                 dict[k] = -1
 

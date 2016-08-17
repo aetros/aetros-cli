@@ -119,10 +119,8 @@ class ImageReadWorker(Thread):
             else:
                 return
 
-            if input is None:
-                return
-
-            self.images.append([input, validation, category_dir])
+            if input is not None and len(input) > 0:
+                self.images.append([input, validation, category_dir])
         except IOError as e:
             print('Could not open %s due to %s' % (path, e.message))
             return

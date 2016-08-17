@@ -17,7 +17,7 @@ from JobModel import JobModel
 from AetrosBackend import AetrosBackend
 
 
-def predict(job_id, file_path, insights=False, weights_path=None):
+def predict(job_id, file_paths, insights=False, weights_path=None):
     print("Prepare network ...")
     aetros_backend = AetrosBackend(job_id)
 
@@ -51,24 +51,21 @@ def predict(job_id, file_path, insights=False, weights_path=None):
 
     general_logger = GeneralLogger(job, log, aetros_backend)
     trainer = Trainer(aetros_backend, job_model, general_logger)
-
     job_model.set_input_shape(trainer)
 
     print("Load model and compile ...")
-    model_provider = job_model.get_model_provider()
-    model = model_provider.get_model(trainer)
 
-    loss = model_provider.get_loss(trainer)
-    optimizer = model_provider.get_optimizer(trainer)
+    model = job_model.get_built_model(trainer)
 
-    model_provider.compile(trainer, model, loss, optimizer)
     job_model.load_weights(model, weights_path)
 
-    input = job_model.convert_file_to_input_node(file_path, job_model.get_first_input_layer())
+    inputs = []
+    for idx, file_path in enumerate(file_paths):
+        inputs.append(job_model.convert_file_to_input_node(file_path, job_model.get_input_node(idx)))
 
     print("Start prediction ...")
 
-    prediction = job_model.predict(model, np.array([input]))
+    prediction = job_model.predict(model, np.array(inputs))
     print(json.dumps(prediction, indent=4))
 
 

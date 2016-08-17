@@ -57,15 +57,37 @@ class JobModel:
 
     def set_input_shape(self, trainer):
 
-        first_input_layer = self.get_first_input_layer()
+        trainer.input_shape = {}
 
-        size = (int(first_input_layer['width']), (first_input_layer['height']))
-        if first_input_layer['inputType'] == 'image':
-            trainer.input_shape = (1, size[0], size[1])
-        elif first_input_layer['inputType'] == 'image_rgb':
-            trainer.input_shape = (3, size[0], size[1])
+        for node in self.job['config']['layer'][0]:
+            size = (int(node['width']), (node['height']))
+            if node['inputType'] == 'image':
+                shape = (1, size[0], size[1])
+            elif node['inputType'] == 'image_rgb':
+                shape = (3, size[0], size[1])
+            else:
+                shape = (size[0] * size[1],)
+
+            trainer.input_shape[node['varName']] = shape
+
+    def get_built_model(self, trainer):
+
+        if self.job['config']['fromCode']:
+            # its built with custom code using KerasIntegration class
+            from keras.models import model_from_json
+            model = model_from_json(self.job['config']['model'])
+            return model
         else:
-            trainer.input_shape = (size[0] * size[1],)
+            # its built with model designer
+            model_provider = self.get_model_provider()
+            model = model_provider.get_model(trainer)
+
+            loss = model_provider.get_loss(trainer)
+            optimizer = model_provider.get_optimizer(trainer)
+
+            model_provider.compile(trainer, model, loss, optimizer)
+
+        return model
 
     def load_weights(self, model, weights_path=None):
         from keras import backend as K
@@ -113,8 +135,7 @@ class JobModel:
 
         f.close()
 
-    def predict(self,model, input):
-
+    def predict(self, model, input):
         prediction = model.predict(input)
 
         top5 = np.argsort(-prediction[0])[:5]
@@ -128,9 +149,11 @@ class JobModel:
 
         return result
 
+    def encode_input_to_input_node(self, input, input_node):
+
+        return input
 
     def convert_file_to_input_node(self, file_path, input_node):
-
         size = (int(input_node['width']), int(input_node['height']))
 
         if 'http://' in file_path or 'https://' in file_path:
@@ -145,7 +168,12 @@ class JobModel:
         if input_node['inputType'] == 'list':
             raise Exception("List input not yet available")
         else:
-            image = Image.open(local_path)
+            try:
+                image = Image.open(local_path)
+            except:
+                print("Could not open %s" % (local_path,))
+                return []
+
             image = image.resize(size, Image.ANTIALIAS)
 
             if input_node['inputType'] == 'image':
@@ -264,6 +292,10 @@ class JobModel:
     def get_first_input_layer(self):
         config = self.job['config']
         return config['layer'][0][0]
+
+    def get_input_node(self, idx):
+        config = self.job['config']
+        return config['layer'][0][idx]
 
     def get_first_output_layer(self):
         config = self.job['config']

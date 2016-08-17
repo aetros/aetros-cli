@@ -106,21 +106,45 @@ class ServerCommand:
                 self.lock = lock
 
             @cherrypy.expose
-            def predict(self, path):
-                if not path:
-                    return json.dumps({'error': 'not_input_given'})
-
+            def predict(self, path = None, paths = None, uploads = None, inputs = None):
                 self.lock.acquire()
                 result = {'times': {}}
-                try:
-                    print("Start prediction of %s" % (path,))
 
+                try:
                     start = time.time()
-                    input = self.job_model.convert_file_to_input_node(path, self.job_model.get_first_input_layer())
+
+                    if not path and not paths and not uploads and not inputs:
+                        return json.dumps({'error': 'not_input_given'})
+
+                    if path and not paths and not uploads and not inputs:
+                        paths = [path]
+
+                    encoded_inputs = []
+                    if paths:
+                        if not isinstance(paths, list):
+                            paths = [paths]
+
+                        for idx, file_path in enumerate(paths):
+                            encoded_inputs.append(self.job_model.convert_file_to_input_node(file_path, self.job_model.get_input_node(idx)))
+
+                    if inputs:
+                        if not isinstance(inputs, list):
+                            inputs = [inputs]
+
+                        for idx, input in enumerate(inputs):
+                            encoded_inputs.append(self.job_model.encode_input_to_input_node(input, self.model.input_layers[idx]))
+
+                    if uploads:
+                        if not isinstance(uploads, list):
+                            uploads = [uploads]
+
+                        for idx, upload in enumerate(uploads):
+                            encoded_inputs.append(self.job_model.convert_file_to_input_node(upload.filename, self.job_model.get_input_node(idx)))
+
                     result['times']['prepare_fetch_input'] = time.time() - start
 
                     start = time.time()
-                    prediction = self.job_model.predict(self.model, numpy.array([input]))
+                    prediction = self.job_model.predict(self.model, numpy.array(encoded_inputs))
                     result['times']['prediction'] = time.time() - start
 
                     self.lock.release()
@@ -132,9 +156,12 @@ class ServerCommand:
 
                 return json.dumps(result)
 
+
         cherrypy.config.update({
             'server.socket_host': host,
-            'server.socket_port': port
+            'server.socket_port': port,
+            'server.thread_pool': 1,
         })
 
+        print("Starting server ... Use http://127.0.0.1:8000/predict?paths=path_to_image.jpg or upload files named 'uploads[0]' to http://127.0.0.1:8000/predict.")
         cherrypy.quickstart(WebServer(self.lock, self.job_model, self.model))

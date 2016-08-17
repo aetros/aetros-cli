@@ -257,11 +257,12 @@ class AetrosBackend:
 
         return job_id
 
-    def ensure_network(self, network_name, settings, network_type='custom', layers=None, graph=None):
+    def ensure_network(self, network_name, model_json, settings=None, network_type='custom', layers=None, graph=None):
         response = self.put('network/ensure', {
             'id': network_name,
             'type': network_type,
-            'settings': json.dumps(settings, allow_nan=False),
+            'model': model_json,
+            'settings': json.dumps(settings, allow_nan=False) if settings else None,
             'layers': json.dumps(layers, allow_nan=False),
             'graph': json.dumps(graph, allow_nan=False),
         })
