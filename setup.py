@@ -19,6 +19,8 @@ setup(name='aetros',
             'numpy',
             'scipy',
             'h5py',
+            'psutil',
+            'image',
             'cherrypy>=7.1.0',
             'py-cpuinfo==0.2.3'
       ),
