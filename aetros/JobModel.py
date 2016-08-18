@@ -76,12 +76,16 @@ class JobModel:
 
     def get_built_model(self, trainer):
 
-        if self.job['config']['fromCode']:
+        if 'fromCode' in self.job['config'] and self.job['config']['fromCode']:
             # its built with custom code using KerasIntegration class
             from keras.models import model_from_json
             model = model_from_json(self.job['config']['model'])
             return model
         else:
+
+            if 'classes' in self.job['info']:
+                trainer.output_size = len(self.job['info']['classes'])
+
             # its built with model designer
             model_provider = self.get_model_provider()
             model = model_provider.get_model(trainer)

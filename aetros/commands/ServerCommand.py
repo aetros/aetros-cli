@@ -78,14 +78,7 @@ class ServerCommand:
         self.job_model.set_input_shape(trainer)
 
         print ("Loading model ...")
-        model_provider = self.job_model.get_model_provider()
-        model = model_provider.get_model(trainer)
-
-        loss = model_provider.get_loss(trainer)
-        optimizer = model_provider.get_optimizer(trainer)
-
-        print ("Compiling ...")
-        model_provider.compile(trainer, model, loss, optimizer)
+        model = self.job_model.get_built_model(trainer)
 
         print ("Load weights %s ..." %(weights_path,))
         self.job_model.load_weights(model, weights_path)
