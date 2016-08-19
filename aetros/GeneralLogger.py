@@ -1,6 +1,9 @@
+from __future__ import absolute_import
 import sys
 import time
 import datetime
+import six
+
 
 class GeneralLogger():
     def __init__(self, job, logFD=None, aetros_backend=None, error=False):
@@ -15,7 +18,7 @@ class GeneralLogger():
         ts = time.time()
         st = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
 
-        return st + '.' + str(ts%1)[2:6]
+        return st + '.' + str(ts % 1)[2:6]
 
     def get_line(self, line):
         if line:
@@ -34,7 +37,7 @@ class GeneralLogger():
         # if message == '\n':
         #     return
 
-        message = unicode(message)
+        message = six.text_type(message)
 
         # if not self.error:
         #     message = self.get_line(message)

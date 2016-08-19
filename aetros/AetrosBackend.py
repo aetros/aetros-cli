@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+from __future__ import print_function
 import os
 from threading import Thread, Lock
 
@@ -8,7 +10,7 @@ import json
 import time
 
 from io import BytesIO
-from requests.auth import HTTPBasicAuth
+# from requests.auth import HTTPBasicAuth
 
 
 def dict_factory(cursor, row):
@@ -19,6 +21,7 @@ def dict_factory(cursor, row):
 
 
 class EventListener:
+
     def __init__(self):
         self.events = {}
 
@@ -35,7 +38,8 @@ class EventListener:
 
 
 class AetrosBackend:
-    def __init__(self, job_id = None):
+
+    def __init__(self, job_id=None):
         self.event_listener = EventListener()
         self.api_token = os.getenv('API_KEY')
 
@@ -83,11 +87,11 @@ class AetrosBackend:
                 if response.content:
                     content = json.loads(response.content)
                     if 'not_exists' in content:
-                        print "Job deleted meanwhile. Stop current job."
+                        print("Job deleted meanwhile. Stop current job.")
                         os.kill(os.getpid(), signal.SIGINT)
                     elif 'stop' in content:
                         if not self.stop_requested:
-                            print "Job stopped through trainer."
+                            print("Job stopped through trainer.")
                             self.stop_requested = True
                             os.kill(os.getpid(), signal.SIGINT)
                     else:
@@ -104,7 +108,7 @@ class AetrosBackend:
                 self.queueLock.acquire()
                 self.queue = queue_to_save + self.queue
                 self.queueLock.release()
-                print "Error in sending job information: %s" % (response.content,)
+                print("Error in sending job information: %s" % (response.content,))
 
         except Exception:
             self.queueLock.acquire()
@@ -124,10 +128,10 @@ class AetrosBackend:
         self.queueLock.release()
 
         if len(queue) > 0:
-            print "Sending last (%d) monitoring information to server ... " % (len(queue),)
+            print("Sending last (%d) monitoring information to server ... " % (len(queue),))
             response = self.post('job/sync', json={'id': self.job_id, 'items': queue})
             if response.status_code != 200:
-                print "Error in sending job information."
+                print("Error in sending job information.")
 
     def kill(self):
         self.active_syncer = False
@@ -163,6 +167,7 @@ class AetrosBackend:
         files[name] = open(file_path, 'r')
 
         class CancelledError(Exception):
+
             def __init__(self, msg):
                 self.msg = msg
                 Exception.__init__(self, msg)
@@ -173,6 +178,7 @@ class AetrosBackend:
             __repr__ = __str__
 
         class BufferReader(BytesIO):
+
             def __init__(self, buf=b'',
                          callback=None,
                          cb_args=(),
@@ -211,7 +217,7 @@ class AetrosBackend:
                 if with_status:
                     self.set_status('UPLOAD WEIGHTS ' + str(current_progress) + '%')
                 else:
-                    print("{0}%".format(current_progress))
+                    print(("{0}%".format(current_progress)))
 
         files = {"upfile": (name, open(file_path, 'rb').read())}
 
@@ -223,14 +229,16 @@ class AetrosBackend:
 
         body = BufferReader(data, progress)
 
-        url = self.get_url('job/weights?id=%s&accuracy=%f.2' % (self.job_id, accuracy if accuracy is not None else -1))
+        url = self.get_url('job/weights?id=%s&accuracy=%f.2' %
+                           (self.job_id, accuracy if accuracy is not None else -1))
         response = requests.post(url, data=body, headers=headers)
 
         if response.status_code != 200:
-            raise Exception('Uploading of weights failed: %d: %s' % (response.status_code,response.content))
+            raise Exception('Uploading of weights failed: %d: %s' %
+                            (response.status_code, response.content))
 
     def set_status(self, status):
-        print 'Training status changed to %s ' % (status,)
+        print('Training status changed to %s ' % (status,))
         self.job_add_status('status', status)
 
     def get_best_weight_url(self, job_id):
@@ -279,8 +287,9 @@ class AetrosBackend:
 
         job = response.json()
 
-        if  job is None or 'error' in job:
-            raise Exception('Training/Version not found. Have you configured your token correctly? %s: %s' % (job['error'], job['message']))
+        if job is None or 'error' in job:
+            raise Exception('Training/Version not found. Have you configured your token correctly? %s: %s' %
+                            (job['error'], job['message']))
 
         return response.json()
 
@@ -295,13 +304,16 @@ class AetrosBackend:
             raise Exception('Version not found. Have you configured your token correctly?')
 
         if 'error' in job:
-            raise Exception('Version not found. Have you configured your token correctly? %s: %s' % (job['error'], job['message']))
+            raise Exception('Version not found. Have you configured your token correctly? %s: %s' % (
+                job['error'], job['message']))
 
         if not isinstance(job, dict):
-            raise Exception('Version does not exist. Make sure you created the job via AETROS TRAINER')
+            raise Exception(
+                'Version does not exist. Make sure you created the job via AETROS TRAINER')
 
         if not len(job['config']):
-            raise Exception('Version does not have a configuration. Make sure you created the job via AETROS TRAINER')
+            raise Exception(
+                'Version does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
         return job
 

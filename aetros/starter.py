@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 
+from __future__ import absolute_import
 import io
 import logging
 import os
@@ -8,13 +9,14 @@ import signal
 import sys
 import traceback
 
-import network
-from AetrosBackend import AetrosBackend
-from GeneralLogger import GeneralLogger
-from JobModel import JobModel
-from MonitorThread import MonitoringThread
-from Trainer import Trainer
-from network import ensure_dir
+from . import network
+from .AetrosBackend import AetrosBackend
+from .GeneralLogger import GeneralLogger
+from .JobModel import JobModel
+from .MonitorThread import MonitoringThread
+from .Trainer import Trainer
+from .network import ensure_dir
+import six
 
 
 def start(job_id, dataset_id=None, server_id='local', insights=False, insights_sample_path=None):
@@ -61,7 +63,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
     print("start network ...")
 
-    from KerasLogger import KerasLogger
+    from .KerasLogger import KerasLogger
     trainer = Trainer(aetros_backend, job_model, general_logger)
     keras_logger = KerasLogger(trainer, aetros_backend, job_model, general_logger)
     keras_logger.insights_sample_path = insights_sample_path
@@ -119,7 +121,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         if trainer.model:
             trainer.model.stop_training = True
 
-        log.write(unicode(traceback.format_exc()))
+        log.write(six.text_type(traceback.format_exc()))
         logging.error(traceback.format_exc())
 
         monitoringThread.stop()

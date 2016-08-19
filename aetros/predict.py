@@ -1,20 +1,21 @@
 from __future__ import print_function
 
+from __future__ import absolute_import
 import io
 import json
 import tempfile
 import urllib
 
 import numpy as np
-import sys
+# import sys
 import os
 
 from PIL import Image
 
 from aetros import network
 from aetros.network import ensure_dir
-from JobModel import JobModel
-from AetrosBackend import AetrosBackend
+from .JobModel import JobModel
+from .AetrosBackend import AetrosBackend
 
 
 def predict(job_id, file_paths, insights=False, weights_path=None):
@@ -46,8 +47,8 @@ def predict(job_id, file_paths, insights=False, weights_path=None):
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-    from GeneralLogger import GeneralLogger
-    from Trainer import Trainer
+    from .GeneralLogger import GeneralLogger
+    from .Trainer import Trainer
 
     general_logger = GeneralLogger(job, log, aetros_backend)
     trainer = Trainer(aetros_backend, job_model, general_logger)
@@ -67,7 +68,3 @@ def predict(job_id, file_paths, insights=False, weights_path=None):
 
     prediction = job_model.predict(model, np.array(inputs))
     print(json.dumps(prediction, indent=4))
-
-
-
-

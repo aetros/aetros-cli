@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+from __future__ import print_function
 import os
 import sys
 import tempfile
@@ -6,6 +8,8 @@ import urllib
 from PIL import Image
 
 import numpy as np
+from six.moves import zip
+
 
 class JobModel:
     def __init__(self, backend, job):
@@ -112,7 +116,7 @@ class JobModel:
         # new file format
         layer_names = [n.decode('utf8') for n in f.attrs['layer_names']]
         if len(layer_names) != len(model.layers):
-            print ("Warning: Layer count different")
+            print("Warning: Layer count different")
 
         # we batch weight value assignments in a single backend call
         # which provides a speedup in TensorFlow.
@@ -138,7 +142,7 @@ class JobModel:
                                     str(len(weight_values)) +
                                     ' elements.')
 
-                weight_value_tuples += zip(symbolic_weights, weight_values)
+                weight_value_tuples += list(zip(symbolic_weights, weight_values))
         K.batch_set_value(weight_value_tuples)
 
         f.close()
@@ -179,7 +183,7 @@ class JobModel:
             try:
                 image = Image.open(local_path)
             except:
-                print("Could not open %s" % (local_path,))
+                print(("Could not open %s" % (local_path,)))
                 return []
 
             image = image.resize(size, Image.ANTIALIAS)
@@ -212,16 +216,16 @@ class JobModel:
         sys.path.append(self.get_base_dir())
 
         import model_provider
-        print "Imported model_provider in %s " % (self.get_base_dir() + '/model_provider.py',)
+        print("Imported model_provider in %s " % (self.get_base_dir() + '/model_provider.py',))
         sys.path.pop()
 
         return model_provider
 
     def sync_weights(self):
         self.backend.job_add_status('status', 'SYNC WEIGHTS')
-        print "Sync weights ..."
+        print("Sync weights ...")
         self.backend.upload_weights('best.hdf5', self.get_weights_filepath_best(), with_status=True)
-        print "Weights synced."
+        print("Weights synced.")
 
     def network_get_datasets(self, trainer):
         datasets_dir = self.get_dataset_dir()
@@ -229,7 +233,7 @@ class JobModel:
         datasets = {}
 
         from aetros.utils import get_option
-        from auto_dataset import get_images, read_images_keras_generator, read_images_in_memory
+        from .auto_dataset import get_images, read_images_keras_generator, read_images_in_memory
 
         # load placeholder, auto data
         config = self.job['config']
@@ -238,12 +242,12 @@ class JobModel:
 
                 dataset = config['datasets'][net['datasetId']]
                 if not dataset:
-                    raise Exception('Dataset of id %s does not exists. Available %s' % (net['datasetId'], ','.join(config['datasets'].keys())))
+                    raise Exception('Dataset of id %s does not exists. Available %s' % (net['datasetId'], ','.join(list(config['datasets'].keys()))))
 
                 if dataset['type'] == 'images_upload' or dataset['type'] == 'images_search':
 
                     connected_to_net = self.get_connected_network(config['layer'], net)
-                    if connected_to_net == None:
+                    if connected_to_net is None:
                         # this input is not in use, so we dont need to calculate its dataset
                         continue
 
@@ -263,10 +267,9 @@ class JobModel:
 
                     sys.path.append(datasets_dir)
                     data_provider = __import__(name, '')
-                    print "Imported dataset provider in %s " % (datasets_dir + '/' + name + '.py', )
+                    print("Imported dataset provider in %s " % (datasets_dir + '/' + name + '.py', ))
                     sys.path.pop()
                     datasets[dataset['id']] = data_provider.get_data()
-
 
         return datasets
 
@@ -276,7 +279,7 @@ class JobModel:
         dataset_id = output_layer['datasetId']
         dataset = config['datasets'][dataset_id]
         if not dataset:
-            raise Exception('Dataset of id %s does not exists. Available %s' % (dataset_id, ','.join(config['datasets'].keys())))
+            raise Exception('Dataset of id %s does not exists. Available %s' % (dataset_id, ','.join(list(config['datasets'].keys()))))
 
         if 'classes' in self.job['info']:
             return self.job['info']['classes'][prediction]
@@ -294,7 +297,7 @@ class JobModel:
                 else:
                     return prediction
             except Exception as e:
-                print("Method get_class_label failed in %s " % (datasets_dir + '/' + name + '.py', ))
+                print(("Method get_class_label failed in %s " % (datasets_dir + '/' + name + '.py', )))
                 raise e
 
     def get_first_input_layer(self):

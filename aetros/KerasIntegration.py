@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 
+from __future__ import absolute_import
 from keras.engine import InputLayer, Merge
 from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
 from keras.models import Sequential
@@ -275,7 +276,6 @@ class KerasIntegration():
         # if isinstance(model, Sequential):
         #     for layer in model.layers:
         #         layers[]
-
 
         # 'fc': 'Dense',
         # 'conv': 'Convolutional2D',

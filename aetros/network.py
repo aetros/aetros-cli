@@ -1,24 +1,31 @@
 from __future__ import print_function, division
+from __future__ import absolute_import
 import json
 import os
 from pprint import pprint
+import six
+from six.moves import range
+
 
 def ensure_dir(d):
     if not os.path.isdir(d):
-        if os.path.isfile(d): #but a file, so delete it
+        if os.path.isfile(d):  # but a file, so delete it
             os.remove(d)
 
         os.makedirs(d)
 
+
 def get_total_params(model):
     total_params = 0
 
-    flattened_layers = model.flattened_layers if hasattr(model, 'flattened_layers') else model.layers
+    flattened_layers = model.flattened_layers if hasattr(
+        model, 'flattened_layers') else model.layers
 
     for i in range(len(flattened_layers)):
         total_params += flattened_layers[i].count_params()
 
     return total_params
+
 
 def collect_system_information(trainer):
     import psutil
@@ -36,11 +43,11 @@ def collect_system_information(trainer):
         if cuda.cuda_ndarray.cuda_ndarray.mem_info:
             gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
             trainer.set_job_info('cuda_device_max_memory', gpu[1])
-            free = gpu[0]/1024/1024/1024
-            total = gpu[1]/1024/1024/1024
-            used = total-free
+            free = gpu[0] / 1024 / 1024 / 1024
+            total = gpu[1] / 1024 / 1024 / 1024
+            used = total - free
             if trainer.on_gpu:
-                print("%.2fGB GPU memory used of %.2fGB" %(used, total))
+                print("%.2fGB GPU memory used of %.2fGB" % (used, total))
 
     trainer.set_job_info('on_gpu', trainer.on_gpu)
 
@@ -70,7 +77,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     general_logger.write('trainer.classes = %s\n' % (json.dumps(trainer.classes),))
 
     dataset_infos = {}
-    for idx, dataset in datasets.iteritems():
+    for idx, dataset in six.iteritems(datasets):
 
         if trainer.is_generator(dataset['X_train']):
             training = trainer.samples_per_epoch
@@ -90,7 +97,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
         dataset_infos[idx] = dataset_info
 
     trainer.set_job_info('datasets', dataset_infos)
-    keras_logger.write("Possible data keys '%s'\n" % "','".join(datasets.keys()))
+    keras_logger.write("Possible data keys '%s'\n" % "','".join(list(datasets.keys())))
 
     data_train = model_provider.get_training_data(trainer, datasets)
     data_validation = model_provider.get_validation_data(trainer, datasets)
@@ -109,6 +116,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     model.summary()
 
     model_provider.train(trainer, model, data_train, data_validation)
+
 
 def job_prepare(job):
     """
@@ -135,7 +143,8 @@ def job_prepare(job):
     for net in inputOutputNodes:
         if net['datasetId']:
             if net['datasetId'] not in config['datasets']:
-                raise Exception('Could not find dataset %s. You probably have no access. Available %s' % (net['datasetId'], ','.join(config['datasets'].keys())))
+                raise Exception('Could not find dataset %s. You probably have no access. Available %s' % (
+                    net['datasetId'], ','.join(list(config['datasets'].keys()))))
 
             dataset = config['datasets'][net['datasetId']]
             if dataset['type'] == 'python':

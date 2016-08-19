@@ -1,8 +1,10 @@
+from __future__ import absolute_import
+from __future__ import print_function
 import sys
 import os
 from argparse import RawTextHelpFormatter
 
-import aetros.const
+from aetros import const
 from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
 from aetros.commands.PredictCommand import PredictCommand
 from aetros.commands.ServerCommand import ServerCommand
@@ -20,6 +22,7 @@ command_summaries = [
     ['upload-weights', 'Uploads weights as new or existing job.'],
     ['server', 'Spawns a http server that handles incoming data as input and predicts output.'],
 ]
+
 
 def create_main_parser():
     import argparse
@@ -43,12 +46,13 @@ def create_main_parser():
 
     return parser
 
+
 def parseopts(args):
     if len(args) == 0:
 
         description = [''] + ['%-27s %s' % (i, j) for i, j in command_summaries]
         print("usage: API_KEY='key' aetros [command]\n")
-        print('Please don not forget to provide API_KEY as environment variable.\n\nPossible commands:\n' + ('\n'.join(description)))
+        print(('Please don not forget to provide API_KEY as environment variable.\n\nPossible commands:\n' + ('\n'.join(description))))
 
         sys.exit(1)
 
@@ -67,7 +71,7 @@ def main(args=None):
     cmd_name, cmd_args = parseopts(args)
 
     if cmd_name not in commands_dict:
-        print("Command %s not found" % (cmd_name, ))
+        print(("Command %s not found" % (cmd_name, )))
         sys.exit(1)
 
     command = commands_dict[cmd_name]()
