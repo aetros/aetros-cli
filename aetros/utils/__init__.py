@@ -1,7 +1,9 @@
 from __future__ import division
+from __future__ import absolute_import
 import time
 import datetime
 import numpy as np
+
 
 def get_option(dict, key, default=None, type=None):
     if key not in dict or dict[key] == '':
@@ -25,6 +27,7 @@ def get_time_with_milli(self):
     st = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
 
     return st + '.' + str(ts % 1)[2:6]
+
 
 def array_to_img(x, scale=True):
     """
