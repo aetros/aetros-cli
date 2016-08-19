@@ -1,6 +1,9 @@
 from __future__ import division
-import json
+from __future__ import absolute_import
+from __future__ import print_function
+# import json
 from threading import Lock
+
 
 class Trainer():
     def __init__(self, aetros_backend, job_model, logger):
@@ -75,11 +78,10 @@ class Trainer():
     def set_status(self, status):
         self.lock.acquire()
 
-        print 'Training status changed to %s ' % (status,)
+        print('Training status changed to %s ' % (status,))
         self.aetros_backend.job_add_status('status', status)
 
         self.lock.release()
 
     def set_job_info(self, key, value):
         self.aetros_backend.job_set_info_key(key, value)
-

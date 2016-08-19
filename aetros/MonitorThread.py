@@ -1,8 +1,10 @@
 from __future__ import division
+from __future__ import absolute_import
 import time
 import psutil
 from threading import Thread
 import numpy as np
+
 
 class MonitoringThread(Thread):
     def __init__(self, aetros_backend, trainer):

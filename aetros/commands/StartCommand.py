@@ -1,8 +1,9 @@
+from __future__ import absolute_import
 import argparse
-import os
 import sys
-
 import aetros.const
+import os
+
 
 class StartCommand:
 
@@ -25,7 +26,6 @@ class StartCommand:
             parser.print_help()
             sys.exit()
 
-        import os
         flags = os.environ['THEANO_FLAGS'] if 'THEANO_FLAGS' in os.environ else ''
         if parsed_args.gpu:
             if parsed_args.device:

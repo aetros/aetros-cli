@@ -1,5 +1,6 @@
 from __future__ import division
 
+from __future__ import absolute_import
 import base64
 import os
 import time
@@ -12,13 +13,15 @@ from keras import backend as K
 import keras.layers.convolutional
 
 import numpy as np
-from keras.models import Sequential
+# from keras.models import Sequential
 
 from aetros.utils.image import get_layer_vis_square
-from network import ensure_dir, get_total_params
+from .network import ensure_dir, get_total_params
+import six
 
 
 class KerasLogger(Callback):
+
     def __init__(self, trainer, backend, job_model, general_logger):
         self.params = {}
         super(KerasLogger, self).__init__()
@@ -64,8 +67,8 @@ class KerasLogger(Callback):
         self.current['epoch'] = 0
         self.current['started'] = self.start_time
         self.trainer.set_job_info('current', self.current)
-        nb_sample = self.params['nb_sample'] #training samples total
-        nb_epoch = self.params['nb_epoch'] #training epoches total
+        nb_sample = self.params['nb_sample']  # training samples total
+        nb_epoch = self.params['nb_epoch']  # training epoches total
 
         self.current['nb_sample'] = nb_sample
         self.current['nb_epoch'] = nb_epoch
@@ -73,7 +76,8 @@ class KerasLogger(Callback):
     def on_batch_begin(self, batch, logs={}):
 
         if not self.data_gathered:
-            # we need to do it in on_batch_begin due to the fact that self.model.validation_data is not availabe in on_train_begin
+            # we need to do it in on_batch_begin due to the fact that
+            # self.model.validation_data is not availabe in on_train_begin
             self.data_gathered = True
             dataset_infos = {}
             dataset_info = {
@@ -84,7 +88,7 @@ class KerasLogger(Callback):
             self.trainer.set_job_info('datasets', dataset_infos)
 
         batch_size = logs['size']
-        nb_batches = math.ceil(self.current['nb_sample'] / batch_size) #normal nb batches
+        nb_batches = math.ceil(self.current['nb_sample'] / batch_size)  # normal nb batches
 
         self.current['nb_batches'] = nb_batches
         self.current['batch_size'] = batch_size
@@ -96,26 +100,27 @@ class KerasLogger(Callback):
         self.validation_per_batch.append(loss)
 
         current_batch = logs['batch']
-        current_batch_size = logs['size'] #how many training items in this batch, differs for the last run
+        # how many training items in this batch, differs for the last run
+        current_batch_size = logs['size']
 
         self.made_batches += 1
 
         time_diff = time.time() - self.last_batch_time
 
-        if time_diff > 1 or batch == self.current['nb_batches']: #only each second or last batch
+        if time_diff > 1 or batch == self.current['nb_batches']:  # only each second or last batch
             self.batches_per_second = self.made_batches / time_diff
             self.made_batches = 0
             self.last_batch_time = time.time()
 
-            nb_sample = self.params['nb_sample'] #training samples total
-            nb_epoch = self.params['nb_epoch'] #training samples total
-            batch_size = self.current['batch_size'] #normal batch size
-            nb_batches = nb_sample / batch_size #normal nb batches
+            nb_sample = self.params['nb_sample']  # training samples total
+            nb_epoch = self.params['nb_epoch']  # training samples total
+            batch_size = self.current['batch_size']  # normal batch size
+            nb_batches = nb_sample / batch_size  # normal nb batches
 
             self.current['batchesPerSecond'] = self.batches_per_second
             self.current['itemsPerSecond'] = self.batches_per_second * current_batch_size
 
-            epochs_per_second = self.batches_per_second / nb_batches #all batches
+            epochs_per_second = self.batches_per_second / nb_batches  # all batches
             self.current['epochsPerSecond'] = epochs_per_second
 
             made_batches = (self.current['epoch'] * nb_batches) + current_batch
@@ -141,7 +146,7 @@ class KerasLogger(Callback):
         self.filter_invalid_json_values(log)
 
         log['created'] = time.time()
-        log['epoch'] = epoch+1
+        log['epoch'] = epoch + 1
         if 'loss' not in log and len(self.validation_per_batch) > 0:
             log['loss'] = sum(self.validation_per_batch) / float(len(self.validation_per_batch))
 
@@ -157,7 +162,7 @@ class KerasLogger(Callback):
         total_accuracy = 0
 
         for layer in self.model.output_layers:
-            #todo, this is not very generic
+            # todo, this is not very generic
             log['validation_loss'][layer.name] = log.get('val_loss', 0)
             log['validation_accuracy'][layer.name] = log.get('val_acc', 0)
 
@@ -195,22 +200,24 @@ class KerasLogger(Callback):
         self.trainer.set_job_info('current', self.current)
 
         if self.log_epoch:
-            line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (log['epoch'], log['loss'], log.get('acc', 0), total_loss, total_accuracy, )
+            line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (
+                log['epoch'], log['loss'], log.get('acc', 0), total_loss, total_accuracy, )
             self.general_logger.write(line)
 
         self.backend.job_add_status('epoch', log)
 
         if self.job_model.job['insights']:
-            #Todo, support multiple inputs
+            # Todo, support multiple inputs
             first_input_layer = self.model.input_layers[0]
 
-            if first_input_layer != None:
+            if first_input_layer is not None:
 
                 images = self.build_insight_images()
                 # build confusion matrix
                 confusion_matrix = self.build_confusion_matrix() if self.confusion_matrix else None
 
-                self.backend.job_add_insight({'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
+                self.backend.job_add_insight(
+                    {'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
 
     def is_image_shape(self, x):
         if len(x.shape) != 3 and len(x.shape) != 2:
@@ -237,7 +244,7 @@ class KerasLogger(Callback):
                 for layer in self.model.input_layers:
                     X = self.trainer.data_train['x'][layer.name]
                     if self.trainer.is_generator(X):
-                        batch_x, batch_y = X.next()
+                        batch_x, batch_y = next(X)
                         input_data_x.append([batch_x[0]])
                     else:
                         input_data_x.append([X[0]])
@@ -245,7 +252,7 @@ class KerasLogger(Callback):
                 input_data_x = []
                 for X in self.trainer.data_train['x']:
                     if self.trainer.is_generator(X):
-                        batch_x, batch_y = X.next()
+                        batch_x, batch_y = next(X)
                         input_data_x.append([batch_x[0]])
                     else:
                         input_data_x.append([X[0]])
@@ -301,12 +308,11 @@ class KerasLogger(Callback):
                     data = layer.W.get_value()
                     image = PIL.Image.fromarray(get_layer_vis_square(data))
                     images.append({
-                        'id': layer.name+'_weights',
+                        'id': layer.name + '_weights',
                         'type': 'convolution',
                         'title': layer.name + ' weights',
                         'image': self.to_base64(image)
                     })
-
 
             if isinstance(layer, keras.layers.Dense):
 
@@ -339,7 +345,8 @@ class KerasLogger(Callback):
     def build_confusion_matrix(self):
         confusion_matrix = {}
 
-        model_has_validation_data = hasattr(self.model, 'validation_data') and self.model.validation_data
+        model_has_validation_data = hasattr(
+            self.model, 'validation_data') and self.model.validation_data
         if not model_has_validation_data and not self.trainer.data_validation:
             return confusion_matrix
 
@@ -361,26 +368,27 @@ class KerasLogger(Callback):
 
             input_data_y = np.squeeze(self.model.validation_data[len(self.model.input_layers)])
         else:
-            #model does not have validation_data attribute, which is the case when a generator is given
+            # model does not have validation_data attribute, which is the case when a
+            # generator is given
             if self.trainer.is_generator(self.trainer.data_validation):
                 input_data_x = self.trainer.data_validation
             else:
-                #it's probably struct of AETROS code generation
+                # it's probably struct of AETROS code generation
                 if 'x' in self.trainer.data_validation:
                     if self.trainer.is_generator(self.trainer.data_validation['x']):
                         input_data_x = self.trainer.data_validation['x']
                     elif isinstance(self.trainer.data_validation['x'], dict):
-                        for k, X in self.trainer.data_validation['x'].iteritems():
+                        for k, X in six.iteritems(self.trainer.data_validation['x']):
                             input_data_x = X
 
                         if not self.trainer.is_generator(input_data_x):
-                            for k, Y in self.trainer.data_validation['y'].iteritems():
+                            for k, Y in six.iteritems(self.trainer.data_validation['y']):
                                 input_data_y = Y
 
                     elif isinstance(self.trainer.data_validation['x'], list):
                         input_data_x = self.trainer.data_validation['x'][0]
                         if not self.trainer.is_generator(input_data_x):
-                                input_data_y = self.trainer.data_validation['y'][0]
+                            input_data_y = self.trainer.data_validation['y'][0]
 
         if input_data_x is None:
             return confusion_matrix
@@ -391,7 +399,7 @@ class KerasLogger(Callback):
             processed_samples = 0
 
             while processed_samples < self.trainer.nb_val_samples:
-                generator_output = input_data_x.next()
+                generator_output = next(input_data_x)
                 if len(generator_output) == 2:
                     x, y = generator_output
                     sample_weight = None
@@ -424,7 +432,8 @@ class KerasLogger(Callback):
                     pass
 
         else:
-            prediction = self.model.predict(input_data_x, batch_size=self.job_model.get_batch_size())
+            prediction = self.model.predict(
+                input_data_x, batch_size=self.job_model.get_batch_size())
             predicted_classes = prediction.argmax(axis=-1)
             expected_classes = np.array(input_data_y).argmax(axis=-1)
 
@@ -440,7 +449,7 @@ class KerasLogger(Callback):
         return confusion_matrix
 
     def filter_invalid_json_values(self, dict):
-        for k,v in dict.iteritems():
+        for k, v in six.iteritems(dict):
             if isinstance(v, (np.ndarray, np.generic)):
                 dict[k] = v.tolist()
             if math.isnan(v) or math.isinf(v):
@@ -466,7 +475,7 @@ class KerasLogger(Callback):
         from aetros.utils import array_to_img
 
         img = array_to_img(neurons.reshape((1, len(neurons), 1)))
-        img = img.resize((9, len(neurons)*8))
+        img = img.resize((9, len(neurons) * 8))
 
         return img
 
@@ -474,12 +483,12 @@ class KerasLogger(Callback):
         from aetros.utils import array_to_img
         cols = int(math.ceil(math.sqrt(len(neurons))))
 
-        even_length = cols*cols
+        even_length = cols * cols
         diff = even_length - len(neurons)
         if diff > 0:
             neurons = np.append(neurons, np.zeros(diff, dtype=neurons.dtype))
 
         img = array_to_img(neurons.reshape((1, cols, cols)))
-        img = img.resize((cols*8, cols*8))
+        img = img.resize((cols * 8, cols * 8))
 
         return img
