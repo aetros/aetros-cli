@@ -158,14 +158,17 @@ class KerasLogger(Callback):
 
         for layer in self.model.output_layers:
             #todo, this is not very generic
-            log['validation_loss'][layer.name] = log['val_loss'] #outs[0]
-            log['validation_accuracy'][layer.name] = log['val_acc'] #outs[1]
+            log['validation_loss'][layer.name] = log.get('val_loss', 0)
+            log['validation_accuracy'][layer.name] = log.get('val_acc', 0)
 
-            log['training_loss'][layer.name] = log['loss'] #outs[0]
-            log['training_accuracy'][layer.name] = log['acc'] #outs[1]
+            log['training_loss'][layer.name] = log['loss']
+            log['training_accuracy'][layer.name] = log.get('acc', 0)
 
-            total_loss += log['val_loss']
-            total_accuracy += log['val_acc']
+            total_loss += log.get('val_loss', 0)
+            total_accuracy += log.get('val_acc', 0)
+
+        total_loss /= len(self.model.output_layers)
+        total_accuracy /= len(self.model.output_layers)
 
         if total_accuracy > self.best_total_accuracy:
             self.best_total_accuracy = total_accuracy
@@ -192,7 +195,7 @@ class KerasLogger(Callback):
         self.trainer.set_job_info('current', self.current)
 
         if self.log_epoch:
-            line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (log['epoch'], log['loss'], log.get('acc'), log['val_loss'], log.get('val_acc'), )
+            line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (log['epoch'], log['loss'], log.get('acc', 0), total_loss, total_accuracy, )
             self.general_logger.write(line)
 
         self.backend.job_add_status('epoch', log)
@@ -279,7 +282,7 @@ class KerasLogger(Callback):
         for layer in self.model.layers:
             if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
 
-                fn = K.function(inputs, [layer.output])
+                fn = K.function(inputs, self.get_layout_output_tensors(layer))
                 Y = fn(input_data_x_sample)[0]
 
                 data = np.squeeze(Y)
@@ -307,7 +310,7 @@ class KerasLogger(Callback):
 
             if isinstance(layer, keras.layers.Dense):
 
-                fn = K.function(inputs, [layer.output])
+                fn = K.function(inputs, self.get_layout_output_tensors(layer))
                 Y = fn(input_data_x_sample)[0]
 
                 node = self.job_model.get_model_node(layer.name)
@@ -324,6 +327,14 @@ class KerasLogger(Callback):
                 })
 
         return images
+
+    def get_layout_output_tensors(self, layer):
+        outputs = []
+
+        for idx, node in enumerate(layer.inbound_nodes):
+            outputs.append(layer.get_output_at(idx))
+
+        return outputs
 
     def build_confusion_matrix(self):
         confusion_matrix = {}
