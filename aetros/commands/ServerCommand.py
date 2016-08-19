@@ -1,3 +1,5 @@
+from __future__ import absolute_import
+from __future__ import print_function
 import argparse
 import json
 import os
@@ -5,6 +7,7 @@ import sys
 import urllib
 from threading import Lock
 import time
+
 
 class ServerCommand:
 
@@ -41,7 +44,7 @@ class ServerCommand:
         from aetros.Trainer import Trainer
         from aetros.network import ensure_dir
 
-        print ("...")
+        print("...")
         self.lock.acquire()
         aetros_backend = AetrosBackend(parsed_args.id)
         job = aetros_backend.get_light_job()
@@ -55,7 +58,7 @@ class ServerCommand:
         else:
             weights_path = self.job_model.get_weights_filepath_best()
 
-        print ("Check weights ...")
+        print("Check weights ...")
 
         if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
             weight_url = aetros_backend.get_best_weight_url(parsed_args.id)
@@ -63,7 +66,7 @@ class ServerCommand:
                 print("No weights available for this job.")
                 exit(1)
 
-            print("Download weights %s to %s .." % (weight_url, weights_path))
+            print(("Download weights %s to %s .." % (weight_url, weights_path)))
             ensure_dir(os.path.dirname(weights_path))
 
             f = open(weights_path, 'wb')
@@ -77,12 +80,12 @@ class ServerCommand:
 
         self.job_model.set_input_shape(trainer)
 
-        print ("Loading model ...")
+        print("Loading model ...")
         model = self.job_model.get_built_model(trainer)
 
-        print ("Load weights %s ..." %(weights_path,))
+        print(("Load weights %s ..." % (weights_path,)))
         self.job_model.load_weights(model, weights_path)
-        print ("Locked and loaded.")
+        print("Locked and loaded.")
 
         self.lock.release()
 
@@ -99,7 +102,7 @@ class ServerCommand:
                 self.lock = lock
 
             @cherrypy.expose
-            def predict(self, path = None, paths = None, uploads = None, inputs = None):
+            def predict(self, path=None, paths=None, uploads=None, inputs=None):
                 self.lock.acquire()
                 result = {'times': {}}
 
@@ -148,7 +151,6 @@ class ServerCommand:
                 result['prediction'] = prediction
 
                 return json.dumps(result)
-
 
         cherrypy.config.update({
             'server.socket_host': host,
