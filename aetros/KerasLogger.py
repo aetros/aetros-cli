@@ -293,7 +293,6 @@ class KerasLogger(Callback):
                 Y = fn(input_data_x_sample)[0]
 
                 data = np.squeeze(Y)
-                # print("Layer Activations " + layer.name)
                 image = PIL.Image.fromarray(get_layer_vis_square(data))
 
                 images.append({
@@ -304,8 +303,7 @@ class KerasLogger(Callback):
                 })
 
                 if hasattr(layer, 'W') and layer.W:
-                    # print("Layer Weights " + layer.name)
-                    data = layer.W.get_value()
+                    data = layer.get_weights()[0]
                     image = PIL.Image.fromarray(get_layer_vis_square(data))
                     images.append({
                         'id': layer.name + '_weights',
