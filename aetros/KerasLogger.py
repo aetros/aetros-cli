@@ -318,12 +318,16 @@ class KerasLogger(Callback):
 
                 fn = K.function(inputs, self.get_layout_output_tensors(layer))
                 Y = fn(input_data_x_sample)[0]
+                Y = np.squeeze(Y)
+
+                if Y.size == 1:
+                    Y = np.array([Y])
 
                 node = self.job_model.get_model_node(layer.name)
                 if node and node['activationFunction'] == 'softmax':
-                    image = self.make_image_from_dense_softmax(np.squeeze(Y))
+                    image = self.make_image_from_dense_softmax(Y)
                 else:
-                    image = self.make_image_from_dense(np.squeeze(Y))
+                    image = self.make_image_from_dense(Y)
 
                 images.append({
                     'id': layer.name,
