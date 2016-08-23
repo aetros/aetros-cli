@@ -27,8 +27,9 @@ class MonitoringThread(Thread):
         mem = psutil.virtual_memory()
 
         gpu_memory_use = None
+        import keras.backend as K
 
-        if self.trainer.on_gpu:
+        if self.trainer.on_gpu and K.backend() == 'theano':
             from theano.sandbox import cuda
             if cuda.cuda_ndarray.cuda_ndarray.mem_info:
                 gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()

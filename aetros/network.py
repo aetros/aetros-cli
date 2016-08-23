@@ -33,21 +33,24 @@ def collect_system_information(trainer):
     mem = psutil.virtual_memory()
     trainer.set_job_info('memory_total', mem.total)
 
-    # at this point, theano is already initialised through KerasLogger
-    from theano.sandbox import cuda
-    trainer.set_job_info('cuda_available', cuda.cuda_available)
-    if cuda.cuda_available:
-        trainer.on_gpu = cuda.use.device_number is not None
-        trainer.set_job_info('cuda_device_number', cuda.active_device_number())
-        trainer.set_job_info('cuda_device_name', cuda.active_device_name())
-        if cuda.cuda_ndarray.cuda_ndarray.mem_info:
-            gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
-            trainer.set_job_info('cuda_device_max_memory', gpu[1])
-            free = gpu[0] / 1024 / 1024 / 1024
-            total = gpu[1] / 1024 / 1024 / 1024
-            used = total - free
-            if trainer.on_gpu:
-                print("%.2fGB GPU memory used of %.2fGB" % (used, total))
+    import keras.backend as K
+
+    if K.backend() == 'theano':
+        # at this point, theano is already initialised through KerasLogger
+        from theano.sandbox import cuda
+        trainer.set_job_info('cuda_available', cuda.cuda_available)
+        if cuda.cuda_available:
+            trainer.on_gpu = cuda.use.device_number is not None
+            trainer.set_job_info('cuda_device_number', cuda.active_device_number())
+            trainer.set_job_info('cuda_device_name', cuda.active_device_name())
+            if cuda.cuda_ndarray.cuda_ndarray.mem_info:
+                gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
+                trainer.set_job_info('cuda_device_max_memory', gpu[1])
+                free = gpu[0] / 1024 / 1024 / 1024
+                total = gpu[1] / 1024 / 1024 / 1024
+                used = total - free
+                if trainer.on_gpu:
+                    print("%.2fGB GPU memory used of %.2fGB" % (used, total))
 
     trainer.set_job_info('on_gpu', trainer.on_gpu)
 
