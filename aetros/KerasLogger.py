@@ -4,7 +4,10 @@ from __future__ import absolute_import
 import base64
 import os
 import time
-import cStringIO
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from io import StringIO
 
 import PIL.Image
 import math
@@ -458,7 +461,7 @@ class KerasLogger(Callback):
                 dict[k] = -1
 
     def to_base64(self, image):
-        buffer = cStringIO.StringIO()
+        buffer = StringIO()
         image.save(buffer, format="JPEG", optimize=True, quality=80)
         return base64.b64encode(buffer.getvalue())
 

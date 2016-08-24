@@ -8,7 +8,7 @@ from six.moves import range
 try:
     from cStringIO import StringIO
 except ImportError:
-    from StringIO import StringIO
+    from io import StringIO
 
 import numpy as np
 import PIL.Image
@@ -38,7 +38,7 @@ def upscale(image, ratio):
     """
     return upscaled image array
     Arguments:
-    image -- a (H,W,C) numpy.ndarray
+    image -- a (heigt, width , channels) numpy.ndarray
     ratio -- scaling factor (>1)
     """
     if not isinstance(image, np.ndarray):
@@ -56,7 +56,7 @@ def upscale(image, ratio):
 
 def resize_image(image, height, width,
                  channels=None,
-                 resize_mode=None,
+                 resize_mode=None
                  ):
     """
     Resizes an image and returns it as a np.array
