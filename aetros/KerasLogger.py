@@ -253,12 +253,16 @@ class KerasLogger(Callback):
                         input_data_x.append([X[0]])
             else:
                 input_data_x = []
-                for X in self.trainer.data_train['x']:
-                    if self.trainer.is_generator(X):
-                        batch_x, batch_y = next(X)
-                        input_data_x.append([batch_x[0]])
-                    else:
-                        input_data_x.append([X[0]])
+                if self.trainer.is_generator(self.trainer.data_train['x']):
+                    batch_x, batch_y = next(self.trainer.data_train['x'])
+                    input_data_x.append([batch_x[0]])
+                else:
+                    for X in self.trainer.data_train['x']:
+                        if self.trainer.is_generator(X):
+                            batch_x, batch_y = next(X)
+                            input_data_x.append([batch_x[0]])
+                        else:
+                            input_data_x.append([X[0]])
 
         return input_data_x
 
