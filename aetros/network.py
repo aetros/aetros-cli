@@ -49,8 +49,8 @@ def collect_system_information(trainer):
                 free = gpu[0] / 1024 / 1024 / 1024
                 total = gpu[1] / 1024 / 1024 / 1024
                 used = total - free
-                if trainer.on_gpu:
-                    print("%.2fGB GPU memory used of %.2fGB" % (used, total))
+
+                print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (used, total, cuda.active_device_name(), cuda.active_device_number()))
 
     trainer.set_job_info('on_gpu', trainer.on_gpu)
 

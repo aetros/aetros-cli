@@ -33,7 +33,10 @@ class MonitoringThread(Thread):
             from theano.sandbox import cuda
             if cuda.cuda_ndarray.cuda_ndarray.mem_info:
                 gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
-                gpu_memory_use = (gpu[1] - gpu[0]) / gpu[1] * 100
+
+                if gpu[1] != 0:
+                    #sometimes, theano returns 0 as total memory, which will fail in next line
+                    gpu_memory_use = (gpu[1] - gpu[0]) / gpu[1] * 100
 
         self.aetros_backend.job_add_status('system', {
             'second': self.second,
