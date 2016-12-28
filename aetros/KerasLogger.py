@@ -8,6 +8,7 @@ try:
     from cStringIO import StringIO
 except ImportError:
     from io import StringIO
+from io import BytesIO
 
 import PIL.Image
 import math
@@ -465,7 +466,9 @@ class KerasLogger(Callback):
                 dict[k] = -1
 
     def to_base64(self, image):
-        buffer = StringIO()
+        buffer = BytesIO()
+        if (six.PY2):
+            buffer = StringIO()
         image.save(buffer, format="JPEG", optimize=True, quality=80)
         return base64.b64encode(buffer.getvalue())
 

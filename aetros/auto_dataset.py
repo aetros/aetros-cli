@@ -19,9 +19,10 @@ from PIL import Image
 
 from aetros.utils import get_option
 from .network import ensure_dir
+from .AetrosBackend import invalid_json_values
 
 from threading import Thread, Lock
-from six.moves.queue import Queue
+from six.moves.queue import Queue, Empty
 import six
 from six.moves import range
 
@@ -40,7 +41,10 @@ def download_image(url, path):
         else:
             print(("Could not download image %s, response %d" % (url, r.status_code)))
     except Exception as e:
-        print(("Could not download image %s due to %s" % (url, e.message)))
+        if hasattr(e, 'message'):
+            print(("Could not download image %s due to %s" % (url, e.message)))
+        else:
+            print(("Could not download image %s due to %s" % (url, repr(e))))
 
     return False
 
@@ -59,8 +63,11 @@ class ImageDownloaderWorker(Thread):
     def run(self):
         try:
             while self.controller['running']:
-                self.handle(self.q.get())
-                self.q.task_done()
+                try:
+                    self.handle(self.q.get(True, 4))
+                    self.q.task_done()
+                except Empty:
+                    pass
         except KeyboardInterrupt:
             self.controller['running'] = False
             return
@@ -83,7 +90,9 @@ class ImageDownloaderWorker(Thread):
         if not os.path.isfile(local_image_path):
             if download_image(image['src'], local_image_path):
                 try:
-                    img = Image.open(local_image_path)
+                    with open(local_image_path, "rb") as fp:
+                        img = Image.open(fp)
+                        img.load()
                     resize = bool(get_option(self.dataset['config'], 'resize', True))
                     if resize:
                         os.remove(local_image_path)
@@ -182,6 +191,9 @@ class InMemoryDataGenerator():
             batch_y.append(y)
 
         return np.array(batch_x), np.array(batch_y)
+
+    def __next__(self):
+        return self.next();
 
 
 def read_images_in_memory(job_model, dataset, node, trainer):
@@ -412,7 +424,7 @@ def get_images(job_model, dataset, node, trainer):
     classes_changed = False
     config_changed = False
     had_previous = False
-    classes_md5 = hashlib.md5(json.dumps(classes)).hexdigest()
+    classes_md5 = hashlib.md5(json.dumps(classes, default=invalid_json_values).encode('utf-8')).hexdigest()
 
     validationFactor = 0.2
 
@@ -501,7 +513,7 @@ def get_images(job_model, dataset, node, trainer):
                     'classes_md5': classes_md5,
                     'config': config
                 }
-                json.dump(meta, f)
+                json.dump(meta, f, default=invalid_json_values)
 
         except KeyboardInterrupt:
             controller['running'] = False

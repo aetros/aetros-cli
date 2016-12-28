@@ -15,7 +15,7 @@ from PIL import Image
 from aetros import network
 from aetros.network import ensure_dir
 from .JobModel import JobModel
-from .AetrosBackend import AetrosBackend
+from .AetrosBackend import AetrosBackend, invalid_json_values
 
 
 def predict(job_id, file_paths, insights=False, weights_path=None):
@@ -67,4 +67,4 @@ def predict(job_id, file_paths, insights=False, weights_path=None):
     print("Start prediction ...")
 
     prediction = job_model.predict(model, np.array(inputs))
-    print(json.dumps(prediction, indent=4))
+    print(json.dumps(prediction, indent=4, default=invalid_json_values))

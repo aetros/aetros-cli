@@ -2,6 +2,7 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 import json
 import os
+from .AetrosBackend import invalid_json_values
 from pprint import pprint
 import six
 from six.moves import range
@@ -76,8 +77,8 @@ def job_start(job_model, trainer, keras_logger, general_logger):
 
     trainer.set_status('LOAD DATA')
     datasets = job_model.network_get_datasets(trainer)
-    general_logger.write('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape),))
-    general_logger.write('trainer.classes = %s\n' % (json.dumps(trainer.classes),))
+    general_logger.write('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape, default=invalid_json_values),))
+    general_logger.write('trainer.classes = %s\n' % (json.dumps(trainer.classes, default=invalid_json_values),))
 
     dataset_infos = {}
     for idx, dataset in six.iteritems(datasets):

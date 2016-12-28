@@ -8,6 +8,7 @@ import requests
 import signal
 import json
 import time
+import numpy
 
 from io import BytesIO
 # from requests.auth import HTTPBasicAuth
@@ -18,6 +19,15 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
+def invalid_json_values(obj):
+    if isinstance(obj, numpy.generic):
+        return obj.item()
+    if isinstance(obj, numpy.ndarray):
+        return obj.tolist()
+    if isinstance(obj, bytes):
+        return obj.decode('cp437')
+    raise TypeError('Invalid data type passed to json encoder: ' + type(obj))
 
 
 class EventListener:
@@ -246,12 +256,24 @@ class AetrosBackend:
         return response.json()
 
     def get(self, url, params=None, **kwargs):
+        json_chunk = kwargs.get('json')
+        if (json_chunk and not isinstance(json_chunk, str)):
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+        
         return requests.get(self.get_url(url), params=params, **kwargs)
 
     def post(self, url, data=None, **kwargs):
+        json_chunk = kwargs.get('json')
+        if (json_chunk and not isinstance(json_chunk, str)):
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+        
         return requests.post(self.get_url(url), data=data, **kwargs)
 
     def put(self, url, data=None, **kwargs):
+        json_chunk = kwargs.get('json')
+        if (json_chunk and not isinstance(json_chunk, str)):
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+        
         return requests.put(self.get_url(url), data=data, **kwargs)
 
     def create_job(self, name, server_id='local', dataset_id=None, insights=False):
@@ -270,9 +292,9 @@ class AetrosBackend:
             'id': network_name,
             'type': network_type,
             'model': model_json,
-            'settings': json.dumps(settings, allow_nan=False) if settings else None,
-            'layers': json.dumps(layers, allow_nan=False),
-            'graph': json.dumps(graph, allow_nan=False),
+            'settings': json.dumps(settings, allow_nan=False, default=invalid_json_values) if settings else None,
+            'layers': json.dumps(layers, allow_nan=False, default=invalid_json_values),
+            'graph': json.dumps(graph, allow_nan=False, default=invalid_json_values),
         })
 
         if response.status_code != 200:
@@ -321,7 +343,7 @@ class AetrosBackend:
         return self.post('job/started', {'id': id, 'pid': pid})
 
     def job_add_status(self, statusKey, statusValue):
-        item = {'statusKey': statusKey, 'statusValue': json.dumps(statusValue, allow_nan=False)}
+        item = {'statusKey': statusKey, 'statusValue': json.dumps(statusValue, allow_nan=False, default=invalid_json_values)}
 
         self.queueLock.acquire()
         self.queue.append({
