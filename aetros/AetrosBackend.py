@@ -1,6 +1,8 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import os
+import socket
+import select
 from threading import Thread, Lock
 
 import requests
@@ -11,7 +13,6 @@ import time
 import numpy
 
 from io import BytesIO
-# from requests.auth import HTTPBasicAuth
 
 
 def dict_factory(cursor, row):
@@ -19,6 +20,7 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
 
 def invalid_json_values(obj):
     if isinstance(obj, numpy.generic):
@@ -30,8 +32,22 @@ def invalid_json_values(obj):
     raise TypeError('Invalid data type passed to json encoder: ' + type(obj))
 
 
-class EventListener:
+def parse_message(buffer):
+    parsed = []
+    while -1 != buffer.find('\n'):
+        term_position = buffer.find('\n')
+        messages = buffer[0:term_position]
+        messages = messages.split('\t')
+        for message in messages:
+            if message:
+                parsed.append(json.loads(message))
 
+        buffer = buffer[term_position+1:]
+
+    return buffer, parsed
+
+
+class EventListener:
     def __init__(self):
         self.events = {}
 
@@ -47,101 +63,264 @@ class EventListener:
                 callback()
 
 
-class AetrosBackend:
+class Client:
+    def __init__(self, api_host, api_token, event_listener, job_id):
+        """
 
+        :type api_host: string
+        :type api_token: string
+        :type event_listener: EventListener
+        :type job_id: integer
+        """
+
+        self.api_token = api_token
+        self.api_host = api_host
+        self.event_listener = event_listener
+        self.job_id = job_id
+        self.message_id = 0
+
+        self.lock = Lock()
+        self.connection_errors = 0
+        self.queue = []
+
+        self.active = True
+        self.authenticated = False
+        self.job_registered = False
+        self.connected = False
+        self.read_buffer = ''
+
+        self.connect()
+
+        self.thread = Thread(target=self.thread)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def connect(self):
+
+        while self.active:
+            # tries += 1
+            # if tries > 3:
+            #     print("Could not connect to %s. " % (self.api_host,))
+            # break
+            try:
+                self.lock.acquire()
+                self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.s.connect((self.api_host, 8051))
+                self.connected = True
+                self.lock.release()
+
+                self.send_message({'login': self.api_token})
+                messages = self.read_full_message(self.s)
+
+                if "LOGGED_IN" in messages:
+                    self.authenticated = True
+                else:
+                    print("Authentication with token %s against %s failed." % (self.api_token, self.api_host))
+                    return
+
+                self.send_message({'register_job': self.job_id})
+                messages = self.read_full_message(self.s)
+
+                if "JOB_REGISTERED" in messages:
+                    self.job_registered = True
+                else:
+                    print("Registration of job %s failed." % (self.job_id,))
+                    return
+
+                break
+            except socket.error as error:
+                self.lock.release()
+                print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
+                time.sleep(1)
+
+        print("Connected to %s " % (self.api_host,))
+
+    def debug(self):
+        sent = len(filter(lambda x: x['sent'], self.queue))
+        sending = len(filter(lambda x: x['sending'], self.queue))
+        open = len(filter(lambda x: not x['sending'], self.queue))
+        print("%d sent, %d in sending, %d open " % (sent, sending, open))
+
+    def connection_error(self):
+        self.connected = False
+        self.authenticated = False
+        self.job_registered = False
+
+        # set all messages that are in sending to sending=false
+        for message in self.queue:
+            if message['sending'] and not message['sent']:
+                message['sending'] = False
+
+        self.connection_errors += 1
+        self.connect()
+
+    def thread(self):
+        last_ping = 0
+
+        while True:
+            if self.connected and self.authenticated and self.job_registered:
+                try:
+                    if last_ping < time.time() - 1:
+                        # ping every second
+                        last_ping = time.time()
+                        self.send_message("PING")
+
+                    if self.connected:
+                        # send pending messages
+                        max_messages = 1
+                        for message in self.queue:
+                            if not message['sending'] and not message['sent']:
+                                max_messages += 1
+                                self.send_message(message)
+                                if max_messages > 10:
+                                    # not too much at once, so we have time to listen for incoming messages
+                                    break
+
+                        # see if we can read something
+                        self.lock.acquire()
+                        readable, writable, exceptional = select.select([self.s], [self.s], [])
+                        self.lock.release()
+                        if exceptional:
+                            self.connection_error()
+
+                        for s in readable:
+                            messages = self.read(s)
+                            if messages:
+                                self.handle_messages(messages)
+
+                except socket.error as error:
+                    self.connected = False
+                    print("Connection error: %d: %s" % (error.errno, error.message,))
+                    self.connection_error()
+
+    def close(self):
+        print("Close client")
+        self.active = False
+        self.connected = False
+
+        self.lock.acquire()
+        self.s.shutdown(socket.SHUT_RDWR)
+        self.s.close()
+        self.lock.release()
+
+    def send(self, message):
+        self.message_id += 1
+        message['id'] = self.message_id
+        message['sending'] = False
+        message['sent'] = False
+        self.queue.append(message)
+
+    def send_message(self, message):
+        sent = False
+        try:
+            if isinstance(message, dict):
+                message['sending'] = True
+
+            msg = json.dumps(message, default=invalid_json_values)
+            self.lock.acquire()
+            self.s.sendall(msg + "\n")
+            self.lock.release()
+
+        except:
+            self.lock.release()
+            sent = False
+            self.connected = False
+
+        return sent
+
+    def handle_messages(self, messages):
+        for message in messages:
+            if 'handled' in message:
+                for qm in self.queue:
+                    if qm['id'] == message['id']:
+
+                        if message['handled']:
+                            qm['sent'] = True
+                            self.queue.remove(qm)
+                        else:
+                            qm['sending'] = False
+
+                        break
+
+            if 'stop' in message:
+                self.event_listener.fire('stop')
+
+    def read_full_message(self, s):
+        """
+        Reads until we receive a message termination (\n)
+        """
+        message = ''
+
+        while True:
+            chunk = ''
+            try:
+                self.lock.acquire()
+                chunk = s.recv(2048)
+            finally:
+                self.lock.release()
+
+            if chunk == '':
+                self.connection_error()
+                return False
+
+            message += chunk
+
+            message, parsed = parse_message(message)
+            if parsed:
+                return parsed
+
+    def read(self, s):
+        """
+        Reads per call current buffer from network stack. If a full message has been collected (\n retrieved)
+        the message will be parsed and returned. If no message has yet been completley transmitted it returns []
+        """
+
+        chunk = ''
+
+        try:
+            self.lock.acquire()
+            chunk = s.recv(2048)
+        finally:
+            self.lock.release()
+
+        if chunk == '':
+            self.connection_error()
+            return False
+
+        self.read_buffer += chunk
+
+        self.read_buffer, parsed = parse_message(self.read_buffer)
+        return parsed
+
+
+class AetrosBackend:
     def __init__(self, job_id=None):
         self.event_listener = EventListener()
         self.api_token = os.getenv('API_KEY')
 
         self.job_id = job_id
-        self.queue = []
-        self.queueLock = Lock()
         self.active_syncer = True
 
         self.host = os.getenv('API_HOST')
         if not self.host or self.host == 'false':
             self.host = 'aetros.com'
 
-        self.thread = Thread(target=self.syncer)
-        self.thread.daemon = True
-        self.thread.start()
+        self.job_ids = []
         self.in_request = False
         self.stop_requested = False
+        self.event_listener.on('stop', self.external_stop)
 
-    def syncer(self):
-        while (self.active_syncer):
-            self.sync()
-            time.sleep(1)
+    def external_stop(self):
+        print("Job stopped through AETROS Trainer.")
+        self.stop()
+        self.stop_requested = True
+        os.kill(os.getpid(), signal.SIGINT)
 
-    def sync(self):
-        self.queueLock.acquire()
+    def start(self, id):
+        self.client = Client(self.host, self.api_token, self.event_listener, id)
 
-        if len(self.queue) == 0:
-            self.queueLock.release()
-            return
-
-        max_messages_per_request = 20
-
-        queue_to_save = self.queue[:max_messages_per_request]
-        self.queue = self.queue[max_messages_per_request:]
-        self.queueLock.release()
-
-        # print "Sync %d/%d items to server" % (len(queue_to_save), len(self.queue))
-        self.in_request = True
-        try:
-            response = self.post('job/sync', json={'id': self.job_id, 'items': queue_to_save})
-            failed = False
-            if response.status_code != 200:
-                failed = True
-            else:
-                if response.content:
-                    content = json.loads(response.content)
-                    if 'not_exists' in content:
-                        print("Job deleted meanwhile. Stop current job.")
-                        os.kill(os.getpid(), signal.SIGINT)
-                    elif 'stop' in content:
-                        if not self.stop_requested:
-                            print("Job stopped through trainer.")
-                            self.stop_requested = True
-                            os.kill(os.getpid(), signal.SIGINT)
-                    else:
-                        if 'result' in content and content['result'] is True:
-                            if len(self.queue) > 0:
-                                # we have still some messages, so send directly next sync
-                                self.sync()
-                        else:
-                            failed = True
-                else:
-                    failed = True
-
-            if failed:
-                self.queueLock.acquire()
-                self.queue = queue_to_save + self.queue
-                self.queueLock.release()
-                print("Error in sending job information: %s" % (response.content,))
-
-        except Exception:
-            self.queueLock.acquire()
-            self.queue = queue_to_save + self.queue
-            self.queueLock.release()
-
-        self.in_request = False
-
-    def stop_syncer(self):
-        self.active_syncer = False
-
-        while self.in_request:
-            time.sleep(0.05)
-
-        self.queueLock.acquire()
-        queue = self.queue[:]
-        self.queueLock.release()
-
-        if len(queue) > 0:
-            print("Sending last (%d) monitoring information to server ... " % (len(queue),))
-            response = self.post('job/sync', json={'id': self.job_id, 'items': queue})
-            if response.status_code != 200:
-                print("Error in sending job information.")
+    def stop(self):
+        self.client.close()
 
     def kill(self):
         self.active_syncer = False
@@ -161,13 +340,11 @@ class AetrosBackend:
     def write_log(self, id, message):
         item = {'id': id, 'message': message}
 
-        self.queueLock.acquire()
-        self.queue.append({
+        self.client.send({
             'type': 'log',
             'time': time.time(),
             'data': item
         })
-        self.queueLock.release()
 
     def upload_weights(self, name, file_path, accuracy=None, with_status=False):
         if not os.path.isfile(file_path):
@@ -259,21 +436,21 @@ class AetrosBackend:
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
             kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
-        
+
         return requests.get(self.get_url(url), params=params, **kwargs)
 
     def post(self, url, data=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
             kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
-        
+
         return requests.post(self.get_url(url), data=data, **kwargs)
 
     def put(self, url, data=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
             kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
-        
+
         return requests.put(self.get_url(url), data=data, **kwargs)
 
     def create_job(self, name, server_id='local', dataset_id=None, insights=False):
@@ -340,33 +517,29 @@ class AetrosBackend:
         return job
 
     def job_started(self, id, pid):
+        self.start(id)
         return self.post('job/started', {'id': id, 'pid': pid})
 
     def job_add_status(self, statusKey, statusValue):
-        item = {'statusKey': statusKey, 'statusValue': json.dumps(statusValue, allow_nan=False, default=invalid_json_values)}
+        item = {'statusKey': statusKey,
+                'statusValue': json.dumps(statusValue, allow_nan=False, default=invalid_json_values)}
 
-        self.queueLock.acquire()
-        self.queue.append({
+        self.client.send({
             'type': 'job-status',
             'time': time.time(),
             'data': item
         })
-        self.queueLock.release()
 
     def job_set_info_key(self, key, info):
-        self.queueLock.acquire()
-        self.queue.append({
+        self.client.send({
             'type': 'job-info',
             'time': time.time(),
             'data': {'key': key, 'info': info}
         })
-        self.queueLock.release()
 
     def job_add_insight(self, info, images):
-        self.queueLock.acquire()
-        self.queue.append({
+        self.client.send({
             'type': 'job-insight',
             'time': time.time(),
             'data': {'info': info, 'images': images}
         })
-        self.queueLock.release()

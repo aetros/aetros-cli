@@ -32,10 +32,10 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         if job_id is None:
             exit(1)
 
-        print("Training '%s' created and started. Open http://%s/trainer/app?training=%s to monitor the training." %
+        print("Training '%s' created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
               (job_id, aetros_backend.host, job_id))
     else:
-        print("Training '%s' restarted. Open http://%s/trainer/app?training=%s to monitor the training." %
+        print("Training '%s' restarted. Open http://%s/trainer/app#/training=%s to monitor the training." %
               (job_id, aetros_backend.host, job_id))
 
     job = aetros_backend.get_job()
@@ -94,7 +94,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
         job['running'] = False
         job_model.sync_weights()
-        aetros_backend.stop_syncer()
+        aetros_backend.stop()
         aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'DONE'})
 
         print("done.")
@@ -111,7 +111,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
         monitoringThread.stop()
         job_model.sync_weights()
-        aetros_backend.stop_syncer()
+        aetros_backend.stop()
         aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'EARLY STOP'})
         print("out.")
         sys.exit(1)
@@ -125,7 +125,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         logging.error(traceback.format_exc())
 
         monitoringThread.stop()
-        aetros_backend.stop_syncer()
+        aetros_backend.stop()
         aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'CRASHED', 'error': e.message})
         print("out.")
         raise e

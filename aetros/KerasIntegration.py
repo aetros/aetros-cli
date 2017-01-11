@@ -47,7 +47,6 @@ class KerasIntegration():
 
         def overwritten_fit(x, y, batch_size=32, nb_epoch=10, verbose=1, callbacks=[], validation_split=0.,
                             validation_data=None, shuffle=True, class_weight=None, sample_weight=None, **kwargs):
-            self.aetros_backend.set_status('TRAINING')
 
             callback = self.setup(x, nb_epoch, batch_size)
             callbacks.append(callback)
@@ -60,7 +59,6 @@ class KerasIntegration():
                                       verbose=1, callbacks=[],
                                       validation_data=None, nb_val_samples=None,
                                       class_weight={}, max_q_size=10, nb_worker=1, pickle_safe=False):
-            self.aetros_backend.set_status('TRAINING')
 
             callback = self.setup(generator, nb_epoch)
             self.trainer.nb_val_samples = nb_val_samples
@@ -93,7 +91,12 @@ class KerasIntegration():
         self.aetros_backend.ensure_network(self.network_name, self.model.to_json(), settings=settings,
                                            network_type=self.network_type, graph=graph)
 
-        self.aetros_backend.create_job(self.network_name, insights=self.insights)
+        job_id = self.aetros_backend.create_job(self.network_name, insights=self.insights)
+        self.aetros_backend.start(job_id)
+
+        print("AETROS Training '%s' created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+              (job_id, self.aetros_backend.host, job_id))
+
         job = self.aetros_backend.get_light_job()
         self.job_model = JobModel(self.aetros_backend, job)
         general_logger = GeneralLogger(job, aetros_backend=self.aetros_backend)

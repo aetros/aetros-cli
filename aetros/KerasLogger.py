@@ -220,8 +220,7 @@ class KerasLogger(Callback):
                 # build confusion matrix
                 confusion_matrix = self.build_confusion_matrix() if self.confusion_matrix else None
 
-                self.backend.job_add_insight(
-                    {'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
+                self.backend.job_add_insight({'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
 
     def is_image_shape(self, x):
         if len(x.shape) != 3 and len(x.shape) != 2:

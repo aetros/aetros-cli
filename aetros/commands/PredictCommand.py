@@ -3,7 +3,6 @@ import argparse
 import sys
 import aetros.const
 
-
 class PredictCommand:
 
     def main(self, args):

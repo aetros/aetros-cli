@@ -8,8 +8,48 @@ import urllib
 from PIL import Image
 
 import numpy as np
+from aetros.Trainer import Trainer
+from aetros.GeneralLogger import GeneralLogger
+from aetros import network
+from aetros.network import ensure_dir
+from aetros.AetrosBackend import AetrosBackend
 from six.moves import zip
 
+def create_simple(id, last_weights=False):
+    aetros_backend = AetrosBackend(id)
+    job = aetros_backend.get_light_job()
+
+    job_model = JobModel(aetros_backend, job)
+
+    if last_weights:
+        weights_path = job_model.get_weights_filepath_latest()
+    else:
+        weights_path = job_model.get_weights_filepath_best()
+
+    if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
+        weight_url = aetros_backend.get_best_weight_url(id)
+        if not weight_url:
+            raise Exception("No weights available for this training.")
+
+        print(("Download weights %s to %s .." % (weight_url, weights_path)))
+        ensure_dir(os.path.dirname(weights_path))
+
+        f = open(weights_path, 'wb')
+        f.write(urllib.urlopen(weight_url).read())
+        f.close()
+
+    network.job_prepare(job_model.job)
+
+    general_logger = GeneralLogger(job)
+    trainer = Trainer(aetros_backend, job_model, general_logger)
+
+    job_model.set_input_shape(trainer)
+
+    model = job_model.get_built_model(trainer)
+
+    job_model.load_weights(model, weights_path)
+
+    return job_model, model
 
 class JobModel:
     def __init__(self, backend, job):
@@ -126,23 +166,26 @@ class JobModel:
             weight_names = [n.decode('utf8') for n in g.attrs['weight_names']]
 
             layer = model.get_layer(name=name)
-            if len(weight_names):
+            if layer and len(weight_names):
                 weight_values = [g[weight_name] for weight_name in weight_names]
-                symbolic_weights = layer.trainable_weights + layer.non_trainable_weights
+                if not hasattr(layer, 'trainable_weights'):
+                    print("Layer %s (%s) has no trainable weights, but we tried to load it." % (name, type(layer).__name__))
+                else:
+                    symbolic_weights = layer.trainable_weights + layer.non_trainable_weights
 
-                if len(weight_values) != len(symbolic_weights):
-                    raise Exception('Layer #' + str(k) +
-                                    ' (named "' + layer.name +
-                                    '" in the current model) was found to '
-                                    'correspond to layer ' + name +
-                                    ' in the save file. '
-                                    'However the new layer ' + layer.name +
-                                    ' expects ' + str(len(symbolic_weights)) +
-                                    ' weights, but the saved weights have ' +
-                                    str(len(weight_values)) +
-                                    ' elements.')
+                    if len(weight_values) != len(symbolic_weights):
+                        raise Exception('Layer #' + str(k) +
+                                        ' (named "' + layer.name +
+                                        '" in the current model) was found to '
+                                        'correspond to layer ' + name +
+                                        ' in the save file. '
+                                        'However the new layer ' + layer.name +
+                                        ' expects ' + str(len(symbolic_weights)) +
+                                        ' weights, but the saved weights have ' +
+                                        str(len(weight_values)) +
+                                        ' elements.')
 
-                weight_value_tuples += list(zip(symbolic_weights, weight_values))
+                    weight_value_tuples += list(zip(symbolic_weights, weight_values))
         K.batch_set_value(weight_value_tuples)
 
         f.close()
@@ -165,7 +208,10 @@ class JobModel:
 
         return input
 
-    def convert_file_to_input_node(self, file_path, input_node):
+    def convert_file_to_input_node(self, file_path, input_node=None):
+        if input_node is None:
+            input_node = self.get_input_node(0)
+
         size = (int(input_node['width']), int(input_node['height']))
 
         if 'http://' in file_path or 'https://' in file_path:
@@ -188,28 +234,38 @@ class JobModel:
 
             image = image.resize(size, Image.ANTIALIAS)
 
-            if input_node['inputType'] == 'image':
-                image = image.convert("L")
-                image = np.asarray(image, dtype='float32')
-                image = image.reshape((1, size[0], size[1]))
-
-            elif input_node['inputType'] == 'image_bgr':
-                image = image.convert("RGB")
-                image = np.asarray(image, dtype='float32')
-                image = image[:, :, ::-1].copy()
-                image = image.transpose(2, 0, 1)
-            else:
-                image = image.convert("RGB")
-                image = np.asarray(image, dtype='float32')
-                image = image.transpose(2, 0, 1)
-
-            if 'imageScale' not in input_node:
-                input_node['imageScale'] = 255
-
-            if float(input_node['imageScale']) > 0:
-                image = image / float(input_node['imageScale'])
+            image = self.convert_image_to_node(image, input_node)
 
             return image
+
+    def convert_image_to_node(self, image, input_node=None):
+        if input_node is None:
+            input_node = self.get_input_node(0)
+
+        size = (int(input_node['width']), int(input_node['height']))
+
+        if input_node['inputType'] == 'image':
+            image = image.convert("L")
+            image = np.asarray(image, dtype='float32')
+            image = image.reshape((1, size[0], size[1]))
+
+        elif input_node['inputType'] == 'image_bgr':
+            image = image.convert("RGB")
+            image = np.asarray(image, dtype='float32')
+            image = image[:, :, ::-1].copy()
+            image = image.transpose(2, 0, 1)
+        else:
+            image = image.convert("RGB")
+            image = np.asarray(image, dtype='float32')
+            image = image.transpose(2, 0, 1)
+
+        if 'imageScale' not in input_node:
+            input_node['imageScale'] = 255
+
+        if float(input_node['imageScale']) > 0:
+            image = image / float(input_node['imageScale'])
+
+        return image
 
     def get_model_provider(self):
 
