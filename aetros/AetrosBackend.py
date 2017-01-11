@@ -194,7 +194,6 @@ class Client:
                     self.connection_error()
 
     def close(self):
-        print("Close client")
         self.active = False
         self.connected = False
 

@@ -411,6 +411,16 @@ def get_images(job_model, dataset, node, trainer):
     dir = trainer.job_model.get_dataset_downloads_dir(dataset)
 
     ensure_dir(dir)
+
+    if 'classes' not in config or not config['classes']:
+        print("Dataset %s does not contain any classes." % (dataset['id'],))
+        return {
+            'X_train': np.array([]),
+            'Y_train': np.array([]),
+            'X_test': np.array([]),
+            'Y_test': np.array([])
+        }
+
     classes = config['classes']
 
     trainer.set_status('PREPARE_IMAGES')
