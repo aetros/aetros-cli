@@ -4,6 +4,9 @@
 <img src="https://avatars2.githubusercontent.com/u/17340113?v=3&s=200" />
 </p>
 
+[![Build Status](https://travis-ci.org/aetros/aetros-cli.svg?branch=master)](https://travis-ci.org/aetros/aetros-cli)
+[![PyPI version](https://badge.fury.io/py/aetros.svg)](https://badge.fury.io/py/aetros)
+
 This package is a python application you need to use when you want to train your deep artificial neural networks locally.
 
 It basically retrieves all model information from AETROS, compiles and starts the training, attached with a special logger
