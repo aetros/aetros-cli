@@ -26,7 +26,7 @@ $ sudo pip install aetros
 $ sudo pip install aetros --upgrade
 ```
 
-Requirement: Python v2.x, Theano
+Requirement: Python 2.7+ or 3, Theano or Tensorflow
 
 ## Installation development version
 
