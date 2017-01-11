@@ -39,7 +39,6 @@ class StartCommand:
 
         os.environ['THEANO_FLAGS'] = flags
 
-        if parsed_args.tf:
-            os.environ['KERAS_BACKEND'] = 'tensorflow'
+        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
 
         start(parsed_args.network_name, dataset_id=parsed_args.dataset, insights=parsed_args.insights, insights_sample_path=parsed_args.insights_sample)
