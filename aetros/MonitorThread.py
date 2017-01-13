@@ -7,10 +7,10 @@ import numpy as np
 
 
 class MonitoringThread(Thread):
-    def __init__(self, aetros_backend, trainer):
+    def __init__(self, job_backend, trainer):
         Thread.__init__(self)
         self.trainer = trainer
-        self.aetros_backend = aetros_backend
+        self.job_backend = job_backend
         self.second = 0
         self.running = True
 
@@ -38,7 +38,7 @@ class MonitoringThread(Thread):
                     #sometimes, theano returns 0 as total memory, which will fail in next line
                     gpu_memory_use = (gpu[1] - gpu[0]) / gpu[1] * 100
 
-        self.aetros_backend.job_add_status('system', {
+        self.job_backend.job_add_status('system', {
             'second': self.second,
             'cpu': cpu_util,
             'memory': mem.percent,

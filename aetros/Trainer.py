@@ -4,10 +4,15 @@ from __future__ import print_function
 # import json
 from threading import Lock
 
+from aetros.backend import JobBackend
 
 class Trainer():
-    def __init__(self, aetros_backend, job_model, logger):
-        self.aetros_backend = aetros_backend
+    """
+    :type job_backend : JobBackend
+    :type settings : dict
+    """
+    def __init__(self, job_backend, logger):
+        self.job_backend = job_backend
         self.logger = logger
         self.input_shape = []
         self.on_gpu = False
@@ -21,15 +26,16 @@ class Trainer():
         self.data_train = None
         self.classes = []
 
-        self.job_model = job_model
-        self.job = job_model.job
-        self.settings = self.job['config']['settings']
+        self.job_model =self.job_backend.get_job_model()
+        job = self.job_model.job
+        self.settings = job['config']['settings']
         self.model = None
         self.callbacks = []
         self.lock = Lock()
 
+
     def get_batch_size(self):
-        return self.job_model.get_batch_size()
+        return self.job_backend.get_job_model().get_batch_size()
 
     def set_generator_validation_nb(self, number):
         """
@@ -78,10 +84,10 @@ class Trainer():
     def set_status(self, status):
         self.lock.acquire()
 
-        print('Training status changed to %s ' % (status,))
-        self.aetros_backend.job_add_status('status', status)
+        print('Job status changed to %s ' % (status,))
+        self.job_backend.job_add_status('status', status)
 
         self.lock.release()
 
     def set_job_info(self, key, value):
-        self.aetros_backend.job_set_info_key(key, value)
+        self.job_backend.job_set_info_key(key, value)

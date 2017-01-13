@@ -1,6 +1,6 @@
 import unittest
 
-from aetros.AetrosBackend import parse_message
+from aetros.backend import parse_message
 
 class TestAetrosBackend(unittest.TestCase):
 

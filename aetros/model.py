@@ -2,11 +2,9 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 import json
 import os
-from .AetrosBackend import invalid_json_values
-from pprint import pprint
+from .backend import invalid_json_values
 import six
 from six.moves import range
-
 
 def ensure_dir(d):
     if not os.path.isdir(d):
@@ -65,10 +63,10 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     """
     Starts the training of a job. Needs job_prepare() first.
 
-    :param job_model:
-    :param trainer:
-    :param keras_logger:
-    :param general_logger:
+    :param job_model: JobModel
+    :param trainer: Trainer
+    :param keras_logger: KerasLogger
+    :param general_logger: GeneralLogger
     :return:
     """
     trainer.set_status('STARTING')
@@ -76,7 +74,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     model_provider = job_model.get_model_provider()
 
     trainer.set_status('LOAD DATA')
-    datasets = job_model.network_get_datasets(trainer)
+    datasets = job_model.get_datasets(trainer)
     general_logger.write('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape, default=invalid_json_values),))
     general_logger.write('trainer.classes = %s\n' % (json.dumps(trainer.classes, default=invalid_json_values),))
 
@@ -122,17 +120,15 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     model_provider.train(trainer, model, data_train, data_validation)
 
 
-def job_prepare(job):
+def job_prepare(job_model):
     """
     Setups all necessary folder structure so the network can run with datasets code and model_provider.py.
-
-    :param job: job dict
-    :return:
+    :type job_model: JobModel
     """
 
-    path = 'aetros-cli-data/networks/%s/%s' % (job['networkId'], job['id'])
+    path = 'aetros-cli-data/models/%s/%s' % (job_model.model_id, job_model.id)
     datasets_path = path + '/datasets'
-    config = job['config']
+    config = job_model.config
 
     ensure_dir(path)
     ensure_dir(datasets_path)

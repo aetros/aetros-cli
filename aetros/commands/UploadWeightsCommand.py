@@ -7,42 +7,35 @@ class UploadWeightsCommand:
 
     def main(self, args):
 
-        from aetros import network
+        from aetros import model
 
         import aetros.const
-        from aetros.AetrosBackend import AetrosBackend
-        from aetros.GeneralLogger import GeneralLogger
-        from aetros.JobModel import JobModel
+        from aetros.backend import JobBackend
+        from aetros.logger import GeneralLogger
         from aetros.Trainer import Trainer
-        # from aetros.network import ensure_dir
-        # from aetros.starter import start
 
         parser = argparse.ArgumentParser(
             formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' upload-weights')
-        parser.add_argument('id', nargs='?', help='Network name or training id')
+        parser.add_argument('id', nargs='?', help='model name or job id')
         parser.add_argument(
             '--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
         parser.add_argument(
-            '--accuracy', help="If you specified network name, you should also specify the accuracy this weights got.")
+            '--accuracy', help="If you specified model name, you should also specify the accuracy this weights got.")
         parser.add_argument('--latest', action="store_true",
                             help="Instead of best epoch we upload latest weights.")
 
         parsed_args = parser.parse_args(args)
-        aetros_backend = AetrosBackend(parsed_args.id)
+        job_backend = JobBackend()
 
         if '/' in parsed_args.id and '@' not in parsed_args.id:
-            job_id = aetros_backend.create_job(parsed_args.id)
-            aetros_backend.job_id = job_id
+            job_backend.create(parsed_args.id)
 
-        job = aetros_backend.get_light_job()
-        job_id = job['id']
+        job_backend.load(parsed_args.id)
 
-        aetros_backend.job_id = job_id
-        job = aetros_backend.get_job()
-        if job is None:
-            raise Exception("Training not found")
+        if job_backend.job is None:
+            raise Exception("Job not found")
 
-        job_model = JobModel(aetros_backend, job)
+        job_model = job_backend.get_job_model()
 
         weights_path = job_model.get_weights_filepath_best()
 
@@ -51,10 +44,10 @@ class UploadWeightsCommand:
 
         print(("Validate weights in %s ..." % (weights_path, )))
 
-        network.job_prepare(job_model.job)
+        model.job_prepare(job_model)
 
-        general_logger = GeneralLogger(job)
-        trainer = Trainer(aetros_backend, job_model, general_logger)
+        general_logger = GeneralLogger()
+        trainer = Trainer(job_backend, general_logger)
 
         job_model.set_input_shape(trainer)
 
@@ -72,8 +65,8 @@ class UploadWeightsCommand:
         job_model.load_weights(model, weights_path)
         print("Validated.")
 
-        print("Uploading weights to %s of %s ..." % (job_id, job['networkId']))
+        print("Uploading weights to %s of %s ..." % (job_backend.job_id, job_backend.model_id))
 
-        aetros_backend.upload_weights('best.hdf5', weights_path, float(parsed_args.accuracy))
+        job_backend.upload_weights('best.hdf5', weights_path, float(parsed_args.accuracy) if parsed_args.accuracy else None)
 
         print("Done")

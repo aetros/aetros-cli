@@ -6,10 +6,9 @@ import six
 
 
 class GeneralLogger():
-    def __init__(self, job, logFD=None, aetros_backend=None, error=False):
+    def __init__(self, logFD=None, job_backend=None, error=False):
         self.error = error
-        self.job = job
-        self.aetros_backend = aetros_backend
+        self.job_backend = job_backend
 
         self.terminal = sys.stdout if error is False else sys.stderr
         self.logFD = logFD
@@ -46,5 +45,5 @@ class GeneralLogger():
         if self.logFD:
             self.logFD.write(message)
 
-        if self.aetros_backend:
-            self.aetros_backend.write_log(self.job['id'], message)
+        if self.job_backend:
+            self.job_backend.write_log(message)

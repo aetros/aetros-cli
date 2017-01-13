@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 import argparse
+import os
 import sys
 import aetros.const
 
@@ -13,6 +14,7 @@ class PredictCommand:
         parser.add_argument('--insights', action='store_true', help="activates insights")
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
         parser.add_argument('-i', nargs='+', help="Input (path or url). Multiple allowed")
+        parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
 
         parsed_args = parser.parse_args(args)
 
@@ -20,4 +22,5 @@ class PredictCommand:
             parser.print_help()
             sys.exit()
 
+        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
         predict(parsed_args.job, parsed_args.i, parsed_args.insights, parsed_args.weights)

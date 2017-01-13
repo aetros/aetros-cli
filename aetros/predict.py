@@ -12,30 +12,28 @@ import os
 
 from PIL import Image
 
-from aetros import network
-from aetros.network import ensure_dir
+from aetros import model
+from aetros.model import ensure_dir
 from .JobModel import JobModel
-from .AetrosBackend import AetrosBackend, invalid_json_values
+from .backend import JobBackend, invalid_json_values
 
 
 def predict(job_id, file_paths, insights=False, weights_path=None):
-    print("Prepare network ...")
-    aetros_backend = AetrosBackend(job_id)
+    print("Prepare model ...")
+    job_backend = JobBackend()
+    job_backend.load(job_id)
 
-    job = aetros_backend.get_light_job()
-    job_id = job['id']
+    job_model = job_backend.get_job_model()
 
     log = io.open(tempfile.mktemp(), 'w', encoding='utf8')
     log.truncate()
 
-    network.job_prepare(job)
-
-    job_model = JobModel(aetros_backend, job)
+    model.job_prepare(job_model)
 
     if not weights_path:
         weight_path = job_model.get_weights_filepath_best()
         if not os.path.exists(weight_path) or os.path.getsize(weight_path) == 0:
-            weight_url = aetros_backend.get_best_weight_url(job_id)
+            weight_url = job_backend.get_best_weight_url(job_id)
             if not weight_url:
                 print("No weights available for this job.")
                 exit(1)
@@ -47,11 +45,11 @@ def predict(job_id, file_paths, insights=False, weights_path=None):
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-    from .GeneralLogger import GeneralLogger
+    from .logger import GeneralLogger
     from .Trainer import Trainer
 
-    general_logger = GeneralLogger(job, log, aetros_backend)
-    trainer = Trainer(aetros_backend, job_model, general_logger)
+    general_logger = GeneralLogger(log, job_backend)
+    trainer = Trainer(job_backend, general_logger)
     job_model.set_input_shape(trainer)
 
     print("Load model and compile ...")

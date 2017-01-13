@@ -9,13 +9,13 @@ import signal
 import sys
 import traceback
 
-from . import network
-from .AetrosBackend import AetrosBackend
-from .GeneralLogger import GeneralLogger
+from . import model
+from .backend import JobBackend
+from .logger import GeneralLogger
 from .JobModel import JobModel
 from .MonitorThread import MonitoringThread
 from .Trainer import Trainer
-from .network import ensure_dir
+from .model import ensure_dir
 import six
 
 
@@ -24,60 +24,47 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
     Starts the training process with all logging of a job_id
     """
 
-    aetros_backend = AetrosBackend(job_id)
+    job_backend = JobBackend()
 
     if '/' in job_id:
-        print("...")
-        job_id = aetros_backend.create_job(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
-        if job_id is None:
-            exit(1)
+        print("Create job ...")
+        job_id = job_backend.create(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
+        job_backend.load(job_id)
 
-        print("Training '%s' created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
-              (job_id, aetros_backend.host, job_id))
+        print("Job '%s' created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+              (job_id, job_backend.host, job_id))
     else:
-        print("Training '%s' restarted. Open http://%s/trainer/app#/training=%s to monitor the training." %
-              (job_id, aetros_backend.host, job_id))
+        job_backend.load(job_id)
+        print("Job '%s' restarted. Open http://%s/trainer/app#/job=%s to monitor the job." %
+              (job_id, job_backend.host, job_id))
 
-    job = aetros_backend.get_job()
+    if not len(job_backend.get_job_model().config):
+        raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
-    if job is None or job == 'Job not found':
-        raise Exception('Training not found. Have you configured your token correctly?')
+    job_model = job_backend.get_job_model()
+    print("start model ...")
+    job_backend.start()
 
-    if not isinstance(job, dict):
-        raise Exception('Training does not exist. Make sure you created the job via AETROS TRAINER')
+    ensure_dir('models/%s/%s' % (job_model.model_id, job_model.id))
 
-    if not len(job['config']):
-        raise Exception('Training does not have a configuration. Make sure you created the job via AETROS TRAINER')
-
-    network_id = job['networkId']
-
-    aetros_backend.job_started(job_id, os.getpid())
-
-    ensure_dir('networks/%s/%s' % (network_id, job_id))
-
-    log = io.open('networks/%s/%s/network.log' % (network_id, job_id), 'w', encoding='utf8')
+    log = io.open('models/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
     log.truncate()
 
-    job_model = JobModel(aetros_backend, job)
-    general_logger = GeneralLogger(job, log, aetros_backend)
-
-    print("start network ...")
+    general_logger = GeneralLogger(log, job_backend)
 
     from .KerasLogger import KerasLogger
-    trainer = Trainer(aetros_backend, job_model, general_logger)
-    keras_logger = KerasLogger(trainer, aetros_backend, job_model, general_logger)
+    trainer = Trainer(job_backend, general_logger)
+    keras_logger = KerasLogger(trainer, job_backend, general_logger)
     keras_logger.insights_sample_path = insights_sample_path
     trainer.callbacks.append(keras_logger)
 
     sys.stdout = general_logger
     sys.stderr = general_logger
 
-    job['running'] = True
-
-    monitoringThread = MonitoringThread(aetros_backend, trainer)
+    monitoringThread = MonitoringThread(job_backend, trainer)
     monitoringThread.daemon = True
     monitoringThread.start()
-    network.collect_system_information(trainer)
+    model.collect_system_information(trainer)
 
     def ctrlc(sig, frame):
         print("signal %s received\n" % id)
@@ -86,16 +73,15 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
     signal.signal(signal.SIGINT, ctrlc)
 
     try:
-        print("Setup training")
-        network.job_prepare(job)
+        print("Setup job")
+        model.job_prepare(job_model)
 
-        print("Start training")
-        network.job_start(job_model, trainer, keras_logger, general_logger)
+        print("Start job")
+        model.job_start(job_model, trainer, keras_logger, general_logger)
 
-        job['running'] = False
-        job_model.sync_weights()
-        aetros_backend.stop()
-        aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'DONE'})
+        job_backend.sync_weights()
+        job_backend.stop()
+        job_backend.post('job/stopped', json={'id': job_model.id, 'status': 'DONE'})
 
         print("done.")
         sys.exit(0)
@@ -103,16 +89,16 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         trainer.set_status('STOPPING')
         print('Early stopping ...')
 
-        if aetros_backend.stop_requested:
+        if job_backend.stop_requested:
             print(' ... stop requested through trainer.')
 
         if trainer.model:
             trainer.model.stop_training = True
 
         monitoringThread.stop()
-        job_model.sync_weights()
-        aetros_backend.stop()
-        aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'EARLY STOP'})
+        job_backend.sync_weights()
+        job_backend.stop()
+        job_backend.post('job/stopped', json={'id': job_model.id, 'status': 'EARLY STOP'})
         print("out.")
         sys.exit(1)
     except Exception as e:
@@ -125,7 +111,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         logging.error(traceback.format_exc())
 
         monitoringThread.stop()
-        aetros_backend.stop()
-        aetros_backend.post('job/stopped', json={'id': job_model.id, 'status': 'CRASHED', 'error': e.message})
+        job_backend.stop()
+        job_backend.post('job/stopped', json={'id': job_model.id, 'status': 'CRASHED', 'error': e.message})
         print("out.")
         raise e

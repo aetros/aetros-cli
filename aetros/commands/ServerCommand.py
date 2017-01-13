@@ -18,9 +18,10 @@ class ServerCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' server')
-        parser.add_argument('id', nargs='?', help='Training id')
+        parser.add_argument('id', nargs='?', help='job id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
+        parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
         parser.add_argument('--port', help="Changes port. Default 8000")
         parser.add_argument('--host', help="Changes port. Default 127.0.0.1")
 
@@ -33,23 +34,27 @@ class ServerCommand:
             parser.print_help()
             sys.exit()
 
+        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
+
         self.model = self.start_model(parsed_args)
         self.start_webserver('127.0.0.1' if not parsed_args.host else parsed_args.host, 8000 if not parsed_args.port else int(parsed_args.port))
 
     def start_model(self, parsed_args):
-        from aetros import network
-        from aetros.AetrosBackend import AetrosBackend
-        from aetros.GeneralLogger import GeneralLogger
-        from aetros.JobModel import JobModel
+        from aetros import model
+        from aetros.backend import JobBackend
+        from aetros.logger import GeneralLogger
         from aetros.Trainer import Trainer
-        from aetros.network import ensure_dir
+        from aetros.model import ensure_dir
+
+        if not parsed_args.id:
+            print("No job id given.")
+            sys.exit(1)
 
         print("...")
         self.lock.acquire()
-        aetros_backend = AetrosBackend(parsed_args.id)
-        job = aetros_backend.get_light_job()
-
-        self.job_model = JobModel(aetros_backend, job)
+        job_backend = JobBackend(parsed_args.id)
+        job_backend.load_light_job()
+        self.job_model = job_backend.get_job_model()
 
         if parsed_args.weights:
             weights_path = parsed_args.weights
@@ -61,7 +66,7 @@ class ServerCommand:
         print("Check weights ...")
 
         if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
-            weight_url = aetros_backend.get_best_weight_url(parsed_args.id)
+            weight_url = job_backend.get_best_weight_url(parsed_args.id)
             if not weight_url:
                 print("No weights available for this job.")
                 exit(1)
@@ -73,10 +78,10 @@ class ServerCommand:
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-        network.job_prepare(self.job_model.job)
+        model.job_prepare(self.job_model)
 
-        general_logger = GeneralLogger(job)
-        trainer = Trainer(aetros_backend, self.job_model, general_logger)
+        general_logger = GeneralLogger()
+        trainer = Trainer(job_backend, general_logger)
 
         self.job_model.set_input_shape(trainer)
 

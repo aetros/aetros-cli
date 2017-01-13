@@ -14,7 +14,6 @@ import numpy
 
 from io import BytesIO
 
-
 def dict_factory(cursor, row):
     d = {}
     for idx, col in enumerate(cursor.description):
@@ -42,7 +41,7 @@ def parse_message(buffer):
             if message:
                 parsed.append(json.loads(message))
 
-        buffer = buffer[term_position+1:]
+        buffer = buffer[term_position + 1:]
 
     return buffer, parsed
 
@@ -64,7 +63,7 @@ class EventListener:
 
 
 class Client:
-    def __init__(self, api_host, api_token, event_listener, job_id):
+    def __init__(self, api_host, api_token, event_listener):
         """
 
         :type api_host: string
@@ -76,7 +75,6 @@ class Client:
         self.api_token = api_token
         self.api_host = api_host
         self.event_listener = event_listener
-        self.job_id = job_id
         self.message_id = 0
 
         self.lock = Lock()
@@ -88,6 +86,9 @@ class Client:
         self.job_registered = False
         self.connected = False
         self.read_buffer = ''
+
+    def start(self, job_id):
+        self.job_id = job_id
 
         self.connect()
 
@@ -141,7 +142,14 @@ class Client:
         open = len(filter(lambda x: not x['sending'], self.queue))
         print("%d sent, %d in sending, %d open " % (sent, sending, open))
 
-    def connection_error(self):
+    def connection_error(self, error=None):
+        if not self.active:
+            return
+
+        self.connected = False
+        if error:
+            print("Connection error: %d: %s" % (error.errno, error.message,))
+
         self.connected = False
         self.authenticated = False
         self.job_registered = False
@@ -189,9 +197,7 @@ class Client:
                                 self.handle_messages(messages)
 
                 except socket.error as error:
-                    self.connected = False
-                    print("Connection error: %d: %s" % (error.errno, error.message,))
-                    self.connection_error()
+                    self.connection_error(error)
 
     def close(self):
         self.active = False
@@ -292,13 +298,97 @@ class Client:
         return parsed
 
 
-class AetrosBackend:
-    def __init__(self, job_id=None):
+def create_job(name, api_token=None):
+    """
+    :param name: string
+    :param api_token: string
+    :return: JobBackend
+    """
+    job = JobBackend(api_token=api_token)
+    job.create(name)
+
+    return job
+
+
+class JobChannel:
+    """
+    :type job_backend : JobBackend
+    """
+    def __init__(self, job_backend, name, series=None):
+        self.name = name
+        self.job_backend = job_backend
+
+        if not series:
+            series = [name]
+
+        message = {
+            'name': name,
+            'series': series,
+            'type': 'number'
+        }
+        self.job_backend.job_add_status('channel', message)
+
+    def send(self, x, y):
+        if not isinstance(y, list):
+            y = [y]
+
+        message = {
+            'name': self.name,
+            'x': x,
+            'y': y
+        }
+        self.job_backend.job_add_status('channel-value', message)
+
+class JobGraph:
+    """
+    :type job_backend : JobBackend
+    """
+    def __init__(self, job_backend, name, series=None):
+        self.name = name
+        self.job_backend = job_backend
+
+        if not series:
+            series = [name]
+
+        message = {
+            'name': name,
+            'series': series,
+            'type': 'number'
+        }
+        self.series = series
+        self.job_backend.job_add_status('graph', message)
+
+    def send(self, x, y):
+        if not isinstance(y, list):
+            y = [y]
+
+        if len(y) != len(self.series):
+            raise Exception('You tried to set more y values (%d items) then series available (%d series).' % (len(y), len(self.series)))
+
+        message = {
+            'name': self.name,
+            'x': x,
+            'y': y
+        }
+        self.job_backend.job_add_status('graph-value', message)
+
+class JobBackend:
+    """
+    :type event_listener: EventListener
+    :type api_token: string
+    :type job_id: int
+    :type client: Client
+    :type job: dict
+    """
+
+    def __init__(self, job_id=None, api_token=None):
         self.event_listener = EventListener()
-        self.api_token = os.getenv('API_KEY')
+        self.api_token = api_token if api_token else os.getenv('API_KEY')
 
         self.job_id = job_id
         self.active_syncer = True
+        self.client = None
+        self.job = None
 
         self.host = os.getenv('API_HOST')
         if not self.host or self.host == 'false':
@@ -308,6 +398,7 @@ class AetrosBackend:
         self.in_request = False
         self.stop_requested = False
         self.event_listener.on('stop', self.external_stop)
+        self.client = Client(self.host, self.api_token, self.event_listener)
 
     def external_stop(self):
         print("Job stopped through AETROS Trainer.")
@@ -315,8 +406,34 @@ class AetrosBackend:
         self.stop_requested = True
         os.kill(os.getpid(), signal.SIGINT)
 
-    def start(self, id):
-        self.client = Client(self.host, self.api_token, self.event_listener, id)
+    def create_channel(self, name, series=None):
+        """
+
+        :param name: string
+        :param series: list
+        :return: JobChannel
+        """
+        return JobChannel(self, name, series)
+
+    def create_graph(self, name, series=None):
+        """
+
+        :param name: string
+        :param series: list
+        :return: JobGraph
+        """
+        return JobGraph(self, name, series)
+
+    def start(self):
+        if not self.job_id:
+            raise Exception('No job id found. Use create() first.')
+
+        self.client.start(self.job_id)
+        self.post('job/started', {'id': self.job_id})
+
+    def end(self):
+        self.set_status('END')
+        self.stop()
 
     def stop(self):
         self.client.close()
@@ -336,8 +453,8 @@ class AetrosBackend:
 
         return url
 
-    def write_log(self, id, message):
-        item = {'id': id, 'message': message}
+    def write_log(self, message):
+        item = {'message': message}
 
         self.client.send({
             'type': 'log',
@@ -424,7 +541,7 @@ class AetrosBackend:
                             (response.status_code, response.content))
 
     def set_status(self, status):
-        print('Training status changed to %s ' % (status,))
+        print('Job status changed to %s ' % (status,))
         self.job_add_status('status', status)
 
     def get_best_weight_url(self, job_id):
@@ -452,21 +569,21 @@ class AetrosBackend:
 
         return requests.put(self.get_url(url), data=data, **kwargs)
 
-    def create_job(self, name, server_id='local', dataset_id=None, insights=False):
+    def create(self, name, server_id='local', dataset_id=None, insights=False):
         response = self.put('job',
-                            {'networkId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+                            {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+
         if response.status_code != 200:
-            raise Exception("Could not create training: %s" % (response.content,))
+            raise Exception("Could not create job: %s" % (response.content,))
 
-        job_id = response.json()
-        self.job_id = job_id
+        self.job_id = response.json()
 
-        return job_id
+        return self.job_id
 
-    def ensure_network(self, network_name, model_json, settings=None, network_type='custom', layers=None, graph=None):
-        response = self.put('network/ensure', {
-            'id': network_name,
-            'type': network_type,
+    def ensure_model(self, name, model_json, settings=None, type='custom', layers=None, graph=None):
+        response = self.put('model/ensure', {
+            'id': name,
+            'type': type,
             'model': model_json,
             'settings': json.dumps(settings, allow_nan=False, default=invalid_json_values) if settings else None,
             'layers': json.dumps(layers, allow_nan=False, default=invalid_json_values),
@@ -474,24 +591,70 @@ class AetrosBackend:
         })
 
         if response.status_code != 200:
-            raise Exception("Could not create network: %s" % (response.content,))
+            raise Exception("Could not create model: %s" % (response.content,))
 
         return True
 
-    def get_job(self):
+    @property
+    def model_id(self):
+        if not self.job:
+            raise Exception('Job not loaded yet. Use load(id) first.')
+
+        return self.job['modelId']
+
+    def load(self, id):
+        """
+        Loads job and sets as current.
+        :param id: int
+        """
+        if id:
+            self.job_id = id
+
+        if not self.job_id:
+            raise Exception('No job id given.')
+
         response = self.get('job', {'id': self.job_id})
+
         if response.status_code != 200:
-            raise Exception("Could not find version: %s" % (response.content,))
+            raise Exception("Could not find job: %s" % (response.content,))
 
         job = response.json()
 
         if job is None or 'error' in job:
-            raise Exception('Training/Version not found. Have you configured your token correctly? %s: %s' %
+            raise Exception('Job not found. Have you configured your token correctly? %s: %s' %
                             (job['error'], job['message']))
 
-        return response.json()
+        self.job = response.json()
 
-    def get_light_job(self):
+    def get_job_model(self):
+        """
+        Returns a new JobModel instance with current loaded job data attached.
+        :return: JobModel
+        """
+        if not self.job:
+            raise Exception('Job not loaded yet. Use load(id) first.')
+
+        from aetros.JobModel import JobModel
+
+        return JobModel(self.job)
+
+    def sync_weights(self):
+        self.job_add_status('status', 'SYNC WEIGHTS')
+        print("Sync weights ...")
+        self.upload_weights('best.hdf5', self.get_job_model().get_weights_filepath_best(), with_status=True)
+        print("Weights synced.")
+
+    def load_light_job(self, id=None):
+        """
+        Loads job with less information and sets as current.
+        :param id: int
+        """
+        if id:
+            self.job_id = id
+
+        if not self.job_id:
+            raise Exception('No job id given.')
+
         response = self.get('job', {'id': self.job_id, 'light': 1})
         if response.status_code != 200:
             raise Exception("Could not find version (%s): %s" % (self.job_id, response.content,))
@@ -513,15 +676,11 @@ class AetrosBackend:
             raise Exception(
                 'Version does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
-        return job
+        self.job = job
 
-    def job_started(self, id, pid):
-        self.start(id)
-        return self.post('job/started', {'id': id, 'pid': pid})
-
-    def job_add_status(self, statusKey, statusValue):
-        item = {'statusKey': statusKey,
-                'statusValue': json.dumps(statusValue, allow_nan=False, default=invalid_json_values)}
+    def job_add_status(self, key, value):
+        item = {'statusKey': key,
+                'statusValue': json.dumps(value, allow_nan=False, default=invalid_json_values)}
 
         self.client.send({
             'type': 'job-status',

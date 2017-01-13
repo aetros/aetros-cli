@@ -5,27 +5,23 @@ from keras.engine import InputLayer, Merge
 from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
 from keras.models import Sequential
 
-from aetros import network
+from aetros import model
 
-from aetros.GeneralLogger import GeneralLogger
+from aetros.logger import GeneralLogger
 from aetros.JobModel import JobModel
 
-from aetros.AetrosBackend import AetrosBackend
+from aetros.backend import JobBackend
 from aetros.KerasLogger import KerasLogger
 from aetros.MonitorThread import MonitoringThread
 from aetros.Trainer import Trainer
 
 
 class KerasIntegration():
-    monitoringThread = None
-    job_model = None
-    trainer = None
-
-    def __init__(self, network_name, model, network_type='custom', insights=False, confusion_matrix=False,
+    def __init__(self, id, model, type='custom', insights=False, confusion_matrix=False,
                  insight_sample=None):
         """
 
-        :type network_name: basestring The actual network name available in AETROS Trainer. Example peter/mnist-cnn
+        :type id: basestring The actual model name available in AETROS Trainer. Example peter/mnist-cnn
         :type insights: bool
         :type confusion_matrix: bool
         :type insight_sample: basestring|None A path to a sample which is being used for the insights. Default is first sample of data_validation.
@@ -37,11 +33,11 @@ class KerasIntegration():
             raise Exception('Sequential model is not built.')
 
         self.insight_sample = insight_sample
-        self.network_name = network_name
+        self.id = id
         self.insights = insights
-        self.network_type = network_type
+        self.model_type = type
 
-        self.aetros_backend = AetrosBackend()
+        self.job_backend = JobBackend()
 
         copy = {'fit': self.model.fit, 'fit_generator': self.model.fit_generator}
 
@@ -88,29 +84,28 @@ class KerasIntegration():
             'optimizer': type(self.model.optimizer).__name__ if hasattr(self.model, 'optimizer') else ''
         }
 
-        self.aetros_backend.ensure_network(self.network_name, self.model.to_json(), settings=settings,
-                                           network_type=self.network_type, graph=graph)
+        self.job_backend.ensure_model(self.id, self.model.to_json(), settings=settings,
+                                        type=self.model_type, graph=graph)
 
-        job_id = self.aetros_backend.create_job(self.network_name, insights=self.insights)
-        self.aetros_backend.start(job_id)
+        job_id = self.job_backend.create(self.id, insights=self.insights)
+        self.job_backend.start()
 
-        print("AETROS Training '%s' created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
-              (job_id, self.aetros_backend.host, job_id))
+        print("AETROS job '%s' created and started. Open http://%s/trainer/app#/job=%s to monitor the training." %
+              (job_id, self.job_backend.host, job_id))
 
-        job = self.aetros_backend.get_light_job()
-        self.job_model = JobModel(self.aetros_backend, job)
-        general_logger = GeneralLogger(job, aetros_backend=self.aetros_backend)
-        self.trainer = Trainer(self.aetros_backend, self.job_model, general_logger)
+        job = self.job_backend.load_light_job()
+        general_logger = GeneralLogger(job, job_backend=self.job_backend)
+        self.trainer = Trainer(self.job_backend, general_logger)
 
-        self.monitoringThread = MonitoringThread(self.aetros_backend, self.trainer)
+        self.monitoringThread = MonitoringThread(self.job_backend, self.trainer)
         self.monitoringThread.daemon = True
         self.monitoringThread.start()
-        network.collect_system_information(self.trainer)
+        model.collect_system_information(self.trainer)
 
         self.trainer.model = self.model
         self.trainer.data_train = {'x': x}
 
-        self.callback = KerasLogger(self.trainer, self.aetros_backend, self.job_model, general_logger)
+        self.callback = KerasLogger(self.trainer, self.job_backend, general_logger)
         self.callback.log_epoch = False
         self.callback.model = self.model
         self.callback.confusion_matrix = self.confusion_matrix
@@ -119,8 +114,8 @@ class KerasIntegration():
 
     def publish(self):
         graph = self.model_to_graph(self.model)
-        self.aetros_backend.ensure_network(self.network_name, self.model.to_json(), network_type=self.network_type,
-                                           graph=graph)
+        self.job_backend.ensure_model(self.id, self.model.to_json(), type=self.model_type,
+                                        graph=graph)
 
     def start(self, nb_epoch=1, nb_sample=1, title="TRAINING"):
         """
@@ -169,8 +164,8 @@ class KerasIntegration():
 
     def end(self):
         self.monitoringThread.stop()
-        self.job_model.sync_weights()
-        self.aetros_backend.set_status('DONE')
+        self.job_backend.sync_weights()
+        self.job_backend.set_status('DONE')
 
     def model_to_graph(self, model):
         graph = {

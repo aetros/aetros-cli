@@ -17,16 +17,13 @@ from keras import backend as K
 import keras.layers.convolutional
 
 import numpy as np
-# from keras.models import Sequential
 
 from aetros.utils.image import get_layer_vis_square
-from .network import ensure_dir, get_total_params
+from .model import ensure_dir, get_total_params
 import six
 
-
 class KerasLogger(Callback):
-
-    def __init__(self, trainer, backend, job_model, general_logger):
+    def __init__(self, trainer, backend, general_logger):
         self.params = {}
         super(KerasLogger, self).__init__()
         self.validation_per_batch = []
@@ -41,7 +38,7 @@ class KerasLogger(Callback):
         self.confusion_matrix = True
 
         self.backend = backend
-        self.job_model = job_model
+        self.job_model = backend.get_job_model()
         self.general_logger = general_logger
         self._test_with_acc = None
         self.last_batch_time = time.time()
@@ -50,8 +47,8 @@ class KerasLogger(Callback):
         self.batches_per_second = 0
         self.stats = []
         self.last_current = None
-        self.filepath_best = job_model.get_weights_filepath_best()
-        self.filepath_latest = job_model.get_weights_filepath_latest()
+        self.filepath_best = self.job_model.get_weights_filepath_best()
+        self.filepath_latest = self.job_model.get_weights_filepath_latest()
 
         ensure_dir(os.path.dirname(self.filepath_best))
         self.data_gathered = False

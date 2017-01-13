@@ -18,8 +18,8 @@ import requests
 from PIL import Image
 
 from aetros.utils import get_option
-from .network import ensure_dir
-from .AetrosBackend import invalid_json_values
+from .model import ensure_dir
+from .backend import invalid_json_values
 
 from threading import Thread, Lock
 from six.moves.queue import Queue, Empty

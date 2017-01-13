@@ -17,7 +17,7 @@ commands_dict = {
     'server': ServerCommand
 }
 command_summaries = [
-    ['start', 'Starts a training of a network in current working directory'],
+    ['start', 'Starts a job of a model in current working directory'],
     ['predict', 'Runs a prediction locally'],
     ['upload-weights', 'Uploads weights as new or existing job.'],
     ['server', 'Spawns a http server that handles incoming data as input and predicts output.'],
