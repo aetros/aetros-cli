@@ -9,22 +9,22 @@ import signal
 import sys
 import traceback
 
-from . import model
+from . import model_utils
 from .backend import JobBackend
 from .logger import GeneralLogger
 from .JobModel import JobModel
 from .MonitorThread import MonitoringThread
 from .Trainer import Trainer
-from .model import ensure_dir
+from .model_utils import ensure_dir
 import six
 
 
-def start(job_id, dataset_id=None, server_id='local', insights=False, insights_sample_path=None):
+def start(job_id, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
     """
     Starts the training process with all logging of a job_id
     """
 
-    job_backend = JobBackend()
+    job_backend = JobBackend(api_token=api_token)
 
     if '/' in job_id:
         print("Create job ...")
@@ -64,7 +64,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
     monitoringThread = MonitoringThread(job_backend, trainer)
     monitoringThread.daemon = True
     monitoringThread.start()
-    model.collect_system_information(trainer)
+    model_utils.collect_system_information(trainer)
 
     def ctrlc(sig, frame):
         print("signal %s received\n" % id)
@@ -74,10 +74,10 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
     try:
         print("Setup job")
-        model.job_prepare(job_model)
+        model_utils.job_prepare(job_model)
 
         print("Start job")
-        model.job_start(job_model, trainer, keras_logger, general_logger)
+        model_utils.job_start(job_model, trainer, keras_logger, general_logger)
 
         job_backend.sync_weights()
         job_backend.stop()

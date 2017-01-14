@@ -5,6 +5,7 @@ import os
 from argparse import RawTextHelpFormatter
 
 from aetros import const
+from aetros.commands.WorkerCommand import WorkerCommand
 from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
 from aetros.commands.PredictCommand import PredictCommand
 from aetros.commands.ServerCommand import ServerCommand
@@ -14,13 +15,15 @@ commands_dict = {
     'start': StartCommand,
     'predict': PredictCommand,
     'upload-weights': UploadWeightsCommand,
-    'server': ServerCommand
+    'server': ServerCommand,
+    'worker': WorkerCommand,
 }
 command_summaries = [
     ['start', 'Starts a job of a model in current working directory'],
     ['predict', 'Runs a prediction locally'],
     ['upload-weights', 'Uploads weights as new or existing job.'],
     ['server', 'Spawns a http server that handles incoming data as input and predicts output.'],
+    ['worker', 'Spawns a worker server that handles jobs managed through AETROS Trainer'],
 ]
 
 

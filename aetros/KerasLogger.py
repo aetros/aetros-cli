@@ -19,7 +19,7 @@ import keras.layers.convolutional
 import numpy as np
 
 from aetros.utils.image import get_layer_vis_square
-from .model import ensure_dir, get_total_params
+from .model_utils import ensure_dir, get_total_params
 import six
 
 class KerasLogger(Callback):

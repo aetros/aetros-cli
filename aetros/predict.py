@@ -12,15 +12,14 @@ import os
 
 from PIL import Image
 
-from aetros import model
-from aetros.model import ensure_dir
+from aetros import model_utils
+from aetros.model_utils import ensure_dir
 from .JobModel import JobModel
 from .backend import JobBackend, invalid_json_values
 
-
-def predict(job_id, file_paths, insights=False, weights_path=None):
+def predict(job_id, file_paths, insights=False, weights_path=None, api_token=None):
     print("Prepare model ...")
-    job_backend = JobBackend()
+    job_backend = JobBackend(api_token=api_token)
     job_backend.load(job_id)
 
     job_model = job_backend.get_job_model()
@@ -28,7 +27,7 @@ def predict(job_id, file_paths, insights=False, weights_path=None):
     log = io.open(tempfile.mktemp(), 'w', encoding='utf8')
     log.truncate()
 
-    model.job_prepare(job_model)
+    model_utils.job_prepare(job_model)
 
     if not weights_path:
         weight_path = job_model.get_weights_filepath_best()

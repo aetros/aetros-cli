@@ -23,7 +23,7 @@ class ServerCommand:
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
         parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
         parser.add_argument('--port', help="Changes port. Default 8000")
-        parser.add_argument('--host', help="Changes port. Default 127.0.0.1")
+        parser.add_argument('--host', help="Changes host. Default 127.0.0.1")
 
         parsed_args = parser.parse_args(args)
         self.lock = Lock()
@@ -40,11 +40,11 @@ class ServerCommand:
         self.start_webserver('127.0.0.1' if not parsed_args.host else parsed_args.host, 8000 if not parsed_args.port else int(parsed_args.port))
 
     def start_model(self, parsed_args):
-        from aetros import model
+        from aetros import model_utils
         from aetros.backend import JobBackend
         from aetros.logger import GeneralLogger
         from aetros.Trainer import Trainer
-        from aetros.model import ensure_dir
+        from aetros.model_utils import ensure_dir
 
         if not parsed_args.id:
             print("No job id given.")
@@ -78,7 +78,7 @@ class ServerCommand:
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-        model.job_prepare(self.job_model)
+        model_utils.job_prepare(self.job_model)
 
         general_logger = GeneralLogger()
         trainer = Trainer(job_backend, general_logger)

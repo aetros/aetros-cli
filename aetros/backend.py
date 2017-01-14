@@ -56,10 +56,10 @@ class EventListener:
 
         self.events[name].append(callback)
 
-    def fire(self, name):
+    def fire(self, name, parameter=None):
         if name in self.events:
             for callback in self.events[name]:
-                callback()
+                callback(parameter)
 
 
 class Client:
@@ -278,6 +278,8 @@ class Client:
         """
         Reads per call current buffer from network stack. If a full message has been collected (\n retrieved)
         the message will be parsed and returned. If no message has yet been completley transmitted it returns []
+
+        :return: list
         """
 
         chunk = ''
@@ -570,8 +572,7 @@ class JobBackend:
         return requests.put(self.get_url(url), data=data, **kwargs)
 
     def create(self, name, server_id='local', dataset_id=None, insights=False):
-        response = self.put('job',
-                            {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+        response = self.put('job', {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
 
         if response.status_code != 200:
             raise Exception("Could not create job: %s" % (response.content,))

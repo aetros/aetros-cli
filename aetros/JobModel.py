@@ -10,8 +10,8 @@ from PIL import Image
 import numpy as np
 from aetros.Trainer import Trainer
 from aetros.logger import GeneralLogger
-from aetros import model
-from aetros.model import ensure_dir
+from aetros import model_utils
+from aetros.model_utils import ensure_dir
 from aetros.backend import JobBackend
 from six.moves import zip
 
