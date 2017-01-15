@@ -77,6 +77,7 @@ class Server:
                 print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
                 time.sleep(1)
 
+        self.event_listener.fire('registration')
         print("Connected to %s " % (self.api_host,))
 
     def thread(self):
@@ -219,6 +220,7 @@ class Server:
         self.read_buffer, parsed = parse_message(self.read_buffer)
         return parsed
 
+
 class ServerCommand:
     model = None
     job_model = None
@@ -227,13 +229,16 @@ class ServerCommand:
         self.last_utilization = None
         self.last_net = {}
         self.nets = []
+        self.server = None
+        self.jobs = []
 
     def main(self, args):
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' worker')
-        parser.add_argument('--secure-key', nargs='?', help="Secure key of the server. Alternatively use API_KEY environment variable.")
+        parser.add_argument('--secure-key', nargs='?',
+                            help="Secure key of the server. Alternatively use API_KEY environment variable.")
         parser.add_argument('--server', help="Default aetros.com")
 
         parsed_args = parser.parse_args(args)
@@ -245,15 +250,17 @@ class ServerCommand:
         event_listener = EventListener()
 
         event_listener.on('job', self.job)
+        event_listener.on('registration', self.send_system_info)
 
-        server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
-        server.start()
-
-        server.send_message({'type': 'system', 'values': self.collect_system_information()})
+        self.server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
+        self.server.start()
 
         while True:
-            server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
+            self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
             time.sleep(0.5)
+
+    def send_system_info(self, params):
+        self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
     def collect_system_information(self):
         values = {}
@@ -265,8 +272,8 @@ class ServerCommand:
         values['cpu_name'] = cpu['brand']
         values['cpu'] = [cpu['hz_actual_raw'][0], cpu['count']]
         values['nets'] = {}
-
         values['disks'] = {}
+        values['boot_time'] = psutil.boot_time()
 
         for disk in psutil.disk_partitions():
             name = self.get_disk_name(disk[1])
@@ -293,7 +300,9 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
+        values['jobs'] = len(self.jobs)
         values['nets'] = {}
+        values['processes'] = []
 
         for disk in psutil.disk_partitions():
             name = self.get_disk_name(disk[1])
@@ -313,8 +322,29 @@ class ServerCommand:
                 values['nets'][id]['upload'] = (net.bytes_sent - self.last_net[id]['sent']) / (time.time() - self.last_utilization)
                 values['nets'][id]['download'] = (net.bytes_recv - self.last_net[id]['recv']) / (time.time() - self.last_utilization)
 
-            self.last_net[id] = values['nets'][id]
+            self.last_net[id] = dict(values['nets'][id])
 
+        for p in psutil.process_iter():
+            try:
+                cpu = p.cpu_percent()
+                if cpu > 1 or p.memory_percent() > 1:
+                    values['processes'].append([
+                        p.pid,
+                        p.name(),
+                        p.username(),
+                        p.create_time(),
+                        p.status(),
+                        p.num_threads(),
+                        p.memory_percent(),
+                        cpu
+                    ])
+            except psutil.Error:
+                pass
+
+        try:
+            values['loadavg'] = os.getloadavg()
+        except OSError:
+            pass
 
         self.last_utilization = time.time()
         return values
