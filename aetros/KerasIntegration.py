@@ -18,7 +18,7 @@ from aetros.Trainer import Trainer
 
 class KerasIntegration():
     def __init__(self, id, model, type='custom', insights=False, confusion_matrix=False,
-                 insight_sample=None):
+                 insight_sample=None, api_key=None):
         """
 
         :type id: basestring The actual model name available in AETROS Trainer. Example peter/mnist-cnn
@@ -37,7 +37,7 @@ class KerasIntegration():
         self.insights = insights
         self.model_type = type
 
-        self.job_backend = JobBackend()
+        self.job_backend = JobBackend(api_token=api_key)
 
         copy = {'fit': self.model.fit, 'fit_generator': self.model.fit_generator}
 

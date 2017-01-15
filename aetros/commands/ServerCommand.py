@@ -3,165 +3,321 @@ from __future__ import print_function
 import argparse
 import json
 import os
+import socket
 import sys
-import urllib
-from threading import Lock
+from pprint import pprint
+from threading import Lock, Thread
 import time
 
+import select
+
+import psutil
+
+from aetros.backend import invalid_json_values, EventListener, parse_message
+
+
+class Server:
+    """
+    :type: event_listener : EventListener
+    """
+
+    def __init__(self, api_host, server_api_token, event_listener):
+        self.event_listener = event_listener
+        self.server_api_token = server_api_token
+        self.api_host = api_host
+        self.active = True
+        self.connected = True
+        self.registered = False
+        self.read_buffer = ''
+
+        if not self.api_host:
+            self.api_host = os.getenv('API_HOST')
+            if not self.api_host or self.api_host == 'false':
+                self.api_host = 'aetros.com'
+
+        self.lock = Lock()
+
+    def start(self):
+        self.connect()
+
+        self.thread = Thread(target=self.thread)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def connect(self):
+
+        while self.active:
+            # tries += 1
+            # if tries > 3:
+            #     print("Could not connect to %s. " % (self.api_host,))
+            # break
+            try:
+                self.lock.acquire()
+                self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.s.connect((self.api_host, 8051))
+                self.connected = True
+                self.lock.release()
+
+                self.send_message({'register_server': self.server_api_token})
+                messages = self.read_full_message(self.s)
+
+                if "SERVER_ALREADY_REGISTERED" in messages:
+                    print("Registration failed. This server is already registered.")
+                    return
+
+                if "SERVER_REGISTERED" in messages:
+                    self.registered = True
+                else:
+                    print("Registration failed.")
+                    return
+
+                break
+            except socket.error as error:
+                self.lock.release()
+                print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
+                time.sleep(1)
+
+        print("Connected to %s " % (self.api_host,))
+
+    def thread(self):
+        last_ping = 0
+
+        while True:
+            if self.connected and self.registered:
+                try:
+                    if last_ping < time.time() - 10:
+                        # ping every second
+                        last_ping = time.time()
+                        self.send_message("PING")
+
+                    if self.connected:
+                        # # send pending messages
+                        # max_messages = 1
+                        # for message in self.queue:
+                        #     if not message['sending'] and not message['sent']:
+                        #         max_messages += 1
+                        #         self.send_message(message)
+                        #         if max_messages > 10:
+                        #             # not too much at once, so we have time to listen for incoming messages
+                        #             break
+
+                        # see if we can read something
+                        self.lock.acquire()
+                        readable, writable, exceptional = select.select([self.s], [self.s], [])
+                        self.lock.release()
+                        if exceptional:
+                            self.connection_error()
+
+                        for s in readable:
+                            messages = self.read(s)
+                            if messages:
+                                self.handle_messages(messages)
+
+                except socket.error as error:
+                    self.connection_error(error)
+
+                time.sleep(0.1)
+            else:
+                time.sleep(0.5)
+
+    def close(self):
+        self.active = False
+        self.connected = False
+
+        self.lock.acquire()
+        self.s.shutdown(socket.SHUT_RDWR)
+        self.s.close()
+        self.lock.release()
+
+    def handle_messages(self, messages):
+        for message in messages:
+
+            if 'job' in message:
+                self.event_listener.fire('job', message['job'])
+
+            if 'stop' in message:
+                self.close()
+                self.event_listener.fire('stop')
+
+    def connection_error(self, error=None):
+        if not self.active:
+            return
+
+        self.connected = False
+        if error:
+            print("Connection error: %d: %s" % (error.errno, error.message,))
+
+        self.connected = False
+        self.job_registered = False
+
+        self.connect()
+
+    def send_message(self, message):
+        sent = False
+        try:
+            if isinstance(message, dict):
+                message['sending'] = True
+
+            msg = json.dumps(message, default=invalid_json_values)
+            self.lock.acquire()
+            self.s.sendall(msg + "\n")
+            self.lock.release()
+
+        except:
+            self.lock.release()
+            sent = False
+            self.connected = False
+
+        return sent
+
+    def read_full_message(self, s):
+        """
+        Reads until we receive a message termination (\n)
+        """
+        message = ''
+
+        while True:
+            chunk = ''
+            try:
+                self.lock.acquire()
+                chunk = s.recv(2048)
+            finally:
+                self.lock.release()
+
+            if chunk == '':
+                self.connection_error()
+                return False
+
+            message += chunk
+
+            message, parsed = parse_message(message)
+            if parsed:
+                return parsed
+
+    def read(self, s):
+        """
+        Reads per call current buffer from network stack. If a full message has been collected (\n retrieved)
+        the message will be parsed and returned. If no message has yet been completley transmitted it returns []
+
+        :return: list
+        """
+
+        chunk = ''
+
+        try:
+            self.lock.acquire()
+            chunk = s.recv(2048)
+        finally:
+            self.lock.release()
+
+        if chunk == '':
+            self.connection_error()
+            return False
+
+        self.read_buffer += chunk
+
+        self.read_buffer, parsed = parse_message(self.read_buffer)
+        return parsed
 
 class ServerCommand:
-
     model = None
     job_model = None
+
+    def __init__(self):
+        self.last_utilization = None
+        self.last_net = {}
+        self.nets = []
 
     def main(self, args):
         import aetros.const
 
-        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' server')
-        parser.add_argument('id', nargs='?', help='job id')
-        parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
-        parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
-        parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
-        parser.add_argument('--port', help="Changes port. Default 8000")
-        parser.add_argument('--host', help="Changes host. Default 127.0.0.1")
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
+                                         prog=aetros.const.__prog__ + ' worker')
+        parser.add_argument('--secure-key', nargs='?', help="Secure key of the server. Alternatively use API_KEY environment variable.")
+        parser.add_argument('--server', help="Default aetros.com")
 
         parsed_args = parser.parse_args(args)
-        self.lock = Lock()
 
-        sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
-
-        if not parsed_args.id:
+        if not parsed_args.secure_key:
             parser.print_help()
             sys.exit()
 
-        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
+        event_listener = EventListener()
 
-        self.model = self.start_model(parsed_args)
-        self.start_webserver('127.0.0.1' if not parsed_args.host else parsed_args.host, 8000 if not parsed_args.port else int(parsed_args.port))
+        event_listener.on('job', self.job)
 
-    def start_model(self, parsed_args):
-        from aetros import model_utils
-        from aetros.backend import JobBackend
-        from aetros.logger import GeneralLogger
-        from aetros.Trainer import Trainer
-        from aetros.model_utils import ensure_dir
+        server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
+        server.start()
 
-        if not parsed_args.id:
-            print("No job id given.")
-            sys.exit(1)
+        server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
-        print("...")
-        self.lock.acquire()
-        job_backend = JobBackend(parsed_args.id)
-        job_backend.load_light_job()
-        self.job_model = job_backend.get_job_model()
+        while True:
+            server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
+            time.sleep(0.5)
 
-        if parsed_args.weights:
-            weights_path = parsed_args.weights
-        elif parsed_args.latest:
-            weights_path = self.job_model.get_weights_filepath_latest()
-        else:
-            weights_path = self.job_model.get_weights_filepath_best()
+    def collect_system_information(self):
+        values = {}
+        mem = psutil.virtual_memory()
+        values['memory_total'] = mem.total
 
-        print("Check weights ...")
+        import cpuinfo
+        cpu = cpuinfo.get_cpu_info()
+        values['cpu_name'] = cpu['brand']
+        values['cpu'] = [cpu['hz_actual_raw'][0], cpu['count']]
+        values['nets'] = {}
 
-        if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
-            weight_url = job_backend.get_best_weight_url(parsed_args.id)
-            if not weight_url:
-                print("No weights available for this job.")
-                exit(1)
+        values['disks'] = {}
 
-            print(("Download weights %s to %s .." % (weight_url, weights_path)))
-            ensure_dir(os.path.dirname(weights_path))
+        for disk in psutil.disk_partitions():
+            name = self.get_disk_name(disk[1])
+            values['disks'][name] = psutil.disk_usage(disk[1]).total
 
-            f = open(weights_path, 'wb')
-            f.write(urllib.urlopen(weight_url).read())
-            f.close()
+        for id, net in psutil.net_if_stats().iteritems():
+            if 0 != id.find('lo') and net.isup:
+                self.nets.append(id)
+                values['nets'][id] = net.speed or 1000
 
-        model_utils.job_prepare(self.job_model)
+        return values
 
-        general_logger = GeneralLogger()
-        trainer = Trainer(job_backend, general_logger)
+    def get_disk_name(self, name):
 
-        self.job_model.set_input_shape(trainer)
+        if 0 == name.find("/Volumes"):
+            return os.path.basename(name)
 
-        print("Loading model ...")
-        model = self.job_model.get_built_model(trainer)
+        return name
 
-        print(("Load weights %s ..." % (weights_path,)))
-        self.job_model.load_weights(model, weights_path)
-        print("Locked and loaded.")
+    def collect_system_utilization(self):
+        values = {}
 
-        self.lock.release()
+        values['cpu'] = psutil.cpu_percent(interval=0.2, percpu=True)
+        mem = psutil.virtual_memory()
+        values['memory'] = mem.percent
+        values['disks'] = {}
+        values['nets'] = {}
 
-        return model
+        for disk in psutil.disk_partitions():
+            name = self.get_disk_name(disk[1])
+            values['disks'][name] = psutil.disk_usage(disk[1]).used
 
-    def start_webserver(self, host, port):
-        import cherrypy
-        import numpy
+        net_stats = psutil.net_io_counters(pernic=True)
+        for id in self.nets:
+            net = net_stats[id]
+            values['nets'][id] = {
+                'recv': net.bytes_recv,
+                'sent': net.bytes_sent,
+                'upload': 0,
+                'download': 0
+            }
 
-        class WebServer(object):
-            def __init__(self, lock, job_model, model):
-                self.job_model = job_model
-                self.model = model
-                self.lock = lock
+            if id in self.last_net and self.last_utilization:
+                values['nets'][id]['upload'] = (net.bytes_sent - self.last_net[id]['sent']) / (time.time() - self.last_utilization)
+                values['nets'][id]['download'] = (net.bytes_recv - self.last_net[id]['recv']) / (time.time() - self.last_utilization)
 
-            @cherrypy.expose
-            def predict(self, path=None, paths=None, uploads=None, inputs=None):
-                self.lock.acquire()
-                result = {'times': {}}
+            self.last_net[id] = values['nets'][id]
 
-                try:
-                    start = time.time()
 
-                    if not path and not paths and not uploads and not inputs:
-                        return json.dumps({'error': 'not_input_given'})
+        self.last_utilization = time.time()
+        return values
 
-                    if path and not paths and not uploads and not inputs:
-                        paths = [path]
-
-                    encoded_inputs = []
-                    if paths:
-                        if not isinstance(paths, list):
-                            paths = [paths]
-
-                        for idx, file_path in enumerate(paths):
-                            encoded_inputs.append(self.job_model.convert_file_to_input_node(file_path, self.job_model.get_input_node(idx)))
-
-                    if inputs:
-                        if not isinstance(inputs, list):
-                            inputs = [inputs]
-
-                        for idx, input in enumerate(inputs):
-                            encoded_inputs.append(self.job_model.encode_input_to_input_node(input, self.model.input_layers[idx]))
-
-                    if uploads:
-                        if not isinstance(uploads, list):
-                            uploads = [uploads]
-
-                        for idx, upload in enumerate(uploads):
-                            encoded_inputs.append(self.job_model.convert_file_to_input_node(upload.filename, self.job_model.get_input_node(idx)))
-
-                    result['times']['prepare_fetch_input'] = time.time() - start
-
-                    start = time.time()
-                    prediction = self.job_model.predict(self.model, numpy.array(encoded_inputs))
-                    result['times']['prediction'] = time.time() - start
-
-                    self.lock.release()
-                except Exception as e:
-                    self.lock.release()
-                    return json.dumps({'error': type(e).__name__, 'message': e.message})
-
-                result['prediction'] = prediction
-
-                return json.dumps(result)
-
-        cherrypy.config.update({
-            'server.socket_host': host,
-            'server.socket_port': port,
-            'server.thread_pool': 1,
-        })
-
-        print("Starting server ... Use http://127.0.0.1:8000/predict?paths=path_to_image.jpg or upload files named 'uploads[0]' to http://127.0.0.1:8000/predict.")
-        cherrypy.quickstart(WebServer(self.lock, self.job_model, self.model))
+    def job(self, message):
+        pprint(message)

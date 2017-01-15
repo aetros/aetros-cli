@@ -82,7 +82,6 @@ class Client:
         self.queue = []
 
         self.active = True
-        self.authenticated = False
         self.job_registered = False
         self.connected = False
         self.read_buffer = ''
@@ -110,16 +109,7 @@ class Client:
                 self.connected = True
                 self.lock.release()
 
-                self.send_message({'login': self.api_token})
-                messages = self.read_full_message(self.s)
-
-                if "LOGGED_IN" in messages:
-                    self.authenticated = True
-                else:
-                    print("Authentication with token %s against %s failed." % (self.api_token, self.api_host))
-                    return
-
-                self.send_message({'register_job': self.job_id})
+                self.send_message({'register_job_worker': self.api_token, 'job_id': self.job_id})
                 messages = self.read_full_message(self.s)
 
                 if "JOB_REGISTERED" in messages:
@@ -151,7 +141,6 @@ class Client:
             print("Connection error: %d: %s" % (error.errno, error.message,))
 
         self.connected = False
-        self.authenticated = False
         self.job_registered = False
 
         # set all messages that are in sending to sending=false
@@ -166,7 +155,7 @@ class Client:
         last_ping = 0
 
         while True:
-            if self.connected and self.authenticated and self.job_registered:
+            if self.connected and self.job_registered:
                 try:
                     if last_ping < time.time() - 1:
                         # ping every second
@@ -198,6 +187,10 @@ class Client:
 
                 except socket.error as error:
                     self.connection_error(error)
+
+                time.sleep(0.1)
+            else:
+                time.sleep(0.5)
 
     def close(self):
         self.active = False
