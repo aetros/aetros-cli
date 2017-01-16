@@ -3,15 +3,16 @@ from __future__ import print_function
 import argparse
 import json
 import os
+import pprint
 import socket
 import sys
-from pprint import pprint
 from threading import Lock, Thread
 import time
 
 import select
 
 import psutil
+import subprocess
 
 from aetros.backend import invalid_json_values, EventListener, parse_message
 
@@ -25,10 +26,12 @@ class Server:
         self.event_listener = event_listener
         self.server_api_token = server_api_token
         self.api_host = api_host
-        self.active = True
-        self.connected = True
+        self.active = False
+        self.connected = False
         self.registered = False
         self.read_buffer = ''
+        self.s = None
+        self.thread_instance = None
 
         if not self.api_host:
             self.api_host = os.getenv('API_HOST')
@@ -38,47 +41,51 @@ class Server:
         self.lock = Lock()
 
     def start(self):
-        self.connect()
+        self.active = True
 
-        self.thread = Thread(target=self.thread)
-        self.thread.daemon = True
-        self.thread.start()
+        if not self.thread_instance:
+            self.thread_instance = Thread(target=self.thread)
+            self.thread_instance.daemon = True
+            self.thread_instance.start()
 
     def connect(self):
+        locked = False
 
-        while self.active:
-            # tries += 1
-            # if tries > 3:
-            #     print("Could not connect to %s. " % (self.api_host,))
-            # break
-            try:
-                self.lock.acquire()
-                self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.s.connect((self.api_host, 8051))
-                self.connected = True
-                self.lock.release()
+        try:
+            self.lock.acquire()
+            locked = True
+            self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.s.connect((self.api_host, 8051))
+            self.connected = True
+            self.lock.release()
+            locked = False
 
-                self.send_message({'register_server': self.server_api_token})
-                messages = self.read_full_message(self.s)
+            self.send_message({'register_server': self.server_api_token})
+            messages = self.read_full_message(self.s)
 
+            if isinstance(messages, list):
                 if "SERVER_ALREADY_REGISTERED" in messages:
                     print("Registration failed. This server is already registered.")
                     return
 
                 if "SERVER_REGISTERED" in messages:
                     self.registered = True
-                else:
-                    print("Registration failed.")
-                    return
+                    for message in messages:
+                        if 'registered' in message:
+                            server_id = message['id']
+                            self.event_listener.fire('registration', server_id)
+                            print("Connected to %s as server %s" % (self.api_host, server_id))
+                    self.handle_messages(messages)
+                    return True
 
-                break
-            except socket.error as error:
+            print("Registration failed due to protocol error.")
+            return False
+        except socket.error as error:
+            if locked:
                 self.lock.release()
-                print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
-                time.sleep(1)
+            print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
 
-        self.event_listener.fire('registration')
-        print("Connected to %s " % (self.api_host,))
+            return False
 
     def thread(self):
         last_ping = 0
@@ -92,16 +99,6 @@ class Server:
                         self.send_message("PING")
 
                     if self.connected:
-                        # # send pending messages
-                        # max_messages = 1
-                        # for message in self.queue:
-                        #     if not message['sending'] and not message['sent']:
-                        #         max_messages += 1
-                        #         self.send_message(message)
-                        #         if max_messages > 10:
-                        #             # not too much at once, so we have time to listen for incoming messages
-                        #             break
-
                         # see if we can read something
                         self.lock.acquire()
                         readable, writable, exceptional = select.select([self.s], [self.s], [])
@@ -117,9 +114,11 @@ class Server:
                 except socket.error as error:
                     self.connection_error(error)
 
-                time.sleep(0.1)
-            else:
-                time.sleep(0.5)
+            elif not self.connected and self.active:
+                if not self.connect():
+                    time.sleep(5)
+
+            time.sleep(0.1)
 
     def close(self):
         self.active = False
@@ -133,39 +132,42 @@ class Server:
     def handle_messages(self, messages):
         for message in messages:
 
-            if 'job' in message:
-                self.event_listener.fire('job', message['job'])
+            if not isinstance(message, dict):
+                continue
 
             if 'stop' in message:
                 self.close()
                 self.event_listener.fire('stop')
 
-    def connection_error(self, error=None):
-        if not self.active:
-            return
+            if 'type' in message:
+                if message['type'] == 'create-jobs':
+                    self.event_listener.fire('create-jobs', message['jobs'])
 
-        self.connected = False
+    def connection_error(self, error=None):
         if error:
             print("Connection error: %d: %s" % (error.errno, error.message,))
+        else:
+            print("Connection error")
 
         self.connected = False
-        self.job_registered = False
-
-        self.connect()
+        self.registered = False
 
     def send_message(self, message):
         sent = False
+        locked = False
         try:
             if isinstance(message, dict):
                 message['sending'] = True
 
             msg = json.dumps(message, default=invalid_json_values)
             self.lock.acquire()
+            locked = True
             self.s.sendall(msg + "\n")
             self.lock.release()
 
         except:
-            self.lock.release()
+            if locked:
+                self.lock.release()
             sent = False
             self.connected = False
 
@@ -175,7 +177,7 @@ class Server:
         """
         Reads until we receive a message termination (\n)
         """
-        message = ''
+        buffer = ''
 
         while True:
             chunk = ''
@@ -189,9 +191,10 @@ class Server:
                 self.connection_error()
                 return False
 
-            message += chunk
+            buffer += chunk
 
-            message, parsed = parse_message(message)
+            buffer, parsed = parse_message(buffer)
+            self.read_buffer = buffer
             if parsed:
                 return parsed
 
@@ -231,6 +234,7 @@ class ServerCommand:
         self.nets = []
         self.server = None
         self.jobs = []
+        self.registered = False
 
     def main(self, args):
         import aetros.const
@@ -249,17 +253,38 @@ class ServerCommand:
 
         event_listener = EventListener()
 
-        event_listener.on('job', self.job)
-        event_listener.on('registration', self.send_system_info)
+        event_listener.on('registration', self.registration_complete)
+        event_listener.on('create-jobs', self.create_jobs)
 
         self.server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
         self.server.start()
 
         while True:
-            self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
+            if self.registered:
+                self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
             time.sleep(0.5)
 
-    def send_system_info(self, params):
+    def create_jobs(self, jobs):
+        for job in jobs:
+            self.create_job(job)
+
+    def create_job(self, job):
+        print("Create job %s of model %s by %s in %s ..." % (job['id'], job['modelId'], job['username'], os.getcwd()))
+
+        with open(os.devnull, 'r+b', 0) as DEVNULL:
+            my_env = os.environ.copy()
+
+            # makes sure that aetros.backend.create_job doesn't create but load this job
+            my_env["AETROS_JOB_ID"] = job['id']
+            if 'PYTHONPATH' not in my_env:
+                my_env['PYTHONPATH'] = ''
+
+            my_env['PYTHONPATH'] += ':' + os.getcwd()
+            args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
+            subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL, stderr=sys.stderr, close_fds=True, env=my_env)
+
+    def registration_complete(self, params):
+        self.registered = True
         self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
     def collect_system_information(self):
@@ -319,8 +344,10 @@ class ServerCommand:
             }
 
             if id in self.last_net and self.last_utilization:
-                values['nets'][id]['upload'] = (net.bytes_sent - self.last_net[id]['sent']) / (time.time() - self.last_utilization)
-                values['nets'][id]['download'] = (net.bytes_recv - self.last_net[id]['recv']) / (time.time() - self.last_utilization)
+                values['nets'][id]['upload'] = (net.bytes_sent - self.last_net[id]['sent']) / (
+                time.time() - self.last_utilization)
+                values['nets'][id]['download'] = (net.bytes_recv - self.last_net[id]['recv']) / (
+                time.time() - self.last_utilization)
 
             self.last_net[id] = dict(values['nets'][id])
 
@@ -348,6 +375,3 @@ class ServerCommand:
 
         self.last_utilization = time.time()
         return values
-
-    def job(self, message):
-        pprint(message)

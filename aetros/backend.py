@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import os
+import pprint
 import socket
 import select
 from threading import Thread, Lock
@@ -13,6 +14,7 @@ import time
 import numpy
 
 from io import BytesIO
+
 
 def dict_factory(cursor, row):
     d = {}
@@ -71,60 +73,63 @@ class Client:
         :type event_listener: EventListener
         :type job_id: integer
         """
-
         self.api_token = api_token
         self.api_host = api_host
         self.event_listener = event_listener
         self.message_id = 0
+        self.job_id = None
+        self.thread_instance = None
+        self.s = None
 
         self.lock = Lock()
         self.connection_errors = 0
         self.queue = []
 
-        self.active = True
-        self.job_registered = False
+        self.active = False
+        self.registered = False
         self.connected = False
         self.read_buffer = ''
 
     def start(self, job_id):
         self.job_id = job_id
 
-        self.connect()
+        self.active = True
 
-        self.thread = Thread(target=self.thread)
-        self.thread.daemon = True
-        self.thread.start()
+        if not self.thread_instance:
+            self.thread_instance = Thread(target=self.thread)
+            self.thread_instance.daemon = True
+            self.thread_instance.start()
 
     def connect(self):
+        locked = False
 
-        while self.active:
-            # tries += 1
-            # if tries > 3:
-            #     print("Could not connect to %s. " % (self.api_host,))
-            # break
-            try:
-                self.lock.acquire()
-                self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.s.connect((self.api_host, 8051))
-                self.connected = True
+        try:
+            locked = True
+            self.lock.acquire()
+            self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.s.connect((self.api_host, 8051))
+            self.connected = True
+            self.lock.release()
+            locked = False
+
+            self.send_message({'register_job_worker': self.api_token, 'job_id': self.job_id})
+            messages = self.read_full_message(self.s)
+
+            pprint.pprint(messages)
+            if "JOB_REGISTERED" in messages:
+                self.registered = True
+                print("Connected to %s " % (self.api_host,))
+                self.handle_messages(messages)
+                return True
+
+            print("Registration of job %s failed." % (self.job_id,))
+            return False
+        except socket.error as error:
+            if locked:
                 self.lock.release()
-
-                self.send_message({'register_job_worker': self.api_token, 'job_id': self.job_id})
-                messages = self.read_full_message(self.s)
-
-                if "JOB_REGISTERED" in messages:
-                    self.job_registered = True
-                else:
-                    print("Registration of job %s failed." % (self.job_id,))
-                    return
-
-                break
-            except socket.error as error:
-                self.lock.release()
-                print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
-                time.sleep(1)
-
-        print("Connected to %s " % (self.api_host,))
+            print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
+            time.sleep(1)
+            return False
 
     def debug(self):
         sent = len(filter(lambda x: x['sent'], self.queue))
@@ -133,15 +138,13 @@ class Client:
         print("%d sent, %d in sending, %d open " % (sent, sending, open))
 
     def connection_error(self, error=None):
-        if not self.active:
-            return
-
-        self.connected = False
         if error:
             print("Connection error: %d: %s" % (error.errno, error.message,))
+        else:
+            print("Connection error")
 
         self.connected = False
-        self.job_registered = False
+        self.registered = False
 
         # set all messages that are in sending to sending=false
         for message in self.queue:
@@ -149,13 +152,12 @@ class Client:
                 message['sending'] = False
 
         self.connection_errors += 1
-        self.connect()
 
     def thread(self):
         last_ping = 0
 
         while True:
-            if self.connected and self.job_registered:
+            if self.connected and self.registered:
                 try:
                     if last_ping < time.time() - 1:
                         # ping every second
@@ -188,9 +190,11 @@ class Client:
                 except socket.error as error:
                     self.connection_error(error)
 
-                time.sleep(0.1)
-            else:
-                time.sleep(0.5)
+            elif not self.connected and self.active:
+                if not self.connect():
+                    time.sleep(5)
+
+            time.sleep(0.1)
 
     def close(self):
         self.active = False
@@ -209,22 +213,21 @@ class Client:
         self.queue.append(message)
 
     def send_message(self, message):
-        sent = False
-        try:
-            if isinstance(message, dict):
-                message['sending'] = True
+        if isinstance(message, dict):
+            message['sending'] = True
 
-            msg = json.dumps(message, default=invalid_json_values)
+        msg = json.dumps(message, default=invalid_json_values)
+
+        try:
             self.lock.acquire()
             self.s.sendall(msg + "\n")
             self.lock.release()
 
+            return True
         except:
             self.lock.release()
-            sent = False
-            self.connected = False
-
-        return sent
+            self.connection_error()
+            return False
 
     def handle_messages(self, messages):
         for message in messages:
@@ -309,6 +312,7 @@ class JobChannel:
     """
     :type job_backend : JobBackend
     """
+
     def __init__(self, job_backend, name, series=None):
         self.name = name
         self.job_backend = job_backend
@@ -334,10 +338,12 @@ class JobChannel:
         }
         self.job_backend.job_add_status('channel-value', message)
 
+
 class JobGraph:
     """
     :type job_backend : JobBackend
     """
+
     def __init__(self, job_backend, name, series=None):
         self.name = name
         self.job_backend = job_backend
@@ -358,7 +364,8 @@ class JobGraph:
             y = [y]
 
         if len(y) != len(self.series):
-            raise Exception('You tried to set more y values (%d items) then series available (%d series).' % (len(y), len(self.series)))
+            raise Exception('You tried to set more y values (%d items) then series available (%d series).' % (
+            len(y), len(self.series)))
 
         message = {
             'name': self.name,
@@ -366,6 +373,7 @@ class JobGraph:
             'y': y
         }
         self.job_backend.job_add_status('graph-value', message)
+
 
 class JobBackend:
     """
@@ -423,8 +431,8 @@ class JobBackend:
         if not self.job_id:
             raise Exception('No job id found. Use create() first.')
 
+        print("start client")
         self.client.start(self.job_id)
-        self.post('job/started', {'id': self.job_id})
 
     def end(self):
         self.set_status('END')
