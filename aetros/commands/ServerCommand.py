@@ -157,22 +157,19 @@ class Server:
 
     def send_message(self, message):
         sent = False
-        locked = False
+        if isinstance(message, dict):
+            message['sending'] = True
+
+        msg = json.dumps(message, default=invalid_json_values)
+        self.lock.acquire()
+
         try:
-            if isinstance(message, dict):
-                message['sending'] = True
-
-            msg = json.dumps(message, default=invalid_json_values)
-            self.lock.acquire()
-            locked = True
             self.s.sendall(msg + "\n")
-            self.lock.release()
-
         except:
-            if locked:
-                self.lock.release()
             sent = False
             self.connected = False
+
+        self.lock.release()
 
         return sent
 
@@ -284,7 +281,7 @@ class ServerCommand:
 
             my_env['PYTHONPATH'] += ':' + os.getcwd()
             args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
-            subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL, stderr=sys.stderr, close_fds=True, env=my_env)
+            subprocess.Popen(args, stdin=DEVNULL, stdout=sys.stdout, stderr=sys.stderr, close_fds=True, env=my_env)
 
     def registration_complete(self, params):
         self.registered = True

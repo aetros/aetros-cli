@@ -232,7 +232,6 @@ class Client:
             return False
 
     def handle_messages(self, messages):
-        pprint.pprint(messages)
         for message in messages:
             if 'handled' in message:
                 for qm in self.queue:
@@ -606,6 +605,18 @@ class JobBackend:
             raise Exception('Job not loaded yet. Use load(id) first.')
 
         return self.job['modelId']
+
+    def get_parameter(self, name):
+        if not self.job:
+            raise Exception('Job not loaded yet. Use load(id) first.')
+
+        if 'hyperParameters' not in self.job['config'] or not self.job['config']['hyperParameters']:
+            raise Exception('This job does not have any hyper-parameters')
+
+        if name not in self.job['config']['hyperParameters']:
+            raise Exception('This job does not have the hype parameter %s' % (name,))
+
+        return self.job['config']['hyperParameters'][name]
 
     def load(self, id):
         """

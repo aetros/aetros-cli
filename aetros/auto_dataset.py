@@ -193,7 +193,7 @@ class InMemoryDataGenerator():
         return np.array(batch_x), np.array(batch_y)
 
     def __next__(self):
-        return self.next();
+        return self.next()
 
 
 def read_images_in_memory(job_model, dataset, node, trainer):

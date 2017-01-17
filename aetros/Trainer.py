@@ -1,16 +1,14 @@
 from __future__ import division
 from __future__ import absolute_import
 from __future__ import print_function
-# import json
 from threading import Lock
-
-from aetros.backend import JobBackend
 
 class Trainer():
     """
-    :type job_backend : JobBackend
+    :type job_backend : aetros.backend.JobBackend
     :type settings : dict
     """
+
     def __init__(self, job_backend, logger):
         self.job_backend = job_backend
         self.logger = logger
@@ -26,13 +24,12 @@ class Trainer():
         self.data_train = None
         self.classes = []
 
-        self.job_model =self.job_backend.get_job_model()
+        self.job_model = self.job_backend.get_job_model()
         job = self.job_model.job
         self.settings = job['config']['settings']
         self.model = None
         self.callbacks = []
         self.lock = Lock()
-
 
     def get_batch_size(self):
         return self.job_backend.get_job_model().get_batch_size()
