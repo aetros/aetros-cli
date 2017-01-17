@@ -115,7 +115,6 @@ class Client:
             self.send_message({'register_job_worker': self.api_token, 'job_id': self.job_id})
             messages = self.read_full_message(self.s)
 
-            pprint.pprint(messages)
             if "JOB_REGISTERED" in messages:
                 self.registered = True
                 print("Connected to %s " % (self.api_host,))
@@ -201,8 +200,11 @@ class Client:
         self.connected = False
 
         self.lock.acquire()
-        self.s.shutdown(socket.SHUT_RDWR)
-        self.s.close()
+        try:
+            self.s.shutdown(socket.SHUT_RDWR)
+            self.s.close()
+        except:
+            pass
         self.lock.release()
 
     def send(self, message):
@@ -230,6 +232,7 @@ class Client:
             return False
 
     def handle_messages(self, messages):
+        pprint.pprint(messages)
         for message in messages:
             if 'handled' in message:
                 for qm in self.queue:
@@ -403,7 +406,7 @@ class JobBackend:
         self.event_listener.on('stop', self.external_stop)
         self.client = Client(self.host, self.api_token, self.event_listener)
 
-    def external_stop(self):
+    def external_stop(self, params):
         print("Job stopped through AETROS Trainer.")
         self.stop()
         self.stop_requested = True

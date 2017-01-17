@@ -125,8 +125,11 @@ class Server:
         self.connected = False
 
         self.lock.acquire()
-        self.s.shutdown(socket.SHUT_RDWR)
-        self.s.close()
+        try:
+            self.s.shutdown(socket.SHUT_RDWR)
+            self.s.close()
+        except:
+            pass
         self.lock.release()
 
     def handle_messages(self, messages):
