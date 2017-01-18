@@ -606,6 +606,13 @@ class JobBackend:
 
         return self.job['modelId']
 
+    @property
+    def job_index(self):
+        if not self.job:
+            raise Exception('Job not loaded yet. Use load(id) first.')
+
+        return self.job['index']
+
     def get_parameter(self, name):
         if not self.job:
             raise Exception('Job not loaded yet. Use load(id) first.')

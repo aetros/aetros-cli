@@ -31,12 +31,12 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         job_id = job_backend.create(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
         job_backend.load(job_id)
 
-        print("Job '%s' created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
-              (job_id, job_backend.host, job_id))
+        print("Job  %s#%d (%s) created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+              (job_backend.model_id, job_backend.job_index, job_backend.job_id, job_backend.host, job_id))
     else:
         job_backend.load(job_id)
-        print("Job '%s' restarted. Open http://%s/trainer/app#/job=%s to monitor the job." %
-              (job_id, job_backend.host, job_id))
+        print("Job %s#%d (%s) restarted. Open http://%s/trainer/app#/job=%s to monitor the job." %
+              (job_backend.model_id, job_backend.job_index, job_id, job_backend.host, job_id))
 
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
@@ -98,7 +98,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         monitoringThread.stop()
         job_backend.sync_weights()
         job_backend.stop()
-        job_backend.post('job/stopped', json={'id': job_model.id, 'status': 'EARLY STOP'})
+        job_backend.post('job/aborted', json={'id': job_model.id})
         print("out.")
         sys.exit(1)
     except Exception as e:
@@ -112,6 +112,6 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
         monitoringThread.stop()
         job_backend.stop()
-        job_backend.post('job/stopped', json={'id': job_model.id, 'status': 'CRASHED', 'error': e.message})
+        job_backend.post('job/crashed', json={'id': job_model.id, 'error': e.message})
         print("out.")
         raise e

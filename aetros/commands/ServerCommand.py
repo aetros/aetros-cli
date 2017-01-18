@@ -143,8 +143,8 @@ class Server:
                 self.event_listener.fire('stop')
 
             if 'type' in message:
-                if message['type'] == 'create-jobs':
-                    self.event_listener.fire('create-jobs', message['jobs'])
+                if message['type'] == 'start-jobs':
+                    self.event_listener.fire('start-jobs', message['jobs'])
 
     def connection_error(self, error=None):
         if error:
@@ -254,7 +254,7 @@ class ServerCommand:
         event_listener = EventListener()
 
         event_listener.on('registration', self.registration_complete)
-        event_listener.on('create-jobs', self.create_jobs)
+        event_listener.on('start-jobs', self.start_job)
 
         self.server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
         self.server.start()
@@ -264,12 +264,14 @@ class ServerCommand:
                 self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
             time.sleep(0.5)
 
-    def create_jobs(self, jobs):
+    def start_jobs(self, jobs):
         for job in jobs:
-            self.create_job(job)
+            self.start_job(job)
 
-    def create_job(self, job):
-        print("Create job %s of model %s by %s in %s ..." % (job['id'], job['modelId'], job['username'], os.getcwd()))
+    def start_job(self, job):
+        print("Start job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
+
+        self.server.send_message({'type': 'job-queued', 'id': job['id']})
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
