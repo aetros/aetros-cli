@@ -77,7 +77,7 @@ class EventListener:
 
 
 class Client:
-    def __init__(self, api_host, api_token, event_listener):
+    def __init__(self, api_host, api_token, event_listener, api_port):
         """
 
         :type api_host: string
@@ -87,6 +87,7 @@ class Client:
         """
         self.api_token = api_token
         self.api_host = api_host
+        self.api_port = api_port
         self.event_listener = event_listener
         self.message_id = 0
         self.job_id = None
@@ -119,7 +120,7 @@ class Client:
             locked = True
             self.lock.acquire()
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.s.connect((self.api_host, 8051))
+            self.s.connect((self.api_host, self.api_port))
             self.connected = True
             self.lock.release()
             locked = False
@@ -427,6 +428,7 @@ class JobBackend:
         self.monitoring_thread = None
 
         self.host = os.getenv('API_HOST')
+        self.port = int(os.getenv('API_PORT') or 8051)
         if not self.host or self.host == 'false':
             self.host = 'aetros.com'
 
@@ -435,7 +437,7 @@ class JobBackend:
         self.in_request = False
         self.stop_requested = False
         self.event_listener.on('stop', self.external_stop)
-        self.client = Client(self.host, self.api_token, self.event_listener)
+        self.client = Client(self.host, self.api_token, self.event_listener, self.port)
 
     def external_stop(self, params):
         print("Job stopped through AETROS Trainer.")
