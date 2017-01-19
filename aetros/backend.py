@@ -372,7 +372,7 @@ class JobSeries:
     """
     :type job_backend : JobBackend
     """
-    def __init__(self, job_backend, name, series=None, main_graph=False, type=None):
+    def __init__(self, job_backend, name, series=None, main_graph=False, type=None, graph_type=None):
         self.name = name
         self.job_backend = job_backend
 
@@ -386,7 +386,8 @@ class JobSeries:
             'name': name,
             'series': series,
             'type': type or JobSeries.NUMBER,
-            'main': main_graph
+            'main': main_graph,
+            'graphType': graph_type
         }
         self.series = series
         self.job_backend.job_add_status('series', message)
@@ -464,7 +465,7 @@ class JobBackend:
 
         return JobLossGraph(self, name)
 
-    def create_series(self, name, series=None, main_graph=False, type=JobSeries.NUMBER):
+    def create_series(self, name, series=None, main_graph=False, type=JobSeries.NUMBER, graph_type=None):
         """
         :param name: string
         :param series: list
@@ -472,7 +473,7 @@ class JobBackend:
         :param type: string JobSeries.NUMBER, JobSeries.TEXT, JobSeries.IMAGE
         :return: JobSeries
         """
-        return JobSeries(self, name, series, main_graph, type)
+        return JobSeries(self, name, series, main_graph, type, graph_type)
 
     def start(self):
         if not self.job_id:
