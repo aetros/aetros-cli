@@ -7,7 +7,7 @@ class UploadWeightsCommand:
 
     def main(self, args):
 
-        from aetros import model_utils
+        from aetros import keras_model_utils
 
         import aetros.const
         from aetros.backend import JobBackend
@@ -42,7 +42,7 @@ class UploadWeightsCommand:
 
         print(("Validate weights in %s ..." % (weights_path, )))
 
-        model_utils.job_prepare(job_model)
+        keras_model_utils.job_prepare(job_model)
 
         general_logger = GeneralLogger()
         trainer = Trainer(job_backend, general_logger)

@@ -1,19 +1,31 @@
 from __future__ import absolute_import
 from __future__ import print_function
+
+import atexit
 import os
 import pprint
 import socket
 import select
 from threading import Thread, Lock
-
 import requests
-
 import signal
 import json
 import time
 import numpy
-
 from io import BytesIO
+
+from aetros.MonitorThread import MonitoringThread
+
+
+def on_shutdown():
+    for job in on_shutdown.started_jobs:
+        if job.running:
+            job.done()
+
+
+on_shutdown.started_jobs = []
+
+atexit.register(on_shutdown)
 
 
 def dict_factory(cursor, row):
@@ -298,14 +310,31 @@ class Client:
         return parsed
 
 
+def start_job(name, api_token=None):
+    """
+    Creates and starts a new job.
+
+    :param name: string
+    :param api_token: string
+    :return: JobBackend
+    """
+    job = create_job(name, api_token)
+    job.start()
+
+    return job
+
+
 def create_job(name, api_token=None):
     """
+    Creates a new job.
+
     :param name: string
     :param api_token: string
     :return: JobBackend
     """
     job = JobBackend(api_token=api_token)
     job.create(name)
+    job.load()
 
     return job
 
@@ -367,7 +396,7 @@ class JobGraph:
 
         if len(y) != len(self.series):
             raise Exception('You tried to set more y values (%d items) then series available (%d series).' % (
-            len(y), len(self.series)))
+                len(y), len(self.series)))
 
         message = {
             'name': self.name,
@@ -391,9 +420,10 @@ class JobBackend:
         self.api_token = api_token if api_token else os.getenv('API_KEY')
 
         self.job_id = job_id
-        self.active_syncer = True
         self.client = None
         self.job = None
+        self.running = False
+        self.monitoring_thread = None
 
         self.host = os.getenv('API_HOST')
         if not self.host or self.host == 'false':
@@ -407,13 +437,12 @@ class JobBackend:
 
     def external_stop(self, params):
         print("Job stopped through AETROS Trainer.")
-        self.stop()
+        self.abort()
         self.stop_requested = True
         os.kill(os.getpid(), signal.SIGINT)
 
     def create_channel(self, name, series=None):
         """
-
         :param name: string
         :param series: list
         :return: JobChannel
@@ -422,7 +451,6 @@ class JobBackend:
 
     def create_graph(self, name, series=None):
         """
-
         :param name: string
         :param series: list
         :return: JobGraph
@@ -433,18 +461,49 @@ class JobBackend:
         if not self.job_id:
             raise Exception('No job id found. Use create() first.')
 
-        print("start client")
+        self.running = True
+        on_shutdown.started_jobs.append(self)
+
+        self.monitoring_thread = MonitoringThread(self)
+        self.monitoring_thread.daemon = True
+        self.monitoring_thread.start()
+
+        self.collect_system_information()
+
         self.client.start(self.job_id)
 
-    def end(self):
-        self.set_status('END')
-        self.stop()
+        print("Job %s#%d (%s) started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+              (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
 
-    def stop(self):
+    def done(self):
+        if not self.running:
+            raise Exception('Job has not started yet.')
+
+        self.post('job/stopped', json={'id': self.job_id})
+
         self.client.close()
+        self.running = False
+        if self.monitoring_thread:
+            self.monitoring_thread.stop();
 
-    def kill(self):
-        self.active_syncer = False
+    def abort(self):
+        if not self.running:
+            raise Exception('Job has not started yet.')
+
+        self.post('job/aborted', json={'id': self.job_id})
+
+        self.client.close()
+        self.running = False
+        if self.monitoring_thread:
+            self.monitoring_thread.stop();
+
+    def crash(self, e=None):
+        self.post('job/crashed', json={'id': self.job_id, 'error': e.message if e else None})
+
+        self.client.close()
+        self.running = False
+        if self.monitoring_thread:
+            self.monitoring_thread.stop()
 
     def get_url(self, affix):
 
@@ -575,7 +634,8 @@ class JobBackend:
         return requests.put(self.get_url(url), data=data, **kwargs)
 
     def create(self, name, server_id='local', dataset_id=None, insights=False):
-        response = self.put('job', {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+        response = self.put('job',
+                            {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
 
         if response.status_code != 200:
             raise Exception("Could not create job: %s" % (response.content,))
@@ -625,7 +685,7 @@ class JobBackend:
 
         return self.job['config']['hyperParameters'][name]
 
-    def load(self, id):
+    def load(self, id=None):
         """
         Loads job and sets as current.
         :param id: int
@@ -724,3 +784,37 @@ class JobBackend:
             'time': time.time(),
             'data': {'info': info, 'images': images}
         })
+
+
+    def collect_system_information(self):
+        import psutil
+
+        mem = psutil.virtual_memory()
+        self.job_set_info_key('memory_total', mem.total)
+
+        on_gpu = False
+
+        import sys
+        if 'theano.sandbox' in sys.modules:
+            # at this point, theano is already initialised, so we can use it to monitor the GPU.
+            from theano.sandbox import cuda
+            self.job_set_info_key('cuda_available', cuda.cuda_available)
+            if cuda.cuda_available:
+                on_gpu = cuda.use.device_number is not None
+                self.job_set_info_key('cuda_device_number', cuda.active_device_number())
+                self.job_set_info_key('cuda_device_name', cuda.active_device_name())
+                if cuda.cuda_ndarray.cuda_ndarray.mem_info:
+                    gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
+                    self.job_set_info_key('cuda_device_max_memory', gpu[1])
+                    free = gpu[0] / 1024 / 1024 / 1024
+                    total = gpu[1] / 1024 / 1024 / 1024
+                    used = total - free
+
+                    print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (used, total, cuda.active_device_name(), cuda.active_device_number()))
+
+        self.job_set_info_key('on_gpu', on_gpu)
+
+        import cpuinfo
+        cpu = cpuinfo.get_cpu_info()
+        self.job_set_info_key('cpu_name', cpu['brand'])
+        self.job_set_info_key('cpu', [cpu['hz_actual_raw'][0], cpu['count']])

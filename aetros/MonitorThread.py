@@ -5,11 +5,18 @@ import psutil
 from threading import Thread
 import numpy as np
 
-
 class MonitoringThread(Thread):
-    def __init__(self, job_backend, trainer):
+    def __init__(self, job_backend):
         Thread.__init__(self)
-        self.trainer = trainer
+
+        import sys
+        if 'theano.sandbox' in sys.modules:
+            # at this point, theano is already initialised, so we can use it to monitor the GPU.
+            from theano.sandbox import cuda
+            self.on_gpu = cuda.use.device_number is not None
+        else:
+            self.on_gpu = False
+
         self.job_backend = job_backend
         self.second = 0
         self.running = True
@@ -20,16 +27,15 @@ class MonitoringThread(Thread):
     def run(self):
         while self.running:
             self.monitor()
-            time.sleep(0.1)
+            time.sleep(0.05)
 
     def monitor(self):
         cpu_util = np.mean(psutil.cpu_percent(interval=1, percpu=True))
         mem = psutil.virtual_memory()
 
         gpu_memory_use = None
-        import keras.backend as K
 
-        if self.trainer.on_gpu and K.backend() == 'theano':
+        if self.on_gpu:
             from theano.sandbox import cuda
             if cuda.cuda_ndarray.cuda_ndarray.mem_info:
                 gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()

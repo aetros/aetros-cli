@@ -1,20 +1,16 @@
 from __future__ import print_function
-
 from __future__ import absolute_import
+
 import io
 import json
 import tempfile
 import urllib
 
 import numpy as np
-# import sys
 import os
 
-from PIL import Image
-
-from aetros import model_utils
-from aetros.model_utils import ensure_dir
-from .JobModel import JobModel
+from aetros import keras_model_utils
+from aetros.keras_model_utils import ensure_dir
 from .backend import JobBackend, invalid_json_values
 
 def predict(job_id, file_paths, insights=False, weights_path=None, api_token=None):
@@ -27,7 +23,7 @@ def predict(job_id, file_paths, insights=False, weights_path=None, api_token=Non
     log = io.open(tempfile.mktemp(), 'w', encoding='utf8')
     log.truncate()
 
-    model_utils.job_prepare(job_model)
+    keras_model_utils.job_prepare(job_model)
 
     if not weights_path:
         weight_path = job_model.get_weights_filepath_best()

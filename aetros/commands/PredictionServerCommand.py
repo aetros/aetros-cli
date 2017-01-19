@@ -40,11 +40,11 @@ class PredictionServerCommand:
         self.start_webserver('127.0.0.1' if not parsed_args.host else parsed_args.host, 8000 if not parsed_args.port else int(parsed_args.port))
 
     def start_model(self, parsed_args):
-        from aetros import model_utils
+        from aetros import keras_model_utils
         from aetros.backend import JobBackend
         from aetros.logger import GeneralLogger
         from aetros.Trainer import Trainer
-        from aetros.model_utils import ensure_dir
+        from aetros.keras_model_utils import ensure_dir
 
         if not parsed_args.id:
             print("No job id given.")
@@ -78,7 +78,7 @@ class PredictionServerCommand:
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-        model_utils.job_prepare(self.job_model)
+        keras_model_utils.job_prepare(self.job_model)
 
         general_logger = GeneralLogger()
         trainer = Trainer(job_backend, general_logger)

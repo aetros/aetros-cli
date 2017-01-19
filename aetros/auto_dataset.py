@@ -18,7 +18,7 @@ import requests
 from PIL import Image
 
 from aetros.utils import get_option
-from .model_utils import ensure_dir
+from .keras_model_utils import ensure_dir
 from .backend import invalid_json_values
 
 from threading import Thread, Lock

@@ -254,7 +254,7 @@ class ServerCommand:
         event_listener = EventListener()
 
         event_listener.on('registration', self.registration_complete)
-        event_listener.on('start-jobs', self.start_job)
+        event_listener.on('start-jobs', self.start_jobs)
 
         self.server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
         self.server.start()

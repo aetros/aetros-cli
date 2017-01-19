@@ -5,10 +5,7 @@ from keras.engine import InputLayer, Merge
 from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
 from keras.models import Sequential
 
-from aetros import model_utils
-
 from aetros.logger import GeneralLogger
-from aetros.JobModel import JobModel
 
 from aetros.backend import JobBackend
 from aetros.KerasLogger import KerasLogger
@@ -100,7 +97,6 @@ class KerasIntegration():
         self.monitoringThread = MonitoringThread(self.job_backend, self.trainer)
         self.monitoringThread.daemon = True
         self.monitoringThread.start()
-        model_utils.collect_system_information(self.trainer)
 
         self.trainer.model = self.model
         self.trainer.data_train = {'x': x}

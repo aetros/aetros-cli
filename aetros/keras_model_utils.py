@@ -26,39 +26,6 @@ def get_total_params(model):
     return total_params
 
 
-def collect_system_information(trainer):
-    import psutil
-
-    mem = psutil.virtual_memory()
-    trainer.set_job_info('memory_total', mem.total)
-
-    import keras.backend as K
-
-    if K.backend() == 'theano':
-        # at this point, theano is already initialised through KerasLogger
-        from theano.sandbox import cuda
-        trainer.set_job_info('cuda_available', cuda.cuda_available)
-        if cuda.cuda_available:
-            trainer.on_gpu = cuda.use.device_number is not None
-            trainer.set_job_info('cuda_device_number', cuda.active_device_number())
-            trainer.set_job_info('cuda_device_name', cuda.active_device_name())
-            if cuda.cuda_ndarray.cuda_ndarray.mem_info:
-                gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
-                trainer.set_job_info('cuda_device_max_memory', gpu[1])
-                free = gpu[0] / 1024 / 1024 / 1024
-                total = gpu[1] / 1024 / 1024 / 1024
-                used = total - free
-
-                print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (used, total, cuda.active_device_name(), cuda.active_device_number()))
-
-    trainer.set_job_info('on_gpu', trainer.on_gpu)
-
-    import cpuinfo
-    cpu = cpuinfo.get_cpu_info()
-    trainer.set_job_info('cpu_name', cpu['brand'])
-    trainer.set_job_info('cpu', [cpu['hz_actual_raw'][0], cpu['count']])
-
-
 def job_start(job_model, trainer, keras_logger, general_logger):
     """
     Starts the training of a job. Needs job_prepare() first.
