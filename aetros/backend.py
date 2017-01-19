@@ -339,45 +339,45 @@ def create_job(name, api_token=None):
     return job
 
 
-class JobChannel:
+class JobLossGraph:
     """
     :type job_backend : JobBackend
     """
-
-    def __init__(self, job_backend, name, series=None):
+    def __init__(self, job_backend, name):
         self.name = name
         self.job_backend = job_backend
-
-        if not series:
-            series = [name]
-
         message = {
-            'name': name,
-            'series': series,
-            'type': 'number'
+            'name': self.name,
+            'series': ['training', 'validation'],
+            'type': JobSeries.NUMBER,
+            'graph': 'loss'
         }
-        self.job_backend.job_add_status('channel', message)
+        self.job_backend.job_add_status('series', message)
 
-    def send(self, x, y):
-        if not isinstance(y, list):
-            y = [y]
+    def send(self, x, training_loss, validation_loss):
 
         message = {
             'name': self.name,
             'x': x,
-            'y': y
+            'y': [training_loss, validation_loss],
         }
-        self.job_backend.job_add_status('channel-value', message)
+        self.job_backend.job_add_status('series-value', message)
 
 
-class JobGraph:
+class JobSeries:
+    NUMBER = 'number'
+    TEXT = 'text'
+    IMAGE = 'image'
+
     """
     :type job_backend : JobBackend
     """
-
-    def __init__(self, job_backend, name, series=None):
+    def __init__(self, job_backend, name, series=None, main_graph=False, type=None):
         self.name = name
         self.job_backend = job_backend
+
+        if not (isinstance(series, list) or series is None):
+            raise Exception('series can only be None or a list of strings')
 
         if not series:
             series = [name]
@@ -385,10 +385,11 @@ class JobGraph:
         message = {
             'name': name,
             'series': series,
-            'type': 'number'
+            'type': type or JobSeries.NUMBER,
+            'main': main_graph
         }
         self.series = series
-        self.job_backend.job_add_status('graph', message)
+        self.job_backend.job_add_status('series', message)
 
     def send(self, x, y):
         if not isinstance(y, list):
@@ -403,7 +404,7 @@ class JobGraph:
             'x': x,
             'y': y
         }
-        self.job_backend.job_add_status('graph-value', message)
+        self.job_backend.job_add_status('series-value', message)
 
 
 class JobBackend:
@@ -429,6 +430,7 @@ class JobBackend:
         if not self.host or self.host == 'false':
             self.host = 'aetros.com'
 
+        self.last_progress_call = None
         self.job_ids = []
         self.in_request = False
         self.stop_requested = False
@@ -441,21 +443,36 @@ class JobBackend:
         self.stop_requested = True
         os.kill(os.getpid(), signal.SIGINT)
 
-    def create_channel(self, name, series=None):
-        """
-        :param name: string
-        :param series: list
-        :return: JobChannel
-        """
-        return JobChannel(self, name, series)
+    def progress(self, epoch, total):
+        if self.last_progress_call:
+            # how long took it since the last call?
+            time_per_epoch = time.time() - self.last_progress_call
+            eta = time_per_epoch * (total-epoch)
+            self.set_info('eta', eta)
+            if time_per_epoch > 0:
+                self.set_info('epochsPerSecond', 1 / time_per_epoch)
 
-    def create_graph(self, name, series=None):
+        self.set_info('epoch', epoch)
+        self.set_info('epochs', total)
+        self.last_progress_call = time.time()
+
+    def create_loss_graph(self, name):
+        """
+        :param name: string
+        :return: JobLossGraph
+        """
+
+        return JobLossGraph(self, name)
+
+    def create_series(self, name, series=None, main_graph=False, type=JobSeries.NUMBER):
         """
         :param name: string
         :param series: list
-        :return: JobGraph
+        :param main_graph: bool
+        :param type: string JobSeries.NUMBER, JobSeries.TEXT, JobSeries.IMAGE
+        :return: JobSeries
         """
-        return JobGraph(self, name, series)
+        return JobSeries(self, name, series, main_graph, type)
 
     def start(self):
         if not self.job_id:
@@ -762,8 +779,7 @@ class JobBackend:
         self.job = job
 
     def job_add_status(self, key, value):
-        item = {'statusKey': key,
-                'statusValue': json.dumps(value, allow_nan=False, default=invalid_json_values)}
+        item = {'statusKey': key, 'statusValue': value}
 
         self.client.send({
             'type': 'job-status',
@@ -771,11 +787,13 @@ class JobBackend:
             'data': item
         })
 
-    def job_set_info_key(self, key, info):
+    def set_info(self, name, value):
+        self.job_set_info_key(name, value)
+
+    def job_set_info_key(self, key, value):
         self.client.send({
             'type': 'job-info',
-            'time': time.time(),
-            'data': {'key': key, 'info': info}
+            'data': {'key': key, 'value': value}
         })
 
     def job_add_insight(self, info, images):
