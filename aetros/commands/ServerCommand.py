@@ -33,6 +33,8 @@ class Server:
         self.s = None
         self.thread_instance = None
 
+        self.api_port = int(os.getenv('API_PORT') or 8051)
+
         if not self.api_host:
             self.api_host = os.getenv('API_HOST')
             if not self.api_host or self.api_host == 'false':
@@ -55,7 +57,7 @@ class Server:
             self.lock.acquire()
             locked = True
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.s.connect((self.api_host, 8051))
+            self.s.connect((self.api_host, self.api_port))
             self.connected = True
             self.lock.release()
             locked = False
@@ -64,6 +66,10 @@ class Server:
             messages = self.read_full_message(self.s)
 
             if isinstance(messages, list):
+                if "ACCESS_DENIED" in messages:
+                    print('Access denied')
+                    return False
+
                 if "SERVER_ALREADY_REGISTERED" in messages:
                     print("Registration failed. This server is already registered.")
                     return
