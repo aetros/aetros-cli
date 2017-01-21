@@ -38,7 +38,9 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
     job_model = job_backend.get_job_model()
-    print("start model ...")
+
+    #we need to import keras here, so we know which backend is used (and whether GPU is used)
+    from keras import backend as K
     job_backend.start()
 
     ensure_dir('models/%s/%s' % (job_model.model_id, job_model.id))
@@ -66,6 +68,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
     try:
         print("Setup job")
         keras_model_utils.job_prepare(job_model)
+        job_backend.progress(0, job_backend.job['config']['settings']['epochs'])
 
         print("Start job")
         keras_model_utils.job_start(job_model, trainer, keras_logger, general_logger)

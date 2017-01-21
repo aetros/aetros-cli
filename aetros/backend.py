@@ -13,6 +13,13 @@ import json
 import time
 import numpy
 from io import BytesIO
+import six
+import base64
+import PIL.Image
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from io import StringIO
 
 from aetros.MonitorThread import MonitoringThread
 
@@ -42,7 +49,7 @@ def invalid_json_values(obj):
         return obj.tolist()
     if isinstance(obj, bytes):
         return obj.decode('cp437')
-    raise TypeError('Invalid data type passed to json encoder: ' + type(obj))
+    raise TypeError('Invalid data type passed to json encoder: ' + type(obj).__name__)
 
 
 def parse_message(buffer):
@@ -340,20 +347,23 @@ def create_job(name, api_token=None):
     return job
 
 
-class JobLossGraph:
+class JobLossChannel:
     """
     :type job_backend : JobBackend
     """
-    def __init__(self, job_backend, name):
+    def __init__(self, job_backend, name, xaxis=None, yaxis=None):
         self.name = name
         self.job_backend = job_backend
         message = {
             'name': self.name,
             'series': ['training', 'validation'],
-            'type': JobSeries.NUMBER,
-            'graph': 'loss'
+            'type': JobChannel.NUMBER,
+            'main': True,
+            'xaxis': xaxis,
+            'yaxis': yaxis,
+            'lossChannel': True
         }
-        self.job_backend.job_add_status('series', message)
+        self.job_backend.job_add_status('channel', message)
 
     def send(self, x, training_loss, validation_loss):
 
@@ -362,51 +372,62 @@ class JobLossGraph:
             'x': x,
             'y': [training_loss, validation_loss],
         }
-        self.job_backend.job_add_status('series-value', message)
+        self.job_backend.job_add_status('channel-value', message)
+
+class JobImage:
+    def __init__(self, id, image, title=None):
+        self.id = id
+        if not isinstance(image, PIL.Image.Image):
+            raise Exception('JobImage requires a PIL.Image as image argument.')
+
+        self.image = image
+        self.title = title or id
 
 
-class JobSeries:
+class JobChannel:
     NUMBER = 'number'
     TEXT = 'text'
     IMAGE = 'image'
 
     """
-    :type job_backend : JobBackend
+    :type job_backend: JobBackend
     """
-    def __init__(self, job_backend, name, series=None, main_graph=False, type=None, graph_type=None):
+    def __init__(self, job_backend, name, series=None, main_graph=False,
+                 type=None, xaxis=None, yaxis=None):
         self.name = name
         self.job_backend = job_backend
 
         if not (isinstance(series, list) or series is None):
-            raise Exception('series can only be None or a list of strings')
+            raise Exception('series can only be None or a list of dicts: [{name: "name", option1: ...}, ...]')
 
         if not series:
-            series = [name]
+            series = [{'name': name}]
 
         message = {
             'name': name,
             'series': series,
-            'type': type or JobSeries.NUMBER,
+            'type': type or JobChannel.NUMBER,
             'main': main_graph,
-            'graphType': graph_type
+            'xaxis': xaxis,
+            'yaxis': yaxis,
         }
         self.series = series
-        self.job_backend.job_add_status('series', message)
+        self.job_backend.job_add_status('channel', message)
 
     def send(self, x, y):
         if not isinstance(y, list):
             y = [y]
 
         if len(y) != len(self.series):
-            raise Exception('You tried to set more y values (%d items) then series available (%d series).' % (
-                len(y), len(self.series)))
+            raise Exception('You tried to set more y values (%d items) then series available in channel %s (%d series).' % (
+                len(y), len(self.series), self.name))
 
         message = {
             'name': self.name,
             'x': x,
             'y': y
         }
-        self.job_backend.job_add_status('series-value', message)
+        self.job_backend.job_add_status('channel-value', message)
 
 
 class JobBackend:
@@ -459,23 +480,25 @@ class JobBackend:
         self.set_info('epochs', total)
         self.last_progress_call = time.time()
 
-    def create_loss_graph(self, name):
+    def create_loss_channel(self, name, xaxis=None, yaxis=None):
         """
         :param name: string
         :return: JobLossGraph
         """
 
-        return JobLossGraph(self, name)
+        return JobLossChannel(self, name, xaxis, yaxis)
 
-    def create_series(self, name, series=None, main_graph=False, type=JobSeries.NUMBER, graph_type=None):
+    def create_channel(self, name, series=None, main_graph=False,
+                       type=JobChannel.NUMBER,
+                       xaxis=None, yaxis=None):
         """
         :param name: string
         :param series: list
         :param main_graph: bool
-        :param type: string JobSeries.NUMBER, JobSeries.TEXT, JobSeries.IMAGE
-        :return: JobSeries
+        :param type: string JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
+        :return: JobChannel
         """
-        return JobSeries(self, name, series, main_graph, type, graph_type)
+        return JobChannel(self, name, series, main_graph, type, xaxis, yaxis)
 
     def start(self):
         if not self.job_id:
@@ -483,17 +506,18 @@ class JobBackend:
 
         self.running = True
         on_shutdown.started_jobs.append(self)
-
-        self.monitoring_thread = MonitoringThread(self)
-        self.monitoring_thread.daemon = True
-        self.monitoring_thread.start()
-
         self.collect_system_information()
+        self.start_monitoring()
 
         self.client.start(self.job_id)
 
         print("Job %s#%d (%s) started. Open http://%s/trainer/app#/training=%s to monitor the training." %
               (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
+
+    def start_monitoring(self):
+        self.monitoring_thread = MonitoringThread(self)
+        self.monitoring_thread.daemon = True
+        self.monitoring_thread.start()
 
     def done(self):
         if not self.running:
@@ -799,12 +823,32 @@ class JobBackend:
             'data': {'key': key, 'value': value}
         })
 
-    def job_add_insight(self, info, images):
+    def job_add_insight(self, x, images, confusion_matrix):
+        info = {'epoch': x, 'confusionMatrix': confusion_matrix}
+
+        converted_images = []
+        for image in images:
+            if not isinstance(image, JobImage):
+                raise Exception('job_add_insight only accepts JobImage instances in images argument')
+
+            converted_images.append({
+                'id': image.id,
+                'title': image.title,
+                'image': self.to_base64(image.image)
+            })
+
         self.client.send({
             'type': 'job-insight',
             'time': time.time(),
-            'data': {'info': info, 'images': images}
+            'data': {'info': info, 'images': converted_images}
         })
+
+    def to_base64(self, image):
+        buffer = BytesIO()
+        if (six.PY2):
+            buffer = StringIO()
+        image.save(buffer, format="JPEG", optimize=True, quality=80)
+        return base64.b64encode(buffer.getvalue())
 
 
     def collect_system_information(self):

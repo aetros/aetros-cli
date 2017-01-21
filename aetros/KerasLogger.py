@@ -1,9 +1,12 @@
+# -*- coding: utf-8 -*-
 from __future__ import division
-
 from __future__ import absolute_import
-import base64
+
 import os
 import time
+
+from aetros.backend import JobImage
+
 try:
     from cStringIO import StringIO
 except ImportError:
@@ -23,13 +26,11 @@ from .keras_model_utils import ensure_dir, get_total_params
 import six
 
 class KerasLogger(Callback):
-    def __init__(self, trainer, backend, general_logger):
+    def __init__(self, trainer, job_backend, general_logger):
         self.params = {}
         super(KerasLogger, self).__init__()
         self.validation_per_batch = []
         self.ins = None
-
-        self.trainer = None
         self.insights_sample_path = None
 
         self.trainer = trainer
@@ -37,8 +38,8 @@ class KerasLogger(Callback):
         self.log_epoch = True
         self.confusion_matrix = True
 
-        self.backend = backend
-        self.job_model = backend.get_job_model()
+        self.job_backend = job_backend
+        self.job_model = job_backend.get_job_model()
         self.general_logger = general_logger
         self._test_with_acc = None
         self.last_batch_time = time.time()
@@ -53,11 +54,11 @@ class KerasLogger(Callback):
         ensure_dir(os.path.dirname(self.filepath_best))
         self.data_gathered = False
 
-        self.insights_x = None
+        self.accuracy_channel = None
+        self.loss_channel = None
 
-        self.best_epoch = 0
+        self.insights_x = None
         self.best_total_accuracy = 0
-        self.worst_total_accuracy = 0
 
     def on_train_begin(self, logs={}):
         self.start_time = time.time()
@@ -73,6 +74,19 @@ class KerasLogger(Callback):
 
         self.current['nb_sample'] = nb_sample
         self.current['nb_epoch'] = nb_epoch
+
+        xaxis = {
+            'range': [1, nb_epoch],
+            'title': u'Epoch ⇢'
+        }
+        yaxis = {
+            'range': [1, 100],
+            'title': u'% Accuracy ⇢',
+            'dtick': 10
+        }
+
+        self.accuracy_channel = self.job_backend.create_channel('accuracy', main_graph=True, xaxis=xaxis, yaxis=yaxis)
+        self.loss_channel = self.job_backend.create_loss_channel('loss', xaxis=xaxis)
 
     def on_batch_begin(self, batch, logs={}):
 
@@ -108,13 +122,12 @@ class KerasLogger(Callback):
 
         time_diff = time.time() - self.last_batch_time
 
-        if time_diff > 1 or batch == self.current['nb_batches']:  # only each second or last batch
+        if time_diff > 2 or batch == self.current['nb_batches']:  # only each second second or last batch
             self.batches_per_second = self.made_batches / time_diff
             self.made_batches = 0
             self.last_batch_time = time.time()
 
             nb_sample = self.params['nb_sample']  # training samples total
-            nb_epoch = self.params['nb_epoch']  # training samples total
             batch_size = self.current['batch_size']  # normal batch size
             nb_batches = nb_sample / batch_size  # normal nb batches
 
@@ -124,19 +137,15 @@ class KerasLogger(Callback):
             epochs_per_second = self.batches_per_second / nb_batches  # all batches
             self.current['epochsPerSecond'] = epochs_per_second
 
-            made_batches = (self.current['epoch'] * nb_batches) + current_batch
-            total_batches = nb_epoch * nb_batches
-            needed_batches = total_batches - made_batches
-            seconds_per_batch = 1 / self.batches_per_second
-
-            self.current['eta'] = seconds_per_batch * needed_batches
-
             self.current['currentBatch'] = current_batch
             self.current['currentBatchSize'] = current_batch_size
             elapsed = time.time() - self.start_time
             self.current['elapsed'] = elapsed
 
-            self.trainer.set_job_info('current', self.current)
+            self.trainer.set_job_info('itemsPerSecond', self.batches_per_second * current_batch_size)
+            self.trainer.set_job_info('currentBatch', current_batch)
+            self.trainer.set_job_info('currentBatchSize', batch_size)
+            self.trainer.set_job_info('nb_batches', nb_batches)
 
     def write(self, line):
         self.general_logger.write(line)
@@ -151,30 +160,7 @@ class KerasLogger(Callback):
         if 'loss' not in log and len(self.validation_per_batch) > 0:
             log['loss'] = sum(self.validation_per_batch) / float(len(self.validation_per_batch))
 
-        self.validation_per_batch = []
-        log['validation_accuracy'] = {}
-        log['validation_loss'] = {}
-        log['training_loss'] = {}
-        log['training_accuracy'] = {}
-
-        elapsed = time.time() - self.start_time
-
-        total_loss = 0
-        total_accuracy = 0
-
-        for layer in self.model.output_layers:
-            # todo, this is not very generic
-            log['validation_loss'][layer.name] = log.get('val_loss', 0)
-            log['validation_accuracy'][layer.name] = log.get('val_acc', 0)
-
-            log['training_loss'][layer.name] = log['loss']
-            log['training_accuracy'][layer.name] = log.get('acc', 0)
-
-            total_loss += log.get('val_loss', 0)
-            total_accuracy += log.get('val_acc', 0)
-
-        total_loss /= len(self.model.output_layers)
-        total_accuracy /= len(self.model.output_layers)
+        total_accuracy = log.get('val_acc', 0)
 
         if total_accuracy > self.best_total_accuracy:
             self.best_total_accuracy = total_accuracy
@@ -183,29 +169,15 @@ class KerasLogger(Callback):
 
         self.model.save_weights(self.filepath_latest, overwrite=True)
 
-        if total_accuracy < self.worst_total_accuracy:
-            self.worst_total_accuracy = total_accuracy
+        self.loss_channel.send(log['epoch'], log.get('loss', 0), log.get('val_loss', 0))
+        self.accuracy_channel.send(log['epoch'], total_accuracy*100)
 
-        self.current['totalValidationLoss'] = total_loss
-        self.current['totalValidationAccuracy'] = total_accuracy
-        self.current['totalValidationAccuracyBest'] = self.best_total_accuracy
-        self.current['totalValidationAccuracyWorst'] = self.worst_total_accuracy
-        self.current['totalValidationAccuracyBestEpoch'] = self.best_epoch
-
-        self.current['totalTrainingLoss'] = log['loss']
-        self.current['elapsed'] = elapsed
-        self.current['epoch'] = log['epoch']
-
-        self.filter_invalid_json_values(self.current)
-
-        self.trainer.set_job_info('current', self.current)
+        self.job_backend.progress(log['epoch'], self.params['nb_epoch'])
 
         if self.log_epoch:
             line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (
-                log['epoch'], log['loss'], log.get('acc', 0), total_loss, total_accuracy, )
+                log['epoch'], log['loss'], log.get('acc', 0), log.get('val_loss', 0), total_accuracy, )
             self.general_logger.write(line)
-
-        self.backend.job_add_status('epoch', log)
 
         if self.job_model.job['insights']:
             # Todo, support multiple inputs
@@ -217,7 +189,7 @@ class KerasLogger(Callback):
                 # build confusion matrix
                 confusion_matrix = self.build_confusion_matrix() if self.confusion_matrix else None
 
-                self.backend.job_add_insight({'epoch': log['epoch'], 'confusionMatrix': confusion_matrix}, images)
+                self.job_backend.job_add_insight(log['epoch'], images, confusion_matrix)
 
     def is_image_shape(self, x):
         if len(x.shape) != 3 and len(x.shape) != 2:
@@ -274,11 +246,7 @@ class KerasLogger(Callback):
                 x = np.squeeze(self.insights_x[i])
                 if self.is_image_shape(x):
                     image = self.make_image(x)
-                    images.append({
-                        'id': layer.name,
-                        'title': layer.name,
-                        'image': self.to_base64(image)
-                    })
+                    images.append(JobImage(layer.name, image))
         except:
             pass
 
@@ -299,22 +267,12 @@ class KerasLogger(Callback):
                 data = np.squeeze(Y)
                 image = PIL.Image.fromarray(get_layer_vis_square(data))
 
-                images.append({
-                    'id': layer.name,
-                    'type': 'convolution',
-                    'title': layer.name,
-                    'image': self.to_base64(image)
-                })
+                images.append(JobImage(layer.name, image))
 
                 if hasattr(layer, 'W') and layer.W:
                     data = layer.get_weights()[0]
                     image = PIL.Image.fromarray(get_layer_vis_square(data))
-                    images.append({
-                        'id': layer.name + '_weights',
-                        'type': 'convolution',
-                        'title': layer.name + ' weights',
-                        'image': self.to_base64(image)
-                    })
+                    images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights'))
 
             if isinstance(layer, keras.layers.Dense):
 
@@ -331,12 +289,7 @@ class KerasLogger(Callback):
                 else:
                     image = self.make_image_from_dense(Y)
 
-                images.append({
-                    'id': layer.name,
-                    'type': 'dense',
-                    'title': layer.name,
-                    'image': self.to_base64(image)
-                })
+                images.append(JobImage(layer.name, image))
 
         return images
 
@@ -460,13 +413,6 @@ class KerasLogger(Callback):
                 dict[k] = v.tolist()
             if math.isnan(v) or math.isinf(v):
                 dict[k] = -1
-
-    def to_base64(self, image):
-        buffer = BytesIO()
-        if (six.PY2):
-            buffer = StringIO()
-        image.save(buffer, format="JPEG", optimize=True, quality=80)
-        return base64.b64encode(buffer.getvalue())
 
     def make_image(self, data):
         from keras.preprocessing.image import array_to_img
