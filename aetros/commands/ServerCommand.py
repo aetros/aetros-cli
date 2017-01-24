@@ -276,7 +276,7 @@ class ServerCommand:
                 self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
                 self.process_queue()
 
-            time.sleep(0.5)
+            time.sleep(1)
 
     def start_jobs(self, jobs):
         for job in jobs:
@@ -290,6 +290,13 @@ class ServerCommand:
         self.queue.append(job)
 
     def process_queue(self):
+        # reject failed commands
+        failed_jobs = [x for x in self.jobs if x.poll() > 0]
+
+        for failed_process in failed_jobs:
+            reason = 'Exit status: ' + failed_process.poll()
+            self.server.send_message({'type': 'job-failed', 'job': getattr(failed_process, 'job'), 'reason': reason})
+
         # remove dead job processes
         self.jobs = [x for x in self.jobs if x.poll() is None]
 
@@ -312,6 +319,7 @@ class ServerCommand:
             my_env['PYTHONPATH'] += ':' + os.getcwd()
             args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
             process = subprocess.Popen(args, stdin=DEVNULL, stdout=sys.stdout, stderr=sys.stderr, close_fds=True, env=my_env)
+            setattr(process, 'job', job)
             self.jobs.append(process)
 
     def registration_complete(self, params):

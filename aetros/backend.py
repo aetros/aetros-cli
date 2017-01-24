@@ -369,7 +369,7 @@ class JobLossChannel:
     """
     :type job_backend : JobBackend
     """
-    def __init__(self, job_backend, name, xaxis=None, yaxis=None):
+    def __init__(self, job_backend, name, xaxis=None, yaxis=None, layout=None):
         self.name = name
         self.job_backend = job_backend
         message = {
@@ -379,6 +379,7 @@ class JobLossChannel:
             'main': True,
             'xaxis': xaxis,
             'yaxis': yaxis,
+            'layout': layout,
             'lossChannel': True
         }
         self.job_backend.job_add_status('channel', message)
@@ -502,13 +503,13 @@ class JobBackend:
         self.set_info('epochs', total)
         self.last_progress_call = time.time()
 
-    def create_loss_channel(self, name, xaxis=None, yaxis=None):
+    def create_loss_channel(self, name, xaxis=None, yaxis=None, layout=None):
         """
         :param name: string
         :return: JobLossGraph
         """
 
-        return JobLossChannel(self, name, xaxis, yaxis)
+        return JobLossChannel(self, name, xaxis, yaxis, layout)
 
     def create_channel(self, name, traces=None, main_graph=False,
                        type=JobChannel.NUMBER,
@@ -520,7 +521,7 @@ class JobBackend:
         :param type: string JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
         :return: JobChannel
         """
-        return JobChannel(self, name, traces, main_graph, type, xaxis, yaxis)
+        return JobChannel(self, name, traces, main_graph, type, xaxis, yaxis, layout)
 
     def start(self):
         if not self.job_id:
