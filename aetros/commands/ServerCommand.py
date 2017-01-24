@@ -274,7 +274,8 @@ class ServerCommand:
         while True:
             if self.registered:
                 self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
-            self.process_queue()
+                self.process_queue()
+
             time.sleep(0.5)
 
     def start_jobs(self, jobs):
@@ -290,10 +291,7 @@ class ServerCommand:
 
     def process_queue(self):
         # remove dead job processes
-        self.jobs = [x for x in self.jobs if not x.poll()]
-
-        if not self.registered:
-            return
+        self.jobs = [x for x in self.jobs if x.poll() is None]
 
         if len(self.jobs) >= self.max_parallel_jobs:
             return
@@ -313,7 +311,8 @@ class ServerCommand:
 
             my_env['PYTHONPATH'] += ':' + os.getcwd()
             args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
-            subprocess.Popen(args, stdin=DEVNULL, stdout=sys.stdout, stderr=sys.stderr, close_fds=True, env=my_env)
+            process = subprocess.Popen(args, stdin=DEVNULL, stdout=sys.stdout, stderr=sys.stderr, close_fds=True, env=my_env)
+            self.jobs.append(process)
 
     def registration_complete(self, params):
         self.registered = True

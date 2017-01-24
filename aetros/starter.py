@@ -71,6 +71,7 @@ def start_custom(job_backend):
     if 'PYTHONPATH' not in my_env:
         my_env['PYTHONPATH'] = ''
     my_env['PYTHONPATH'] += ':' + os.getcwd()
+    my_env['AETROS_JOB_ID'] = job_model.id
 
     os.chdir(root)
 

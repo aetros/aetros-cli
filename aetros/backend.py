@@ -329,13 +329,22 @@ class Client:
 
 def start_job(name, api_token=None):
     """
-    Creates and starts a new job.
+    Tries to load the job defined in the AETROS_JOB_ID environment variable.
+    If not defined, it creates a new job.
+    Starts the job as well.
 
     :param name: string
     :param api_token: string
     :return: JobBackend
     """
-    job = create_job(name, api_token)
+
+    job_id = os.getenv('AETROS_JOB_ID')
+    if job_id:
+        job = JobBackend(api_token=api_token)
+        job.load(job_id)
+    else:
+        job = create_job(name, api_token)
+
     job.start()
 
     return job
