@@ -12,10 +12,9 @@ from aetros.KerasLogger import KerasLogger
 from aetros.MonitorThread import MonitoringThread
 from aetros.Trainer import Trainer
 
-
 class KerasIntegration():
-    def __init__(self, id, model, type='custom', insights=False, confusion_matrix=False,
-                 insight_sample=None, api_key=None):
+    def __init__(self, id, model, api_key, insights=False, confusion_matrix=False,
+                 insight_sample=None):
         """
 
         :type id: basestring The actual model name available in AETROS Trainer. Example peter/mnist-cnn
@@ -32,7 +31,7 @@ class KerasIntegration():
         self.insight_sample = insight_sample
         self.id = id
         self.insights = insights
-        self.model_type = type
+        self.model_type = 'custom'
 
         self.job_backend = JobBackend(api_token=api_key)
 

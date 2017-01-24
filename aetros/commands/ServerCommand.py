@@ -246,9 +246,9 @@ class ServerCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                                         prog=aetros.const.__prog__ + ' worker')
+                                         prog=aetros.const.__prog__ + ' server')
         parser.add_argument('--secure-key', nargs='?',
-                            help="Secure key of the server. Alternatively use API_KEY environment variable.")
+                            help="Secure key of the server.")
         parser.add_argument('--server', help="Default aetros.com")
 
         parsed_args = parser.parse_args(args)
