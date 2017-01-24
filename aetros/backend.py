@@ -215,6 +215,15 @@ class Client:
 
             time.sleep(0.1)
 
+    def end(self):
+        #send all missing messages
+        while True:
+            if len(self.queue) == 0:
+                break;
+
+            time.sleep(0.1)
+
+
     def close(self):
         self.active = False
         self.connected = False
@@ -356,7 +365,7 @@ class JobLossChannel:
         self.job_backend = job_backend
         message = {
             'name': self.name,
-            'series': ['training', 'validation'],
+            'traces': ['training', 'validation'],
             'type': JobChannel.NUMBER,
             'main': True,
             'xaxis': xaxis,
@@ -392,35 +401,39 @@ class JobChannel:
     """
     :type job_backend: JobBackend
     """
-    def __init__(self, job_backend, name, series=None, main_graph=False,
-                 type=None, xaxis=None, yaxis=None):
+    def __init__(self, job_backend, name, traces=None, main_graph=False,
+                 type=None, xaxis=None, yaxis=None, layout=None):
         self.name = name
         self.job_backend = job_backend
 
-        if not (isinstance(series, list) or series is None):
-            raise Exception('series can only be None or a list of dicts: [{name: "name", option1: ...}, ...]')
+        if not (isinstance(traces, list) or traces is None):
+            raise Exception('traces can only be None or a list of dicts: [{name: "name", option1: ...}, ...]')
 
-        if not series:
-            series = [{'name': name}]
+        if not traces:
+            traces = [{'name': name}]
+
+        if isinstance(traces, list) and isinstance(traces[0], six.string_types):
+            traces = map(lambda x: {'name': x}, traces)
 
         message = {
             'name': name,
-            'series': series,
+            'traces': traces,
             'type': type or JobChannel.NUMBER,
             'main': main_graph,
             'xaxis': xaxis,
             'yaxis': yaxis,
+            'layout': layout,
         }
-        self.series = series
+        self.traces = traces
         self.job_backend.job_add_status('channel', message)
 
     def send(self, x, y):
         if not isinstance(y, list):
             y = [y]
 
-        if len(y) != len(self.series):
-            raise Exception('You tried to set more y values (%d items) then series available in channel %s (%d series).' % (
-                len(y), len(self.series), self.name))
+        if len(y) != len(self.traces):
+            raise Exception('You tried to set more y values (%d items) then traces available in channel %s (%d traces).' % (
+                len(y), self.name, len(self.traces)))
 
         message = {
             'name': self.name,
@@ -488,17 +501,17 @@ class JobBackend:
 
         return JobLossChannel(self, name, xaxis, yaxis)
 
-    def create_channel(self, name, series=None, main_graph=False,
+    def create_channel(self, name, traces=None, main_graph=False,
                        type=JobChannel.NUMBER,
-                       xaxis=None, yaxis=None):
+                       xaxis=None, yaxis=None, layout=None):
         """
         :param name: string
-        :param series: list
+        :param traces: list
         :param main_graph: bool
         :param type: string JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
         :return: JobChannel
         """
-        return JobChannel(self, name, series, main_graph, type, xaxis, yaxis)
+        return JobChannel(self, name, traces, main_graph, type, xaxis, yaxis)
 
     def start(self):
         if not self.job_id:
@@ -525,10 +538,11 @@ class JobBackend:
 
         self.post('job/stopped', json={'id': self.job_id})
 
-        self.client.close()
+        self.client.end()
         self.running = False
+
         if self.monitoring_thread:
-            self.monitoring_thread.stop();
+            self.monitoring_thread.stop()
 
     def abort(self):
         if not self.running:
@@ -539,7 +553,7 @@ class JobBackend:
         self.client.close()
         self.running = False
         if self.monitoring_thread:
-            self.monitoring_thread.stop();
+            self.monitoring_thread.stop()
 
     def crash(self, e=None):
         self.post('job/crashed', json={'id': self.job_id, 'error': e.message if e else None})
