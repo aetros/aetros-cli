@@ -239,7 +239,9 @@ class ServerCommand:
         self.last_net = {}
         self.nets = []
         self.server = None
+        self.queue = []
         self.jobs = []
+        self.max_parallel_jobs = 2
         self.registered = False
 
     def main(self, args):
@@ -249,13 +251,17 @@ class ServerCommand:
                                          prog=aetros.const.__prog__ + ' server')
         parser.add_argument('--secure-key', nargs='?',
                             help="Secure key of the server.")
-        parser.add_argument('--server', help="Default aetros.com")
+        parser.add_argument('--max-jobs', help="How many jobs should be run at the same time.")
+        parser.add_argument('--server', help="Default aetros.com.")
 
         parsed_args = parser.parse_args(args)
 
         if not parsed_args.secure_key:
             parser.print_help()
             sys.exit()
+
+        if parsed_args.max_jobs:
+            self.max_parallel_jobs = int(parsed_args.max_jobs)
 
         event_listener = EventListener()
 
@@ -268,6 +274,7 @@ class ServerCommand:
         while True:
             if self.registered:
                 self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
+            self.process_queue()
             time.sleep(0.5)
 
     def start_jobs(self, jobs):
@@ -275,15 +282,32 @@ class ServerCommand:
             self.start_job(job)
 
     def start_job(self, job):
-        print("Start job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
+        print("Queued job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
 
         self.server.send_message({'type': 'job-queued', 'id': job['id']})
+
+        self.queue.append(job)
+
+    def process_queue(self):
+        # remove dead job processes
+        self.jobs = [x for x in self.jobs if not x.poll()]
+
+        if not self.registered:
+            return
+
+        if len(self.jobs) >= self.max_parallel_jobs:
+            return
+
+        if len(self.queue) > 0:
+            # registered and free space for new jobs, so execute another one
+            self.execute_job(self.queue.pop(0))
+
+    def execute_job(self, job):
+        print("Execute job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
 
-            # makes sure that aetros.backend.create_job doesn't create but load this job
-            my_env["AETROS_JOB_ID"] = job['id']
             if 'PYTHONPATH' not in my_env:
                 my_env['PYTHONPATH'] = ''
 
@@ -333,7 +357,7 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
-        values['jobs'] = len(self.jobs)
+        values['jobs'] = [self.max_parallel_jobs, len(self.queue), len(self.jobs)]
         values['nets'] = {}
         values['processes'] = []
 

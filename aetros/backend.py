@@ -692,8 +692,7 @@ class JobBackend:
         return requests.put(self.get_url(url), data=data, **kwargs)
 
     def create(self, name, server_id='local', dataset_id=None, insights=False):
-        response = self.put('job',
-                            {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+        response = self.put('job', {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
 
         if response.status_code != 200:
             raise Exception("Could not create job: %s" % (response.content,))
@@ -730,6 +729,12 @@ class JobBackend:
             raise Exception('Job not loaded yet. Use load(id) first.')
 
         return self.job['index']
+
+    def is_keras_model(self):
+        if not self.job:
+            raise Exception('Job not loaded yet. Use load(id) first.')
+
+        return not self.job['config']['fromCode']
 
     def get_parameter(self, name):
         if not self.job:

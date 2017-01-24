@@ -5,7 +5,9 @@ import io
 import logging
 import os
 import pprint
+import re
 import signal
+import subprocess
 import sys
 import traceback
 
@@ -30,16 +32,97 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
         print("Create job ...")
         job_id = job_backend.create(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
         job_backend.load(job_id)
+
+        print("Job %s#%d (%s) created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+              (job_backend.model_id, job_backend.job_index, job_backend.job_id, job_backend.host, job_id))
     else:
         job_backend.load(job_id)
-        print("Job %s#%d (%s) restarted." % (job_backend.model_id, job_backend.job_index, job_id))
 
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
+    if job_backend.is_keras_model():
+        start_keras(job_backend, insights_sample_path)
+    else:
+        start_custom(job_backend)
+
+
+def start_custom(job_backend):
+    job_model = job_backend.get_job_model()
+    settings = job_model.config['settings']
+
+    if 'git' not in settings or not settings['git']:
+        raise Exception('Git url is not configured. Aborted')
+
+    if 'git_python_script' not in settings or not settings['git_python_script']:
+        raise Exception('Git python script is not configured. Aborted')
+
+    git_python_script = settings['git_python_script']
+    git_branch = 'master'
+    git_url = settings['git']
+    if 'git_branch' in settings and settings['git_branch']:
+        git_branch = settings['git_branch']
+
+    root = './aetros-job/'
+    if not os.path.exists(root):
+        os.mkdir(root)
+
+    my_env = os.environ.copy()
+    if 'PYTHONPATH' not in my_env:
+        my_env['PYTHONPATH'] = ''
+    my_env['PYTHONPATH'] += ':' + os.getcwd()
+
+    os.chdir(root)
+
+    print("Setup git repository %s in %s" % (git_url, root + job_model.model_id))
+
+    try:
+        if not os.path.exists(job_model.model_id):
+            args = ['git', 'clone', git_url, job_model.model_id]
+            code = subprocess.call(args, stdout=sys.stdout, stderr=sys.stderr)
+            if code != 0:
+                raise Exception('Could not clone repository %s to %s' %(git_url, job_model.model_id))
+        else:
+            # repository seems to exists already, make hard reset and git pull origin
+            # check if requested branch is loaded
+            os.chdir(job_model.model_id)
+            branches = '\n' + subprocess.check_output(['git', 'branch']) + '\n'
+            m = re.search('\* ([^\s]+)', branches)
+            current_branch = m.group(1) if m else None
+
+            if current_branch == git_branch:
+                print("Reset all local changes git repo")
+                subprocess.call(['git', 'reset', '--hard'])
+                subprocess.call(['git', 'clean', '-fd'])
+
+                print("Update local git repo: git pull origin " + git_branch)
+                code = subprocess.call(['git', 'pull', 'origin', git_branch])
+
+                if code != 0:
+                    raise Exception('Could not "git pull origin %s" repository %s to %s' %(git_branch, git_url, job_model.model_id))
+
+            if current_branch != git_branch:
+                branch_checked_out = '\n ' + git_branch + '\n' in branches
+                if not branch_checked_out:
+                    subprocess.call(['git', 'fetch', 'origin', git_branch + ':' + git_branch])
+
+                subprocess.call(['git', 'checkout', git_branch])
+
+                print("Update local git repo: git pull origin " + git_branch)
+                subprocess.call(['git', 'pull', 'origin', git_branch])
+
+    except subprocess.CalledProcessError as e:
+        raise Exception('Could not run "%s" for repository %s in %s' %(e.cmd, git_url, job_model.model_id))
+
+    print("\nExecuting %s" %(git_python_script,))
+    args = [sys.executable, git_python_script]
+    subprocess.Popen(args, close_fds=True, env=my_env).wait()
+
+
+def start_keras(job_backend, insights_sample_path=None):
     job_model = job_backend.get_job_model()
 
-    #we need to import keras here, so we know which backend is used (and whether GPU is used)
+    # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
     job_backend.start()
 
