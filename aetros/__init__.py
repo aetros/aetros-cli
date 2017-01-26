@@ -28,7 +28,10 @@ def parseopts(args):
     return cmd_name, cmd_args
 
 
-def main(args):
+def main(args=None):
+    if args is None:
+        args = sys.argv[1:]
+
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
     from aetros.commands.PredictCommand import PredictCommand
