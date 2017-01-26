@@ -157,7 +157,14 @@ class Client:
         print("%d sent, %d in sending, %d open " % (sent, sending, open))
 
     def connection_error(self, error=None):
-        if error:
+        if not self.connected:
+            return
+
+        if socket.error is None:
+            # python interpreter is already dying, so quit
+            return
+
+        if hasattr(error, 'errno') and hasattr(error, 'message'):
             print("Connection error: %d: %s" % (error.errno, error.message,))
         else:
             print("Connection error")
@@ -206,7 +213,7 @@ class Client:
                             if messages:
                                 self.handle_messages(messages)
 
-                except socket.error as error:
+                except Exception as error:
                     self.connection_error(error)
 
             elif not self.connected and self.active:
@@ -219,7 +226,7 @@ class Client:
         #send all missing messages
         while True:
             if len(self.queue) == 0:
-                break;
+                break
 
             time.sleep(0.1)
 
@@ -544,7 +551,7 @@ class JobBackend:
 
     def done(self):
         if not self.running:
-            raise Exception('Job has not started yet.')
+            return
 
         self.post('job/stopped', json={'id': self.job_id})
 
@@ -556,7 +563,7 @@ class JobBackend:
 
     def abort(self):
         if not self.running:
-            raise Exception('Job has not started yet.')
+            return
 
         self.post('job/aborted', json={'id': self.job_id})
 

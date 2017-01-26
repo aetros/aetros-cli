@@ -117,7 +117,7 @@ class Server:
                             if messages:
                                 self.handle_messages(messages)
 
-                except socket.error as error:
+                except Exception as error:
                     self.connection_error(error)
 
             elif not self.connected and self.active:
@@ -153,6 +153,14 @@ class Server:
                     self.event_listener.fire('start-jobs', message['jobs'])
 
     def connection_error(self, error=None):
+        if not self.connected:
+            return
+
+        if socket.error is None:
+            # python interpreter is already dying, so quit
+            return
+
+
         if error:
             print("Connection error: %d: %s" % (error.errno, error.message,))
         else:
@@ -294,8 +302,9 @@ class ServerCommand:
         failed_jobs = [x for x in self.jobs if x.poll() > 0]
 
         for failed_process in failed_jobs:
-            reason = 'Exit status: ' + failed_process.poll()
-            self.server.send_message({'type': 'job-failed', 'job': getattr(failed_process, 'job'), 'reason': reason})
+            job = getattr(failed_process, 'job')
+            reason = 'Failed job %s. Exit status: %s' % (job['id'], str(failed_process.poll()))
+            self.server.send_message({'type': 'job-failed', 'job': job, 'reason': reason})
 
         # remove dead job processes
         self.jobs = [x for x in self.jobs if x.poll() is None]
