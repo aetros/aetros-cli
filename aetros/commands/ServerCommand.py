@@ -156,7 +156,7 @@ class Server:
         if not self.connected:
             return
 
-        if socket.error is None:
+        if socket is None:
             # python interpreter is already dying, so quit
             return
 

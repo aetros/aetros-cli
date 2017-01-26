@@ -246,25 +246,23 @@ class JobModel:
             return image
 
     def convert_image_to_node(self, image, input_node=None):
+        from keras.preprocessing.image import img_to_array
+
         if input_node is None:
             input_node = self.get_input_node(0)
 
-        size = (int(input_node['width']), int(input_node['height']))
-
         if input_node['inputType'] == 'image':
             image = image.convert("L")
-            image = np.asarray(image, dtype='float32')
-            image = image.reshape((1, size[0], size[1]))
+            image = img_to_array(image)
 
         elif input_node['inputType'] == 'image_bgr':
             image = image.convert("RGB")
             image = np.asarray(image, dtype='float32')
             image = image[:, :, ::-1].copy()
-            image = image.transpose(2, 0, 1)
+            image = img_to_array(image)
         else:
             image = image.convert("RGB")
-            image = np.asarray(image, dtype='float32')
-            image = image.transpose(2, 0, 1)
+            image = img_to_array(image)
 
         if 'imageScale' not in input_node:
             input_node['imageScale'] = 255
