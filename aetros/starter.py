@@ -125,6 +125,9 @@ def start_keras(job_backend, insights_sample_path=None):
 
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
+    # all our shapes are theano schema. (channels, height, width)
+    K.set_image_dim_ordering('th')
+
     job_backend.start()
 
     ensure_dir('aetros-cli-data/models/%s/%s' % (job_model.model_id, job_model.id))

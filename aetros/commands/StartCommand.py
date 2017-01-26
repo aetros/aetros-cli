@@ -4,7 +4,6 @@ import sys
 import aetros.const
 import os
 
-
 class StartCommand:
 
     def main(self, args):
