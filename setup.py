@@ -1,6 +1,6 @@
 from setuptools import setup
 from setuptools import find_packages
-import aetros
+import aetros.const
 
 setup(name='aetros',
       version=aetros.const.__version__,
