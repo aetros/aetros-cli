@@ -127,9 +127,9 @@ def start_keras(job_backend, insights_sample_path=None):
     from keras import backend as K
     job_backend.start()
 
-    ensure_dir('models/%s/%s' % (job_model.model_id, job_model.id))
+    ensure_dir('aetros-cli-data/models/%s/%s' % (job_model.model_id, job_model.id))
 
-    log = io.open('models/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
+    log = io.open('aetros-cli-data/models/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
     log.truncate()
 
     general_logger = GeneralLogger(log, job_backend)
