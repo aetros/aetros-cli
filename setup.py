@@ -20,6 +20,7 @@ setup(name='aetros',
                         'h5py',
                         'psutil',
                         'cherrypy>=7.1.0',
+                        'Pillow>=4.0.0',
                         'py-cpuinfo==0.2.3'
                         ),
       packages=find_packages())
