@@ -19,6 +19,8 @@ class StartCommand:
         parser.add_argument('--device', help="Which device index should be used. Default 0 (which means with --gpu => 'gpu0'). Only for Theano models.")
         parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano. Only for Keras models.")
         parser.add_argument('--mp', help="Activates multithreading if available with given thread count. Only for Theano models.")
+        parser.add_argument('--no-hardware-monitoring', action='store_true', help="Deactivates hardware monitoring")
+        parser.add_argument('--param', action='append', help="Sets a hyperparameter, --param name:value")
 
         parsed_args = parser.parse_args(args)
 
@@ -41,4 +43,19 @@ class StartCommand:
 
         os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
 
-        start(parsed_args.name, dataset_id=parsed_args.dataset, insights=parsed_args.insights, insights_sample_path=parsed_args.insights_sample, api_token=parsed_args.secure_key)
+        hyperparameter = {}
+        if parsed_args.param:
+            for param in parsed_args.param:
+                if ':' not in param:
+                    raise Exception('--param ' + param+' does not contain a :. Please use "--param name:value"')
+
+                name, value = param.split(':')
+                hyperparameter[name] = value
+
+        start(parsed_args.name,
+            hyperparameter=hyperparameter,
+            dataset_id=parsed_args.dataset,
+            insights=parsed_args.insights,
+            insights_sample_path=parsed_args.insights_sample,
+            api_token=parsed_args.secure_key,
+        )

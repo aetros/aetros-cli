@@ -21,7 +21,7 @@ from .keras_model_utils import ensure_dir
 import six
 
 
-def start(job_id, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
+def start(job_id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
     """
     Starts the training process with all logging of a job_id
     """
@@ -30,7 +30,7 @@ def start(job_id, dataset_id=None, server_id='local', insights=False, insights_s
 
     if '/' in job_id:
         print("Create job ...")
-        job_id = job_backend.create(job_id, server_id=server_id, dataset_id=dataset_id, insights=insights)
+        job_id = job_backend.create(job_id, server_id=server_id, hyperparameter=hyperparameter, dataset_id=dataset_id, insights=insights)
         job_backend.load(job_id)
 
         print("Job %s#%d (%s) created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %

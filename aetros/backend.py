@@ -708,8 +708,14 @@ class JobBackend:
 
         return requests.put(self.get_url(url), data=data, **kwargs)
 
-    def create(self, name, server_id='local', dataset_id=None, insights=False):
-        response = self.put('job', {'modelId': name, 'serverId': server_id, 'insights': insights, 'datasetId': dataset_id})
+    def create(self, name, server_id='local', hyperparameter=None, dataset_id=None, insights=False):
+        response = self.put('job', json={
+            'modelId': name,
+            'serverId': server_id,
+            'hyperParameters': hyperparameter,
+            'insights': insights,
+            'datasetId': dataset_id
+        })
 
         if response.status_code != 200:
             raise Exception("Could not create job: %s" % (response.content,))
