@@ -20,7 +20,7 @@ class StartCommand:
         parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano. Only for Keras models.")
         parser.add_argument('--mp', help="Activates multithreading if available with given thread count. Only for Theano models.")
         parser.add_argument('--no-hardware-monitoring', action='store_true', help="Deactivates hardware monitoring")
-        parser.add_argument('--param', action='append', help="Sets a hyperparameter, --param name:value")
+        parser.add_argument('--param', action='append', help="Sets a hyperparameter, example '--param name:value'. Multiple --param allowed.")
 
         parsed_args = parser.parse_args(args)
 
