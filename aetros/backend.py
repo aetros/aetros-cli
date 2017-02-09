@@ -498,13 +498,20 @@ class JobBackend:
         os.kill(os.getpid(), signal.SIGINT)
 
     def progress(self, epoch, total):
-        if self.last_progress_call:
+        if epoch is not 0 and self.last_progress_call:
             # how long took it since the last call?
             time_per_epoch = time.time() - self.last_progress_call
             eta = time_per_epoch * (total-epoch)
             self.set_info('eta', eta)
             if time_per_epoch > 0:
                 self.set_info('epochsPerSecond', 1 / time_per_epoch)
+
+        if 'maxEpochs' in self.job['config']['settings'] and self.job['config']['settings']['maxEpochs'] > 0:
+            if epoch >= self.job['config']['settings']['maxEpochs']:
+                print("MaxEpochs of %d/%d reached" % (epoch, self.job['config']['settings']['maxEpochs']))
+                self.done()
+                os.kill(os.getpid(), signal.SIGINT)
+                return
 
         self.set_info('epoch', epoch)
         self.set_info('epochs', total)
