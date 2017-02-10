@@ -83,6 +83,7 @@ def start_custom(job_backend):
             code = subprocess.call(args, stdout=sys.stdout, stderr=sys.stderr)
             if code != 0:
                 raise Exception('Could not clone repository %s to %s' %(git_url, job_model.model_id))
+            os.chdir(job_model.model_id)
         else:
             # repository seems to exists already, make hard reset and git pull origin
             # check if requested branch is loaded
