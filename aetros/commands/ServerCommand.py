@@ -248,6 +248,7 @@ class ServerCommand:
         self.nets = []
         self.server = None
         self.queue = []
+        self.queuedMap = {}
         self.jobs = []
         self.max_parallel_jobs = 2
         self.registered = False
@@ -291,20 +292,28 @@ class ServerCommand:
             self.start_job(job)
 
     def start_job(self, job):
+        if job['id'] in self.queuedMap:
+            return
+
         print("Queued job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
 
         self.server.send_message({'type': 'job-queued', 'id': job['id']})
 
+        self.queuedMap[job['id']] = job
         self.queue.append(job)
 
     def process_queue(self):
         # reject failed commands
         failed_jobs = [x for x in self.jobs if x.poll() > 0]
 
-        for failed_process in failed_jobs:
-            job = getattr(failed_process, 'job')
-            reason = 'Failed job %s. Exit status: %s' % (job['id'], str(failed_process.poll()))
-            self.server.send_message({'type': 'job-failed', 'job': job, 'reason': reason})
+        for process in self.jobs:
+            job = getattr(process, 'job')
+            if process.poll() > 0:
+                reason = 'Failed job %s. Exit status: %s' % (job['id'], str(process.poll()))
+                self.server.send_message({'type': 'job-failed', 'job': job, 'reason': reason})
+
+            if process.poll() is not None:
+                del self.queuedMap[job['id']]
 
         # remove dead job processes
         self.jobs = [x for x in self.jobs if x.poll() is None]
