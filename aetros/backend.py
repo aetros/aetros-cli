@@ -16,6 +16,9 @@ from io import BytesIO
 import six
 import base64
 import PIL.Image
+
+from aetros.utils import git
+
 try:
     from cStringIO import StringIO
 except ImportError:
@@ -106,6 +109,7 @@ class Client:
         self.queue = []
 
         self.active = False
+        self.external_stopped = False
         self.registered = False
         self.connected = False
         self.read_buffer = ''
@@ -287,7 +291,8 @@ class Client:
 
                         break
 
-            if 'stop' in message:
+            if not self.external_stopped and 'stop' in message:
+                self.external_stopped = True
                 self.event_listener.fire('stop')
 
     def read_full_message(self, s):
@@ -425,13 +430,13 @@ class JobChannel:
     :type job_backend: JobBackend
     """
     def __init__(self, job_backend, name, traces=None,
-                 main_graph=False, kpi=False, max_optimization=True,
+                 main=False, kpi=False, max_optimization=True,
                  type=None, xaxis=None, yaxis=None, layout=None):
         """
         :param job_backend: JobBakend
         :param name: str
         :param traces: None|list : per default create a trace based on "name".
-        :param main_graph: bool : whether this channel is visible in the job list as column for better comparison.
+        :param main: bool : whether this channel is visible in the job list as column for better comparison.
 
         :param kpi: bool : whether this channel is the KPI (key performance indicator).
                            Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
@@ -460,7 +465,7 @@ class JobChannel:
             'name': name,
             'traces': traces,
             'type': type or JobChannel.NUMBER,
-            'main': main_graph,
+            'main': main,
             'kpi': kpi,
             'maxOptimization': max_optimization,
             'xaxis': xaxis,
@@ -536,7 +541,9 @@ class JobBackend:
 
     def progress(self, epoch, total):
         max_epochs = total
+        epoch_limit = False
         if 'maxEpochs' in self.job['config']['settings'] and self.job['config']['settings']['maxEpochs'] > 0:
+            epoch_limit = True
             max_epochs = self.job['config']['settings']['maxEpochs']
 
         if epoch is not 0 and self.last_progress_call:
@@ -551,7 +558,7 @@ class JobBackend:
         self.set_info('epochs', max_epochs)
         self.last_progress_call = time.time()
 
-        if max_epochs > 0:
+        if epoch_limit and max_epochs > 0:
             if epoch >= max_epochs:
                 print("MaxEpochs of %d/%d reached" % (epoch, max_epochs))
                 self.done()
@@ -567,13 +574,13 @@ class JobBackend:
         return JobLossChannel(self, name, xaxis, yaxis, layout)
 
     def create_channel(self, name, traces=None,
-                       main_graph=False, kpi=False, max_optimization=True,
+                       main=False, kpi=False, max_optimization=True,
                        type=JobChannel.NUMBER,
                        xaxis=None, yaxis=None, layout=None):
         """
         :param name: str
         :param traces: None|list : per default create a trace based on "name".
-        :param main_graph: bool : whether this channel is visible in the job list as column for better comparison.
+        :param main: bool : whether this channel is visible in the job list as column for better comparison.
 
         :param kpi: bool : whether this channel is the KPI (key performance indicator).
                            Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
@@ -586,7 +593,7 @@ class JobBackend:
         :param yaxis: dict
         :param layout: dict
         """
-        return JobChannel(self, name, traces, main_graph, kpi, max_optimization, type, xaxis, yaxis, layout)
+        return JobChannel(self, name, traces, main, kpi, max_optimization, type, xaxis, yaxis, layout)
 
     def start(self):
         if not self.job_id:
@@ -598,9 +605,20 @@ class JobBackend:
         self.start_monitoring()
 
         self.client.start(self.job_id)
+        self.detect_git_version()
 
         print("Job %s#%d (%s) started. Open http://%s/trainer/app#/training=%s to monitor the training." %
               (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
+
+    def detect_git_version(self):
+        commit_sha = git.get_current_commit_hash()
+        if commit_sha:
+            self.set_info('git_version', commit_sha)
+
+        current_branch = git.get_current_branch()
+        if current_branch:
+            self.set_info('git_branch', current_branch)
+
 
     def start_monitoring(self):
         self.monitoring_thread = MonitoringThread(self)

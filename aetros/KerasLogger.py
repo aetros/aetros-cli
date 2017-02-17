@@ -85,7 +85,7 @@ class KerasLogger(Callback):
             'dtick': 10
         }
 
-        self.accuracy_channel = self.job_backend.create_channel('accuracy', main_graph=True, kpi=True, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
+        self.accuracy_channel = self.job_backend.create_channel('accuracy', main=True, kpi=True, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
         self.loss_channel = self.job_backend.create_loss_channel('loss', xaxis=xaxis)
         self.job_backend.progress(0, self.params['nb_epoch'])
 

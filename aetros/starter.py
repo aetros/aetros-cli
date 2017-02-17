@@ -11,6 +11,7 @@ import subprocess
 import sys
 import traceback
 
+from aetros.utils import git
 from . import keras_model_utils
 from .backend import JobBackend
 from .logger import GeneralLogger
@@ -88,9 +89,8 @@ def start_custom(job_backend):
             # repository seems to exists already, make hard reset and git pull origin
             # check if requested branch is loaded
             os.chdir(job_model.model_id)
-            branches = '\n' + subprocess.check_output(['git', 'branch']) + '\n'
-            m = re.search('\* ([^\s]+)', branches)
-            current_branch = m.group(1) if m else None
+            branches = git.get_branches()
+            current_branch = git.get_current_branch()
 
             if current_branch == git_branch:
                 print("Reset all local changes git repo")
@@ -104,7 +104,7 @@ def start_custom(job_backend):
                     raise Exception('Could not "git pull origin %s" repository %s to %s' %(git_branch, git_url, job_model.model_id))
 
             if current_branch != git_branch:
-                branch_checked_out = '\n ' + git_branch + '\n' in branches
+                branch_checked_out = git_branch in branches
                 if not branch_checked_out:
                     subprocess.call(['git', 'fetch', 'origin', git_branch + ':' + git_branch])
 
