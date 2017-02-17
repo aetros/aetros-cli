@@ -98,6 +98,8 @@ class Server:
 
         while True:
             if self.connected and self.registered:
+                messages = None
+
                 try:
                     if last_ping < time.time() - 10:
                         # ping every second
@@ -110,15 +112,20 @@ class Server:
                         readable, writable, exceptional = select.select([self.s], [self.s], [])
                         self.lock.release()
                         if exceptional:
-                            self.connection_error()
+                            self.connection_error('select.select exception')
 
                         for s in readable:
                             messages = self.read(s)
-                            if messages:
-                                self.handle_messages(messages)
 
                 except Exception as error:
                     self.connection_error(error)
+
+                if messages:
+                    try:
+                        self.handle_messages(messages)
+                    except Exception as e:
+                        print(str(e))
+                        pass
 
             elif not self.connected and self.active:
                 if not self.connect():
@@ -152,6 +159,9 @@ class Server:
                 if message['type'] == 'start-jobs':
                     self.event_listener.fire('start-jobs', message['jobs'])
 
+                if message['type'] == 'stop-job':
+                    self.event_listener.fire('stop-job', message['id'])
+
     def connection_error(self, error=None):
         if not self.connected:
             return
@@ -160,9 +170,10 @@ class Server:
             # python interpreter is already dying, so quit
             return
 
-
-        if error:
+        if hasattr(error, 'errno') and hasattr(error, 'message'):
             print("Connection error: %d: %s" % (error.errno, error.message,))
+        elif error:
+            print("Connection error: " + str(error))
         else:
             print("Connection error")
 
@@ -202,7 +213,7 @@ class Server:
                 self.lock.release()
 
             if chunk == '':
-                self.connection_error()
+                self.connection_error('Got empty socket.recv()')
                 return False
 
             buffer += chunk
@@ -229,7 +240,7 @@ class Server:
             self.lock.release()
 
         if chunk == '':
-            self.connection_error()
+            self.connection_error('Got empty socket.recv()')
             return False
 
         self.read_buffer += chunk
@@ -249,7 +260,7 @@ class ServerCommand:
         self.server = None
         self.queue = []
         self.queuedMap = {}
-        self.jobs = []
+        self.job_processes = []
         self.max_parallel_jobs = 2
         self.registered = False
 
@@ -276,6 +287,7 @@ class ServerCommand:
 
         event_listener.on('registration', self.registration_complete)
         event_listener.on('start-jobs', self.start_jobs)
+        event_listener.on('stop-job', self.stop_job)
 
         self.server = Server(parsed_args.server, parsed_args.secure_key, event_listener)
         self.server.start()
@@ -291,7 +303,21 @@ class ServerCommand:
         for job in jobs:
             self.start_job(job)
 
+    def stop_job(self, id):
+        if id in self.queuedMap:
+            job = self.queuedMap[id]
+            print("Queued job removed %s#%d (%s) " % (job['modelId'], job['index'], job['id']))
+
+            # removing from the queue is enough, since the job process itself terminates it when job is aborted.
+            if job in self.queue:
+                self.queue.remove(job)
+
+            del self.queuedMap[id]
+
+
     def start_job(self, job):
+        self.check_finished_jobs()
+
         if job['id'] in self.queuedMap:
             return
 
@@ -302,23 +328,23 @@ class ServerCommand:
         self.queuedMap[job['id']] = job
         self.queue.append(job)
 
-    def process_queue(self):
-        # reject failed commands
-        failed_jobs = [x for x in self.jobs if x.poll() > 0]
-
-        for process in self.jobs:
+    def check_finished_jobs(self):
+        for process in self.job_processes:
             job = getattr(process, 'job')
             if process.poll() > 0:
                 reason = 'Failed job %s. Exit status: %s' % (job['id'], str(process.poll()))
                 self.server.send_message({'type': 'job-failed', 'job': job, 'reason': reason})
 
-            if process.poll() is not None:
+            if process.poll() is not None and job['id'] in self.queuedMap:
                 del self.queuedMap[job['id']]
 
         # remove dead job processes
-        self.jobs = [x for x in self.jobs if x.poll() is None]
+        self.job_processes = [x for x in self.job_processes if x.poll() is None]
 
-        if len(self.jobs) >= self.max_parallel_jobs:
+    def process_queue(self):
+        self.check_finished_jobs()
+
+        if len(self.job_processes) >= self.max_parallel_jobs:
             return
 
         if len(self.queue) > 0:
@@ -336,12 +362,18 @@ class ServerCommand:
 
             my_env['PYTHONPATH'] += ':' + os.getcwd()
             args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
-            process = subprocess.Popen(args, stdin=DEVNULL, stdout=sys.stdout, stderr=sys.stderr, close_fds=True, env=my_env)
+            process = subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL, close_fds=True, env=my_env)
             setattr(process, 'job', job)
-            self.jobs.append(process)
+            self.job_processes.append(process)
 
     def registration_complete(self, params):
         self.registered = True
+
+        # upon registration, we need to clear the queue, since the server sends us immediately
+        # all to be enqueued jobs after registration/re-connection
+        self.queue = []
+        self.queueMap = {}
+
         self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
     def collect_system_information(self):
@@ -382,7 +414,7 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
-        values['jobs'] = [self.max_parallel_jobs, len(self.queue), len(self.jobs)]
+        values['jobs'] = [self.max_parallel_jobs, len(self.queue), len(self.job_processes)]
         values['nets'] = {}
         values['processes'] = []
 
@@ -422,6 +454,8 @@ class ServerCommand:
                         p.memory_percent(),
                         cpu
                     ])
+            except OSError:
+                pass
             except psutil.Error:
                 pass
 

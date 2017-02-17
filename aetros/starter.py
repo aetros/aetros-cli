@@ -167,18 +167,19 @@ def start_keras(job_backend, insights_sample_path=None):
         print("Done.")
         sys.exit(0)
     except KeyboardInterrupt:
-        trainer.set_status('ABORTED')
-        print('Early stopping ...')
+        if job_backend.running:
+            trainer.set_status('ABORTED')
+            print('Early stopping ...')
 
-        if job_backend.stop_requested:
-            print(' ... stop requested through trainer.')
+            if job_backend.stop_requested:
+                print(' ... stop requested through trainer.')
 
-        if trainer.model:
-            trainer.model.stop_training = True
+            if trainer.model:
+                trainer.model.stop_training = True
 
-        job_backend.sync_weights()
-        job_backend.abort()
-        print("Aborted.")
+            job_backend.sync_weights()
+            job_backend.abort()
+            print("Aborted.")
         sys.exit(1)
 
     except Exception as e:

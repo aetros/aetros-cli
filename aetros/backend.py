@@ -135,6 +135,12 @@ class Client:
             self.send_message({'register_job_worker': self.api_token, 'job_id': self.job_id})
             messages = self.read_full_message(self.s)
 
+            if "JOB_ABORTED" in messages:
+                print("Job aborted meanwhile. Exiting")
+                self.event_listener.fire('stop')
+                self.active = False
+                return False
+
             if "JOB_REGISTERED" in messages:
                 self.registered = True
                 print("Connected to %s " % (self.api_host,))
@@ -418,13 +424,31 @@ class JobChannel:
     """
     :type job_backend: JobBackend
     """
-    def __init__(self, job_backend, name, traces=None, main_graph=False,
+    def __init__(self, job_backend, name, traces=None,
+                 main_graph=False, kpi=False, max_optimization=True,
                  type=None, xaxis=None, yaxis=None, layout=None):
+        """
+        :param job_backend: JobBakend
+        :param name: str
+        :param traces: None|list : per default create a trace based on "name".
+        :param main_graph: bool : whether this channel is visible in the job list as column for better comparison.
+
+        :param kpi: bool : whether this channel is the KPI (key performance indicator).
+                           Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
+
+        :param max_optimization: bool : whether the optimization maximizes or minmizes the kpi . Use max_optimization=False to
+                                        tell the optimization algorithm that his channel minimizes a kpi, for instance the loss of a model.
+
+        :param type: str : One of JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
+        :param xaxis: dict
+        :param yaxis: dict
+        :param layout: dict
+        """
         self.name = name
         self.job_backend = job_backend
 
         if not (isinstance(traces, list) or traces is None):
-            raise Exception('traces can only be None or a list of dicts: [{name: "name", option1: ...}, ...]')
+            raise Exception('traces can only be None or a list of dicts: [{name: "name", option1: ...}, {name: "name2"}, ...]')
 
         if not traces:
             traces = [{'name': name}]
@@ -437,6 +461,8 @@ class JobChannel:
             'traces': traces,
             'type': type or JobChannel.NUMBER,
             'main': main_graph,
+            'kpi': kpi,
+            'maxOptimization': max_optimization,
             'xaxis': xaxis,
             'yaxis': yaxis,
             'layout': layout,
@@ -489,7 +515,18 @@ class JobBackend:
         self.in_request = False
         self.stop_requested = False
         self.event_listener.on('stop', self.external_stop)
+        self.event_listener.on('aborted', self.external_aborted)
+
         self.client = Client(self.host, self.api_token, self.event_listener, self.port)
+
+    def external_aborted(self, params):
+        self.client.close()
+        self.running = False
+
+        if self.monitoring_thread:
+            self.monitoring_thread.stop()
+
+        os.kill(os.getpid(), signal.SIGINT)
 
     def external_stop(self, params):
         print("Job stopped through AETROS Trainer.")
@@ -498,24 +535,28 @@ class JobBackend:
         os.kill(os.getpid(), signal.SIGINT)
 
     def progress(self, epoch, total):
+        max_epochs = total
+        if 'maxEpochs' in self.job['config']['settings'] and self.job['config']['settings']['maxEpochs'] > 0:
+            max_epochs = self.job['config']['settings']['maxEpochs']
+
         if epoch is not 0 and self.last_progress_call:
             # how long took it since the last call?
             time_per_epoch = time.time() - self.last_progress_call
-            eta = time_per_epoch * (total-epoch)
+            eta = time_per_epoch * (max_epochs-epoch)
             self.set_info('eta', eta)
             if time_per_epoch > 0:
                 self.set_info('epochsPerSecond', 1 / time_per_epoch)
 
-        if 'maxEpochs' in self.job['config']['settings'] and self.job['config']['settings']['maxEpochs'] > 0:
-            if epoch >= self.job['config']['settings']['maxEpochs']:
-                print("MaxEpochs of %d/%d reached" % (epoch, self.job['config']['settings']['maxEpochs']))
+        self.set_info('epoch', epoch)
+        self.set_info('epochs', max_epochs)
+        self.last_progress_call = time.time()
+
+        if max_epochs > 0:
+            if epoch >= max_epochs:
+                print("MaxEpochs of %d/%d reached" % (epoch, max_epochs))
                 self.done()
                 os.kill(os.getpid(), signal.SIGINT)
                 return
-
-        self.set_info('epoch', epoch)
-        self.set_info('epochs', total)
-        self.last_progress_call = time.time()
 
     def create_loss_channel(self, name, xaxis=None, yaxis=None, layout=None):
         """
@@ -525,17 +566,27 @@ class JobBackend:
 
         return JobLossChannel(self, name, xaxis, yaxis, layout)
 
-    def create_channel(self, name, traces=None, main_graph=False,
+    def create_channel(self, name, traces=None,
+                       main_graph=False, kpi=False, max_optimization=True,
                        type=JobChannel.NUMBER,
                        xaxis=None, yaxis=None, layout=None):
         """
-        :param name: string
-        :param traces: list
-        :param main_graph: bool
-        :param type: string JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
-        :return: JobChannel
+        :param name: str
+        :param traces: None|list : per default create a trace based on "name".
+        :param main_graph: bool : whether this channel is visible in the job list as column for better comparison.
+
+        :param kpi: bool : whether this channel is the KPI (key performance indicator).
+                           Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
+
+        :param max_optimization: bool : whether the optimization maximizes or minmizes the kpi . Use max_optimization=False to
+                                        tell the optimization algorithm that his channel minimizes a kpi, for instance the loss of a model.
+
+        :param type: str : One of JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
+        :param xaxis: dict
+        :param yaxis: dict
+        :param layout: dict
         """
-        return JobChannel(self, name, traces, main_graph, type, xaxis, yaxis, layout)
+        return JobChannel(self, name, traces, main_graph, kpi, max_optimization, type, xaxis, yaxis, layout)
 
     def start(self):
         if not self.job_id:
