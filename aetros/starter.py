@@ -22,22 +22,14 @@ from .keras_model_utils import ensure_dir
 import six
 
 
-def start(job_id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
+def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
     """
     Starts the training process with all logging of a job_id
+    :type id: string : job id or model name
     """
 
     job_backend = JobBackend(api_token=api_token)
-
-    if '/' in job_id:
-        print("Create job ...")
-        job_id = job_backend.create(job_id, server_id=server_id, hyperparameter=hyperparameter, dataset_id=dataset_id, insights=insights)
-        job_backend.load(job_id)
-
-        print("Job %s#%d (%s) created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
-              (job_backend.model_id, job_backend.job_index, job_backend.job_id, job_backend.host, job_id))
-    else:
-        job_backend.load(job_id)
+    job_backend.ensure_job(id, hyperparameter, dataset_id, server_id, insights, insights_sample_path)
 
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
@@ -136,16 +128,17 @@ def start_keras(job_backend, insights_sample_path=None):
     log = io.open('aetros-cli-data/models/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
     log.truncate()
 
-    general_logger = GeneralLogger(log, job_backend)
+    general_logger_stdout = GeneralLogger(log, job_backend)
+    general_logger_error = GeneralLogger(log, job_backend, error=True)
+    sys.stdout = general_logger_stdout
+    sys.stderr = general_logger_error
 
     from .KerasLogger import KerasLogger
-    trainer = Trainer(job_backend, general_logger)
-    keras_logger = KerasLogger(trainer, job_backend, general_logger)
+    trainer = Trainer(job_backend, general_logger_stdout)
+    keras_logger = KerasLogger(trainer, job_backend, general_logger_stdout)
     keras_logger.insights_sample_path = insights_sample_path
     trainer.callbacks.append(keras_logger)
 
-    sys.stdout = general_logger
-    sys.stderr = general_logger
 
     def ctrlc(sig, frame):
         print("signal %s received\n" % id)
@@ -159,7 +152,7 @@ def start_keras(job_backend, insights_sample_path=None):
         job_backend.progress(0, job_backend.job['config']['settings']['epochs'])
 
         print("Start job")
-        keras_model_utils.job_start(job_model, trainer, keras_logger, general_logger)
+        keras_model_utils.job_start(job_model, trainer, keras_logger, general_logger_stdout)
 
         job_backend.sync_weights()
         job_backend.done()

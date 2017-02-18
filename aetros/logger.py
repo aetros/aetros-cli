@@ -42,6 +42,10 @@ class GeneralLogger():
         #     message = self.get_line(message)
 
         self.terminal.write(message)
+
+        # check for \b ASCII Backspace (BS) in message for a period of time, so a progress bar for example does not shred
+        # our connection to job_backend or blow up local loggin file.
+
         if self.logFD:
             self.logFD.write(message)
 

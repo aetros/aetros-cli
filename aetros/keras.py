@@ -5,11 +5,8 @@ from keras.engine import InputLayer, Merge
 from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
 from keras.models import Sequential
 
-from aetros.logger import GeneralLogger
-
-from aetros.backend import JobBackend
+from aetros.backend import start_job
 from aetros.KerasLogger import KerasLogger
-from aetros.MonitorThread import MonitoringThread
 from aetros.Trainer import Trainer
 
 def optimizer_factory(settings):
@@ -35,11 +32,11 @@ def optimizer_factory(settings):
 
 
 class KerasIntegration():
-    def __init__(self, id, model, api_key, insights=False, confusion_matrix=False,
-                 insight_sample=None):
+    def __init__(self, model_name, model, api_key=None, insights=False, confusion_matrix=False,
+                 insight_sample=None, job_backend=None):
         """
 
-        :type id: basestring The actual model name available in AETROS Trainer. Example peter/mnist-cnn
+        :type model_name: basestring The actual model name available in AETROS Trainer. Example peter/mnist-cnn
         :type insights: bool
         :type confusion_matrix: bool
         :type insight_sample: basestring|None A path to a sample which is being used for the insights. Default is first sample of data_validation.
@@ -51,11 +48,15 @@ class KerasIntegration():
             raise Exception('Sequential model is not built.')
 
         self.insight_sample = insight_sample
-        self.id = id
+        self.model_name = model_name
         self.insights = insights
         self.model_type = 'custom'
+        self.job_backend = job_backend
+        self.trainer = None
+        self.callback = None
 
-        self.job_backend = JobBackend(api_token=api_key)
+        if not self.job_backend:
+            self.job_backend = start_job(model_name, api_key=api_key)
 
         copy = {'fit': self.model.fit, 'fit_generator': self.model.fit_generator}
 
@@ -102,27 +103,15 @@ class KerasIntegration():
             'optimizer': type(self.model.optimizer).__name__ if hasattr(self.model, 'optimizer') else ''
         }
 
-        self.job_backend.ensure_model(self.id, self.model.to_json(), settings=settings,
-                                        type=self.model_type, graph=graph)
+        self.job_backend.ensure_model(self.job_backend.model_id, self.model.to_json(), settings=settings,
+                                      type=self.model_type, graph=graph)
 
-        job_id = self.job_backend.create(self.id, insights=self.insights)
-        self.job_backend.start()
-
-        print("AETROS job '%s' created and started. Open http://%s/trainer/app#/job=%s to monitor the training." %
-              (job_id, self.job_backend.host, job_id))
-
-        job = self.job_backend.load_light_job()
-        general_logger = GeneralLogger(job, job_backend=self.job_backend)
-        self.trainer = Trainer(self.job_backend, general_logger)
-
-        self.monitoringThread = MonitoringThread(self.job_backend, self.trainer)
-        self.monitoringThread.daemon = True
-        self.monitoringThread.start()
+        self.trainer = Trainer(self.job_backend, self.job_backend.general_logger_stdout)
 
         self.trainer.model = self.model
         self.trainer.data_train = {'x': x}
 
-        self.callback = KerasLogger(self.trainer, self.job_backend, general_logger)
+        self.callback = KerasLogger(self.trainer, self.job_backend, self.job_backend.general_logger_stdout)
         self.callback.log_epoch = False
         self.callback.model = self.model
         self.callback.confusion_matrix = self.confusion_matrix
@@ -131,8 +120,8 @@ class KerasIntegration():
 
     def publish(self):
         graph = self.model_to_graph(self.model)
-        self.job_backend.ensure_model(self.id, self.model.to_json(), type=self.model_type,
-                                        graph=graph)
+        self.job_backend.ensure_model(self.model_name, self.model.to_json(), type=self.model_type,
+                                      graph=graph)
 
     def start(self, nb_epoch=1, nb_sample=1, title="TRAINING"):
         """
@@ -180,7 +169,6 @@ class KerasIntegration():
         self.callback.on_epoch_end(epoch, logs)
 
     def end(self):
-        self.monitoringThread.stop()
         self.job_backend.sync_weights()
         self.job_backend.set_status('DONE')
 

@@ -16,7 +16,9 @@ from io import BytesIO
 import six
 import base64
 import PIL.Image
+import sys
 
+from aetros.logger import GeneralLogger
 from aetros.utils import git
 
 try:
@@ -91,7 +93,7 @@ class Client:
         """
 
         :type api_host: string
-        :type api_token: string
+        :type api_key: string
         :type event_listener: EventListener
         :type job_id: integer
         """
@@ -345,25 +347,26 @@ class Client:
         return parsed
 
 
-def start_job(name, api_token=None):
+def start_job(name, api_key=None):
     """
     Tries to load the job defined in the AETROS_JOB_ID environment variable.
     If not defined, it creates a new job.
     Starts the job as well.
 
-    :param name: string
-    :param api_token: string
+    :param name: string: model name
+    :param api_key: string
     :return: JobBackend
     """
 
-    job_id = os.getenv('AETROS_JOB_ID')
-    if job_id:
-        job = JobBackend(api_token=api_token)
-        job.load(job_id)
+    id = os.getenv('AETROS_JOB_ID')
+    if id:
+        job = JobBackend(api_token=api_key)
+        job.load(id)
     else:
-        job = create_job(name, api_token)
+        job = create_job(name, api_key)
 
     job.start()
+    job.setup_logging()
 
     return job
 
@@ -372,8 +375,8 @@ def create_job(name, api_token=None):
     """
     Creates a new job.
 
-    :param name: string
-    :param api_token: string
+    :param name: string : model name
+    :param api_key: string
     :return: JobBackend
     """
     job = JobBackend(api_token=api_token)
@@ -494,7 +497,7 @@ class JobChannel:
 class JobBackend:
     """
     :type event_listener: EventListener
-    :type api_token: string
+    :type api_key: string
     :type job_id: int
     :type client: Client
     :type job: dict
@@ -504,11 +507,16 @@ class JobBackend:
         self.event_listener = EventListener()
         self.api_token = api_token if api_token else os.getenv('API_KEY')
 
+        if job_id and '/' in job_id:
+            raise Exception('job_id needs to be a job id, not a model name.')
+
         self.job_id = job_id
         self.client = None
         self.job = None
         self.running = False
         self.monitoring_thread = None
+        self.general_logger_stdout = GeneralLogger(job_backend=self)
+        self.general_logger_error = GeneralLogger(job_backend=self, error=True)
 
         self.host = os.getenv('API_HOST')
         self.port = int(os.getenv('API_PORT') or 8051)
@@ -524,6 +532,10 @@ class JobBackend:
 
         self.client = Client(self.host, self.api_token, self.event_listener, self.port)
 
+    def keras_model_integration(self, model, insights=False, confusion_matrix=False):
+        import aetros.keras
+        aetros.keras.KerasIntegration(self.model_id, model, job_backend=self, insights=insights, confusion_matrix=confusion_matrix)
+
     def external_aborted(self, params):
         self.client.close()
         self.running = False
@@ -532,6 +544,10 @@ class JobBackend:
             self.monitoring_thread.stop()
 
         os.kill(os.getpid(), signal.SIGINT)
+
+    def setup_logging(self):
+        sys.stdout = self.general_logger_stdout
+        sys.stderr = self.general_logger_error
 
     def external_stop(self, params):
         print("Job stopped through AETROS Trainer.")
@@ -799,6 +815,30 @@ class JobBackend:
         self.job_id = response.json()
 
         return self.job_id
+
+    def ensure_job(self, id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
+        """
+        Makes sure that either
+        1. id is a model name, a job is created and loaded, or
+        2. id is a job id and job is loaded.
+
+        :param id: integer|str: model name or job id.
+        """
+
+        if '/' in id:
+            # it's a model name
+            id = self.create(id, server_id=server_id, hyperparameter=hyperparameter,
+                                    dataset_id=dataset_id, insights=insights)
+            self.load(id)
+
+            print(
+                "Job %s#%d (%s) created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+                (self.model_id, self.job_index, self.job_id, self.host, id))
+        else:
+            self.load(id)
+            print(
+                "Job %s#%d (%s) started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+                (self.model_id, self.job_index, self.job_id, self.host, id))
 
     def ensure_model(self, name, model_json, settings=None, type='custom', layers=None, graph=None):
         response = self.put('model/ensure', {
