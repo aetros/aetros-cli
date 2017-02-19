@@ -63,12 +63,12 @@ class KerasLogger(Callback):
     def on_train_begin(self, logs={}):
         self.start_time = time.time()
         self.last_batch_time = time.time()
-        self.trainer.set_status('TRAINING')
-        self.trainer.set_job_info('total_params', get_total_params(self.model))
+        self.job_backend.set_status('TRAINING')
+        self.job_backend.set_system_info('total_params', get_total_params(self.model))
 
         self.current['epoch'] = 0
         self.current['started'] = self.start_time
-        self.trainer.set_job_info('current', self.current)
+        self.job_backend.set_system_info('current', self.current)
         nb_sample = self.params['nb_sample']  # training samples total
         nb_epoch = self.params['nb_epoch']  # training epoches total
 
@@ -101,7 +101,7 @@ class KerasLogger(Callback):
                 'Validation': len(self.model.validation_data[0]) if self.model.validation_data else self.trainer.nb_val_samples,
             }
             dataset_infos['input1'] = dataset_info
-            self.trainer.set_job_info('datasets', dataset_infos)
+            self.job_backend.set_system_info('datasets', dataset_infos)
 
         batch_size = logs['size']
         nb_batches = math.ceil(self.current['nb_sample'] / batch_size)  # normal nb batches
@@ -143,10 +143,10 @@ class KerasLogger(Callback):
             elapsed = time.time() - self.start_time
             self.current['elapsed'] = elapsed
 
-            self.trainer.set_job_info('itemsPerSecond', self.batches_per_second * current_batch_size)
-            self.trainer.set_job_info('currentBatch', current_batch)
-            self.trainer.set_job_info('currentBatchSize', batch_size)
-            self.trainer.set_job_info('nb_batches', nb_batches)
+            self.job_backend.set_system_info('itemsPerSecond', self.batches_per_second * current_batch_size)
+            self.job_backend.set_system_info('currentBatch', current_batch)
+            self.job_backend.set_system_info('currentBatchSize', batch_size)
+            self.job_backend.set_system_info('nb_batches', nb_batches)
 
     def write(self, line):
         self.general_logger.write(line)

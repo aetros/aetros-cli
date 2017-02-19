@@ -290,7 +290,7 @@ def read_images_in_memory(job_model, dataset, node, trainer):
             sys.exit(1)
 
         trainer.output_size = classes_count
-        trainer.set_job_info('classes', classes)
+        trainer.set_job_system_info('classes', classes)
         trainer.classes = classes
 
         result['X_train'] = train
@@ -365,7 +365,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
         else:
             classes.append(folderName)
 
-    trainer.set_job_info('classes', classes)
+    trainer.set_job_system_info('classes', classes)
     trainer.classes = classes
 
     trainer.output_size = train_generator.nb_class

@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import sys
+import aetros.const
 
 command_summaries = [
     ['start', 'Starts a job of a model in current working directory'],
@@ -14,7 +15,8 @@ command_summaries = [
 def parseopts(args):
     if len(args) == 0:
         description = [''] + ['%-27s %s' % (i, j) for i, j in command_summaries]
-        print("usage: aetros [command]\n")
+        print("usage: aetros [command]")
+        print("v%s\n" %(const.__version__))
         print(('Possible commands:\n' + (
             '\n'.join(description))))
 

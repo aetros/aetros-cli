@@ -566,12 +566,12 @@ class JobBackend:
             # how long took it since the last call?
             time_per_epoch = time.time() - self.last_progress_call
             eta = time_per_epoch * (max_epochs-epoch)
-            self.set_info('eta', eta)
+            self.set_system_info('eta', eta)
             if time_per_epoch > 0:
-                self.set_info('epochsPerSecond', 1 / time_per_epoch)
+                self.set_system_info('epochsPerSecond', 1 / time_per_epoch)
 
-        self.set_info('epoch', epoch)
-        self.set_info('epochs', max_epochs)
+        self.set_system_info('epoch', epoch)
+        self.set_system_info('epochs', max_epochs)
         self.last_progress_call = time.time()
 
         if epoch_limit and max_epochs > 0:
@@ -629,11 +629,11 @@ class JobBackend:
     def detect_git_version(self):
         commit_sha = git.get_current_commit_hash()
         if commit_sha:
-            self.set_info('git_version', commit_sha)
+            self.set_system_info('git_version', commit_sha)
 
         current_branch = git.get_current_branch()
         if current_branch:
-            self.set_info('git_branch', current_branch)
+            self.set_system_info('git_branch', current_branch)
 
 
     def start_monitoring(self):
@@ -981,10 +981,13 @@ class JobBackend:
             'data': item
         })
 
-    def set_info(self, name, value):
-        self.job_set_info_key(name, value)
+    def set_info(self, key, value):
+        self.client.send({
+            'type': 'job-custom-info',
+            'data': {'key': key, 'value': value}
+        })
 
-    def job_set_info_key(self, key, value):
+    def set_system_info(self, key, value):
         self.client.send({
             'type': 'job-info',
             'data': {'key': key, 'value': value}
@@ -1022,7 +1025,7 @@ class JobBackend:
         import psutil
 
         mem = psutil.virtual_memory()
-        self.job_set_info_key('memory_total', mem.total)
+        self.set_system_info('memory_total', mem.total)
 
         on_gpu = False
 
@@ -1030,23 +1033,23 @@ class JobBackend:
         if 'theano.sandbox' in sys.modules:
             # at this point, theano is already initialised, so we can use it to monitor the GPU.
             from theano.sandbox import cuda
-            self.job_set_info_key('cuda_available', cuda.cuda_available)
+            self.set_system_info('cuda_available', cuda.cuda_available)
             if cuda.cuda_available:
                 on_gpu = cuda.use.device_number is not None
-                self.job_set_info_key('cuda_device_number', cuda.active_device_number())
-                self.job_set_info_key('cuda_device_name', cuda.active_device_name())
+                self.set_system_info('cuda_device_number', cuda.active_device_number())
+                self.set_system_info('cuda_device_name', cuda.active_device_name())
                 if cuda.cuda_ndarray.cuda_ndarray.mem_info:
                     gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
-                    self.job_set_info_key('cuda_device_max_memory', gpu[1])
+                    self.set_system_info('cuda_device_max_memory', gpu[1])
                     free = gpu[0] / 1024 / 1024 / 1024
                     total = gpu[1] / 1024 / 1024 / 1024
                     used = total - free
 
                     print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (used, total, cuda.active_device_name(), cuda.active_device_number()))
 
-        self.job_set_info_key('on_gpu', on_gpu)
+        self.set_system_info('on_gpu', on_gpu)
 
         import cpuinfo
         cpu = cpuinfo.get_cpu_info()
-        self.job_set_info_key('cpu_name', cpu['brand'])
-        self.job_set_info_key('cpu', [cpu['hz_actual_raw'][0], cpu['count']])
+        self.set_system_info('cpu_name', cpu['brand'])
+        self.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpu['count']])

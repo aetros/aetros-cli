@@ -86,5 +86,8 @@ class Trainer():
 
         self.lock.release()
 
+    def set_job_system_info(self, key, value):
+        self.job_backend.set_system_info(key, value)
+
     def set_job_info(self, key, value):
-        self.job_backend.job_set_info_key(key, value)
+        self.job_backend.set_info(key, value)

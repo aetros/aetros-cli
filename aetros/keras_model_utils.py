@@ -65,7 +65,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
 
         dataset_infos[idx] = dataset_info
 
-    trainer.set_job_info('datasets', dataset_infos)
+    trainer.set_job_system_info('datasets', dataset_infos)
     keras_logger.write("Possible data keys '%s'\n" % "','".join(list(datasets.keys())))
 
     data_train = model_provider.get_training_data(trainer, datasets)
