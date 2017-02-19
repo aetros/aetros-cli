@@ -331,11 +331,15 @@ class ServerCommand:
     def check_finished_jobs(self):
         for process in self.job_processes:
             job = getattr(process, 'job')
-            if process.poll() > 0:
-                reason = 'Failed job %s. Exit status: %s' % (job['id'], str(process.poll()))
+            exit_code = process.poll()
+            if exit_code > 0:
+                reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
+                print(reason)
                 self.server.send_message({'type': 'job-failed', 'job': job, 'reason': reason})
+            elif exit_code == 0:
+                print('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
 
-            if process.poll() is not None and job['id'] in self.queuedMap:
+            if exit_code is not None and job['id'] in self.queuedMap:
                 del self.queuedMap[job['id']]
 
         # remove dead job processes
@@ -362,7 +366,7 @@ class ServerCommand:
 
             my_env['PYTHONPATH'] += ':' + os.getcwd()
             args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
-            process = subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL, close_fds=True, env=my_env)
+            process = subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL, stderr=sys.stderr, close_fds=True, env=my_env)
             setattr(process, 'job', job)
             self.job_processes.append(process)
 
