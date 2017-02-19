@@ -882,10 +882,19 @@ class JobBackend:
         if 'hyperParameters' not in self.job['config'] or not self.job['config']['hyperParameters']:
             raise Exception('This job does not have any hyper-parameters')
 
-        if name not in self.job['config']['hyperParameters']:
-            raise Exception('This job does not have the hype parameter %s' % (name,))
+        params = self.job['config']['hyperParameters']
+        if name in params:
+            return params[name]
 
-        return self.job['config']['hyperParameters'][name]
+        if '.' in name:
+            path = name.split('.')
+            current = params
+            for item in path:
+                current = current[item]
+
+            return current
+
+        raise Exception('This job does not have the hype parameter %s' % (name,))
 
     def load(self, id=None):
         """
