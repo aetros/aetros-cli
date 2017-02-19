@@ -3,12 +3,15 @@ import sys
 import time
 import datetime
 import six
-
+from threading import Timer
 
 class GeneralLogger():
     def __init__(self, logFD=None, job_backend=None, error=False):
         self.error = error
         self.job_backend = job_backend
+        self.buffer = ''
+        self.last_timer = None
+
 
         self.terminal = sys.stdout if error is False else sys.stderr
         self.logFD = logFD
@@ -31,6 +34,18 @@ class GeneralLogger():
 
         self.terminal.flush()
 
+    def send_to_buffer(self):
+        self.last_timer = None
+
+        if self.buffer:
+            if self.logFD:
+                self.logFD.write(self.buffer)
+
+            if self.job_backend:
+                self.job_backend.write_log(self.buffer)
+
+        self.buffer = ''
+
     def write(self, message):
 
         # if message == '\n':
@@ -43,11 +58,12 @@ class GeneralLogger():
 
         self.terminal.write(message)
 
-        # check for \b ASCII Backspace (BS) in message for a period of time, so a progress bar for example does not shred
-        # our connection to job_backend or blow up local loggin file.
+        for char in message:
+            if '\b' == char:
+                self.buffer = self.buffer[:-1]
+            else:
+                self.buffer += char
 
-        if self.logFD:
-            self.logFD.write(message)
-
-        if self.job_backend:
-            self.job_backend.write_log(message)
+        if not self.last_timer:
+            self.last_timer = Timer(1.0, self.send_to_buffer)
+            self.last_timer.start()
