@@ -5,6 +5,8 @@ from __future__ import absolute_import
 import os
 import time
 
+from keras.optimizers import Adadelta, Adam, Adamax, Adagrad, RMSprop, SGD
+
 from aetros.backend import JobImage
 
 try:
@@ -56,6 +58,9 @@ class KerasLogger(Callback):
 
         self.accuracy_channel = None
         self.loss_channel = None
+        self.learning_rate_channel = None
+
+        self.learning_rate_start = 0
 
         self.insights_x = None
         self.best_total_accuracy = 0
@@ -87,10 +92,10 @@ class KerasLogger(Callback):
 
         self.accuracy_channel = self.job_backend.create_channel('accuracy', main=True, kpi=True, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
         self.loss_channel = self.job_backend.create_loss_channel('loss', xaxis=xaxis)
+        self.learning_rate_channel = self.job_backend.create_channel('learning rate', traces=['start', 'end'], xaxis=xaxis)
         self.job_backend.progress(0, self.params['nb_epoch'])
 
     def on_batch_begin(self, batch, logs={}):
-
         if not self.data_gathered:
             # we need to do it in on_batch_begin due to the fact that
             # self.model.validation_data is not availabe in on_train_begin
@@ -151,6 +156,9 @@ class KerasLogger(Callback):
     def write(self, line):
         self.general_logger.write(line)
 
+    def on_epoch_begin(self, epoch, logs={}):
+        self.learning_rate_start = self.get_learning_rate()
+
     def on_epoch_end(self, epoch, logs={}):
         log = logs.copy()
 
@@ -166,7 +174,12 @@ class KerasLogger(Callback):
         if total_accuracy > self.best_total_accuracy:
             self.best_total_accuracy = total_accuracy
             self.best_epoch = log['epoch']
-            self.model.save_weights(self.filepath_best, overwrite=True)
+            try:
+                self.model.save_weights(self.filepath_best, overwrite=True)
+            except:
+                # sometimes hangs with: IOError: Unable to create file (Unable to open file: name = ...
+                # without any obvious reason.
+                pass
 
         self.model.save_weights(self.filepath_latest, overwrite=True)
 
@@ -174,6 +187,7 @@ class KerasLogger(Callback):
         self.accuracy_channel.send(log['epoch'], total_accuracy*100)
 
         self.job_backend.progress(log['epoch'], self.params['nb_epoch'])
+        self.send_optimizer_info(log['epoch'])
 
         if self.log_epoch:
             line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (
@@ -191,6 +205,22 @@ class KerasLogger(Callback):
                 confusion_matrix = self.build_confusion_matrix() if self.confusion_matrix else None
 
                 self.job_backend.job_add_insight(log['epoch'], images, confusion_matrix)
+
+    def send_optimizer_info(self, epoch):
+        self.learning_rate_channel.send(epoch, [self.learning_rate_start, self.get_learning_rate()])
+
+    def get_learning_rate(self):
+
+        if hasattr(self.model, 'optimizer'):
+            config = self.model.optimizer.get_config()
+
+            if isinstance(self.model.optimizer, Adadelta) or isinstance(self.model.optimizer, Adam) \
+                    or isinstance(self.model.optimizer, Adamax) or isinstance(self.model.optimizer, Adagrad)\
+                    or isinstance(self.model.optimizer, RMSprop) or isinstance(self.model.optimizer, SGD):
+                return config['lr'] * (1. / (1. + config['decay'] * float(K.get_value(self.model.optimizer.iterations))))
+
+            elif 'lr' in config:
+                return config['lr']
 
     def is_image_shape(self, x):
         if len(x.shape) != 3 and len(x.shape) != 2:

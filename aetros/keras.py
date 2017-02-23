@@ -11,24 +11,24 @@ from aetros.Trainer import Trainer
 
 def optimizer_factory(settings):
     import keras.optimizers
-    
+
     if 'sgd' == settings['$value']:
-        return keras.optimizers.SGD(lr=settings['learning_rate'] or 0.01, decay=settings['decay'] or 0.0, momentum=settings['momentum'] or 0, nesterov=settings['nesterov'])
+        return keras.optimizers.SGD(lr=settings['learning_rate'] or 0.01, momentum=settings['momentum'] or 0, nesterov=settings['nesterov'], decay=settings['decay'] or 0.0)
 
     if 'rmsprop' == settings['$value']:
-        return keras.optimizers.RMSprop(lr=settings['learning_rate'] or 0.001, rho=settings['rho'] or 0.9, epsilon=settings['epsilon'] or 1e-08)
+        return keras.optimizers.RMSprop(lr=settings['learning_rate'] or 0.001, rho=settings['rho'] or 0.9, epsilon=settings['epsilon'] or 1e-08, decay=settings['decay'] or 0.0)
 
     if 'adagrad' == settings['$value']:
-        return keras.optimizers.Adagrad(lr=settings['learning_rate'] or 0.01, epsilon=settings['epsilon'] or 1e-08)
+        return keras.optimizers.Adagrad(lr=settings['learning_rate'] or 0.01, epsilon=settings['epsilon'] or 1e-08, decay=settings['decay'] or 0.0)
 
     if 'adadelta' == settings['$value']:
-        return keras.optimizers.Adadelta(lr=settings['learning_rate'] or 1.0, rho=settings['rho'] or 0.95, epsilon=settings['epsilon'] or 1e-08)
+        return keras.optimizers.Adadelta(lr=settings['learning_rate'] or 1.0, rho=settings['rho'] or 0.95, epsilon=settings['epsilon'] or 1e-08, decay=settings['decay'] or 0.0)
 
     if 'adam' == settings['$value']:
-        return keras.optimizers.Adam(lr=settings['learning_rate'] or 0.001, beta_1=settings['beta_1'] or 0.9, beta_2=settings['beta_2'] or 0.999, epsilon=settings['epsilon'] or 1e-08)
+        return keras.optimizers.Adam(lr=settings['learning_rate'] or 0.001, beta_1=settings['beta_1'] or 0.9, beta_2=settings['beta_2'] or 0.999, epsilon=settings['epsilon'] or 1e-08, decay=settings['decay'] or 0.0)
 
     if 'adamax' == settings['$value']:
-        return keras.optimizers.Adamax(lr=settings['learning_rate'] or 0.002, beta_1=settings['beta_1'] or 0.9, beta_2=settings['beta_2'] or 0.999, epsilon=settings['epsilon'] or 1e-08)
+        return keras.optimizers.Adamax(lr=settings['learning_rate'] or 0.002, beta_1=settings['beta_1'] or 0.9, beta_2=settings['beta_2'] or 0.999, epsilon=settings['epsilon'] or 1e-08, decay=settings['decay'] or 0.0)
 
 
 class KerasIntegration():

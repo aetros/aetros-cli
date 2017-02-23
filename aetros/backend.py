@@ -32,7 +32,7 @@ from aetros.MonitorThread import MonitoringThread
 def on_shutdown():
     for job in on_shutdown.started_jobs:
         if job.running:
-            job.done()
+            job.on_shutdown()
 
 
 on_shutdown.started_jobs = []
@@ -178,6 +178,8 @@ class Client:
 
         if hasattr(error, 'errno') and hasattr(error, 'message'):
             print("Connection error: %d: %s" % (error.errno, error.message,))
+        elif error:
+            print("Connection error: " + str(error))
         else:
             print("Connection error")
 
@@ -576,7 +578,7 @@ class JobBackend:
 
         if epoch_limit and max_epochs > 0:
             if epoch >= max_epochs:
-                print("MaxEpochs of %d/%d reached" % (epoch, max_epochs))
+                print("\nMaxEpochs of %d/%d reached" % (epoch, max_epochs))
                 self.done()
                 os.kill(os.getpid(), signal.SIGINT)
                 return
@@ -623,23 +625,32 @@ class JobBackend:
         self.client.start(self.job_id)
         self.detect_git_version()
 
-        print("Job %s#%d (%s) started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+        print("Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
               (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
 
     def detect_git_version(self):
-        commit_sha = git.get_current_commit_hash()
-        if commit_sha:
-            self.set_system_info('git_version', commit_sha)
+        try:
+            commit_sha = git.get_current_commit_hash()
+            if commit_sha:
+                self.set_system_info('git_version', commit_sha)
 
-        current_branch = git.get_current_branch()
-        if current_branch:
-            self.set_system_info('git_branch', current_branch)
+            current_branch = git.get_current_branch()
+            if current_branch:
+                self.set_system_info('git_branch', current_branch)
+        except:
+            pass
 
 
     def start_monitoring(self):
         self.monitoring_thread = MonitoringThread(self)
         self.monitoring_thread.daemon = True
         self.monitoring_thread.start()
+
+    def on_shutdown(self):
+        if hasattr(sys, 'last_value'):
+            self.crash(sys.last_value)
+        else:
+            self.done()
 
     def done(self):
         if not self.running:
@@ -665,7 +676,7 @@ class JobBackend:
             self.monitoring_thread.stop()
 
     def crash(self, e=None):
-        self.post('job/crashed', json={'id': self.job_id, 'error': e.message if e else None})
+        self.post('job/crashed', json={'id': self.job_id, 'error': str(e) if e else None})
 
         self.client.close()
         self.running = False
@@ -832,12 +843,13 @@ class JobBackend:
             self.load(id)
 
             print(
-                "Job %s#%d (%s) created and started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+                "Job %s#%d (%s) created and started. Open http://%s/trainer/app#/job=%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))
         else:
+            self.restart(id)
             self.load(id)
             print(
-                "Job %s#%d (%s) started. Open http://%s/trainer/app#/training=%s to monitor the training." %
+                "Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))
 
     def ensure_model(self, name, model_json, settings=None, type='custom', layers=None, graph=None):
@@ -895,6 +907,23 @@ class JobBackend:
             return current
 
         raise Exception('This job does not have the hype parameter %s' % (name,))
+
+    def restart(self, id=None):
+        """
+        Restarts job.
+        :param id: int
+        """
+        if id:
+            self.job_id = id
+
+        if not self.job_id:
+            raise Exception('No job id given.')
+
+        response = self.post('job/restart', {'id': self.job_id})
+
+        if response.status_code != 200:
+            raise Exception("Could not restart job: %s" % (response.content,))
+
 
     def load(self, id=None):
         """

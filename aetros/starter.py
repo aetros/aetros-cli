@@ -34,10 +34,14 @@ def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
-    if job_backend.is_keras_model():
-        start_keras(job_backend, insights_sample_path)
-    else:
-        start_custom(job_backend)
+    try:
+        if job_backend.is_keras_model():
+            start_keras(job_backend, insights_sample_path)
+        else:
+            start_custom(job_backend)
+    except Exception as e:
+        job_backend.crash(e)
+        raise e
 
 
 def start_custom(job_backend):
@@ -73,7 +77,7 @@ def start_custom(job_backend):
     try:
         if not os.path.exists(job_model.model_id):
             args = ['git', 'clone', git_url, job_model.model_id]
-            code = subprocess.call(args, stdout=sys.stdout, stderr=sys.stderr)
+            code = subprocess_call(args)
             if code != 0:
                 raise Exception('Could not clone repository %s to %s' %(git_url, job_model.model_id))
             os.chdir(job_model.model_id)
@@ -86,31 +90,30 @@ def start_custom(job_backend):
 
             if current_branch == git_branch:
                 print("Reset all local changes git repo")
-                subprocess.call(['git', 'reset', '--hard'])
-                subprocess.call(['git', 'clean', '-fd'])
-
-                print("Update local git repo: git pull origin " + git_branch)
-                code = subprocess.call(['git', 'pull', 'origin', git_branch])
-
-                if code != 0:
-                    raise Exception('Could not "git pull origin %s" repository %s to %s' %(git_branch, git_url, job_model.model_id))
+                subprocess_call(['git', 'fetch', 'origin', git_branch])
+                subprocess_call(['git', 'reset', '--hard', 'FETCH_HEAD'])
+                subprocess_call(['git', 'clean', '-fd'])
 
             if current_branch != git_branch:
                 branch_checked_out = git_branch in branches
                 if not branch_checked_out:
-                    subprocess.call(['git', 'fetch', 'origin', git_branch + ':' + git_branch])
+                    subprocess_call(['git', 'fetch', 'origin', git_branch + ':' + git_branch])
 
-                subprocess.call(['git', 'checkout', git_branch])
+                    subprocess_call(['git', 'checkout', git_branch])
 
                 print("Update local git repo: git pull origin " + git_branch)
-                subprocess.call(['git', 'pull', 'origin', git_branch])
+                subprocess_call(['git', 'pull', 'origin', git_branch])
 
     except subprocess.CalledProcessError as e:
         raise Exception('Could not run "%s" for repository %s in %s' %(e.cmd, git_url, job_model.model_id))
 
-    print("\nExecuting %s" %(git_python_script,))
+    print("$ %s" %(git_python_script,))
     args = [sys.executable, git_python_script]
     subprocess.Popen(args, close_fds=True, env=my_env).wait()
+
+def subprocess_call(args):
+    print("$ %s" % (' '.join(args), ))
+    return subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
 
 
 def start_keras(job_backend, insights_sample_path=None):
@@ -139,9 +142,8 @@ def start_keras(job_backend, insights_sample_path=None):
     keras_logger.insights_sample_path = insights_sample_path
     trainer.callbacks.append(keras_logger)
 
-
     def ctrlc(sig, frame):
-        print("signal %s received\n" % id)
+        print("signal %s received\n" % str(sig))
         raise KeyboardInterrupt("CTRL-C!")
 
     signal.signal(signal.SIGINT, ctrlc)
