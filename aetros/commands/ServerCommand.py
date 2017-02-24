@@ -38,7 +38,7 @@ class Server:
         if not self.api_host:
             self.api_host = os.getenv('API_HOST')
             if not self.api_host or self.api_host == 'false':
-                self.api_host = 'aetros.com'
+                self.api_host = 'trainer.aetros.com'
 
         self.lock = Lock()
 
@@ -272,7 +272,7 @@ class ServerCommand:
         parser.add_argument('--secure-key', nargs='?',
                             help="Secure key of the server.")
         parser.add_argument('--max-jobs', help="How many jobs should be run at the same time.")
-        parser.add_argument('--server', help="Default aetros.com.")
+        parser.add_argument('--server', help="Default trainer.aetros.com.")
 
         parsed_args = parser.parse_args(args)
 

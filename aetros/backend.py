@@ -18,6 +18,7 @@ import base64
 import PIL.Image
 import sys
 
+from aetros.const import JOB_STATUS
 from aetros.logger import GeneralLogger
 from aetros.utils import git
 
@@ -523,7 +524,7 @@ class JobBackend:
         self.host = os.getenv('API_HOST')
         self.port = int(os.getenv('API_PORT') or 8051)
         if not self.host or self.host == 'false':
-            self.host = 'aetros.com'
+            self.host = 'trainer.aetros.com'
 
         self.last_progress_call = None
         self.job_ids = []
@@ -846,8 +847,11 @@ class JobBackend:
                 "Job %s#%d (%s) created and started. Open http://%s/trainer/app#/job=%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))
         else:
-            self.restart(id)
             self.load(id)
+            if self.job['progressStatus'] > JOB_STATUS.PROGRESS_STATUS_QUEUED:
+                self.restart(id)
+                self.load(id)
+
             print(
                 "Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))

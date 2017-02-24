@@ -181,7 +181,12 @@ class KerasLogger(Callback):
                 # without any obvious reason.
                 pass
 
-        self.model.save_weights(self.filepath_latest, overwrite=True)
+        try:
+            self.model.save_weights(self.filepath_latest, overwrite=True)
+        except:
+            # sometimes hangs with: IOError: Unable to create file (Unable to open file: name = ...
+            # without any obvious reason.
+            pass
 
         self.loss_channel.send(log['epoch'], log.get('loss', 0), log.get('val_loss', 0))
         self.accuracy_channel.send(log['epoch'], total_accuracy*100)
