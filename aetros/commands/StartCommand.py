@@ -14,7 +14,7 @@ class StartCommand:
         parser.add_argument('--insights', action='store_true', help="activates insights. Only for Keras models.")
         parser.add_argument('--insights-sample', help="Path or url to the sample being used to generate the insights. Default is first model sample. Only for Keras models.")
         parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for Keras models with placeholders as input/output.")
-        parser.add_argument('--secure-key', help="Secure key. Alternatively use API_KEY environment varibale.")
+        parser.add_argument('--api-key', help="Secure key. Alternatively use API_KEY environment varibale.")
         parser.add_argument('--gpu', action='store_true', help="Activates GPU if available. Only for Theano models.")
         parser.add_argument('--device', help="Which device index should be used. Default 0 (which means with --gpu => 'gpu0'). Only for Theano models.")
         parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano. Only for Keras models.")
@@ -57,5 +57,5 @@ class StartCommand:
             dataset_id=parsed_args.dataset,
             insights=parsed_args.insights,
             insights_sample_path=parsed_args.insights_sample,
-            api_token=parsed_args.secure_key,
+            api_key=parsed_args.api_key,
         )

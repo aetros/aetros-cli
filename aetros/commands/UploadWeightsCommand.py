@@ -17,13 +17,13 @@ class UploadWeightsCommand:
         parser = argparse.ArgumentParser(
             formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' upload-weights')
         parser.add_argument('id', nargs='?', help='model name or job id')
-        parser.add_argument('--secure-key', help="Secure key. Alternatively use API_KEY environment varibale.")
+        parser.add_argument('--api-key', help="Secure key. Alternatively use API_KEY environment varibale.")
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
         parser.add_argument('--accuracy', help="If you specified model name, you should also specify the accuracy this weights got.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
 
         parsed_args = parser.parse_args(args)
-        job_backend = JobBackend(api_token=parsed_args.secure_key)
+        job_backend = JobBackend(api_key=parsed_args.api_key)
 
         if '/' in parsed_args.id and '@' not in parsed_args.id:
             job_backend.create(parsed_args.id)

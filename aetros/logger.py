@@ -5,15 +5,15 @@ import datetime
 import six
 from threading import Timer
 
-class GeneralLogger():
+class GeneralLogger(object):
     def __init__(self, logFD=None, job_backend=None, error=False):
         self.error = error
         self.job_backend = job_backend
         self.buffer = ''
         self.last_timer = None
+        self.last_messages = ''
 
-
-        self.terminal = sys.stdout if error is False else sys.stderr
+        self.terminal = sys.__stdout__ if error is False else sys.__stderr__
         self.logFD = logFD
 
     def get_time(self):
@@ -27,6 +27,9 @@ class GeneralLogger():
             return "[%s] %s\n" % (self.get_time(), line)
 
         return line
+
+    def fileno(self):
+        return sys.__stdout__.fileno() if self.error is False else sys.__stderr__.fileno()
 
     def flush(self):
         if self.logFD:
@@ -57,6 +60,9 @@ class GeneralLogger():
         #     message = self.get_line(message)
 
         self.terminal.write(message)
+        self.last_messages += message
+        if len(self.last_messages) > 500 * 1024:
+            self.last_messages = self.last_message[-500 * 1024:]
 
         for char in message:
             if '\b' == char:

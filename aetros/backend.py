@@ -32,9 +32,7 @@ from aetros.MonitorThread import MonitoringThread
 
 def on_shutdown():
     for job in on_shutdown.started_jobs:
-        if job.running:
-            job.on_shutdown()
-
+        job.on_shutdown()
 
 on_shutdown.started_jobs = []
 
@@ -90,7 +88,7 @@ class EventListener:
 
 
 class Client:
-    def __init__(self, api_host, api_token, event_listener, api_port):
+    def __init__(self, api_host, api_key, event_listener, api_port):
         """
 
         :type api_host: string
@@ -98,7 +96,7 @@ class Client:
         :type event_listener: EventListener
         :type job_id: integer
         """
-        self.api_token = api_token
+        self.api_key = api_key
         self.api_host = api_host
         self.api_port = api_port
         self.event_listener = event_listener
@@ -139,7 +137,7 @@ class Client:
             self.lock.release()
             locked = False
 
-            self.send_message({'register_job_worker': self.api_token, 'job_id': self.job_id})
+            self.send_message({'register_job_worker': self.api_key, 'job_id': self.job_id})
             messages = self.read_full_message(self.s)
 
             if "JOB_ABORTED" in messages:
@@ -363,7 +361,7 @@ def start_job(name, api_key=None):
 
     id = os.getenv('AETROS_JOB_ID')
     if id:
-        job = JobBackend(api_token=api_key)
+        job = JobBackend(api_key=api_key)
         job.load(id)
     else:
         job = create_job(name, api_key)
@@ -374,7 +372,7 @@ def start_job(name, api_key=None):
     return job
 
 
-def create_job(name, api_token=None):
+def create_job(name, api_key=None):
     """
     Creates a new job.
 
@@ -382,7 +380,7 @@ def create_job(name, api_token=None):
     :param api_key: string
     :return: JobBackend
     """
-    job = JobBackend(api_token=api_token)
+    job = JobBackend(api_key=api_key)
     job.create(name)
     job.load()
 
@@ -506,12 +504,14 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, job_id=None, api_token=None):
+    def __init__(self, job_id=None, api_key=None):
         self.event_listener = EventListener()
-        self.api_token = api_token if api_token else os.getenv('API_KEY')
+        self.api_key = api_key if api_key else os.getenv('API_KEY')
 
         if job_id and '/' in job_id:
             raise Exception('job_id needs to be a job id, not a model name.')
+
+        on_shutdown.started_jobs.append(self)
 
         self.job_id = job_id
         self.client = None
@@ -533,7 +533,7 @@ class JobBackend:
         self.event_listener.on('stop', self.external_stop)
         self.event_listener.on('aborted', self.external_aborted)
 
-        self.client = Client(self.host, self.api_token, self.event_listener, self.port)
+        self.client = Client(self.host, self.api_key, self.event_listener, self.port)
 
     def keras_model_integration(self, model, insights=False, confusion_matrix=False):
         import aetros.keras
@@ -619,7 +619,6 @@ class JobBackend:
             raise Exception('No job id found. Use create() first.')
 
         self.running = True
-        on_shutdown.started_jobs.append(self)
         self.collect_system_information()
         self.start_monitoring()
 
@@ -633,11 +632,11 @@ class JobBackend:
         try:
             commit_sha = git.get_current_commit_hash()
             if commit_sha:
-                self.set_system_info('git_version', commit_sha)
+                self.set_system_info('gitVersion', commit_sha)
 
             current_branch = git.get_current_branch()
             if current_branch:
-                self.set_system_info('git_branch', current_branch)
+                self.set_system_info('gitBranch', current_branch)
         except:
             pass
 
@@ -649,8 +648,9 @@ class JobBackend:
 
     def on_shutdown(self):
         if hasattr(sys, 'last_value'):
-            self.crash(sys.last_value)
-        else:
+            # sys.last_value contains a exception, when there was an uncaught one
+            self.crash('Uncaught exception')
+        elif self.running:
             self.done()
 
     def done(self):
@@ -676,8 +676,9 @@ class JobBackend:
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-    def crash(self, e=None):
-        self.post('job/crashed', json={'id': self.job_id, 'error': str(e) if e else None})
+    def crash(self, error=None):
+        data = {'id': self.job_id, 'error': str(error) if error else None, 'stderr': self.general_logger_error.last_messages}
+        self.post('job/crashed', json=data)
 
         self.client.close()
         self.running = False
@@ -688,11 +689,11 @@ class JobBackend:
 
         url = 'http://%s/api/%s' % (self.host, affix)
 
-        if self.api_token:
+        if self.api_key:
             if '?' in url:
-                url += '&token=' + self.api_token
+                url += '&token=' + self.api_key
             else:
-                url += '?token=' + self.api_token
+                url += '?token=' + self.api_key
 
         return url
 
@@ -828,7 +829,7 @@ class JobBackend:
 
         return self.job_id
 
-    def ensure_job(self, id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_token=None):
+    def ensure_job(self, id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_key=None):
         """
         Makes sure that either
         1. id is a model name, a job is created and loaded, or
@@ -968,7 +969,10 @@ class JobBackend:
     def sync_weights(self):
         self.job_add_status('status', 'SYNC WEIGHTS')
         print("Sync weights ...")
-        self.upload_weights('best.hdf5', self.get_job_model().get_weights_filepath_best(), with_status=True)
+        try:
+            self.upload_weights('best.hdf5', self.get_job_model().get_weights_filepath_best(), with_status=True)
+        except:
+            pass
         print("Weights synced.")
 
     def load_light_job(self, id=None):

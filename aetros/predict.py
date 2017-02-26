@@ -13,9 +13,9 @@ from aetros import keras_model_utils
 from aetros.keras_model_utils import ensure_dir
 from .backend import JobBackend, invalid_json_values
 
-def predict(job_id, file_paths, insights=False, weights_path=None, api_token=None):
+def predict(job_id, file_paths, insights=False, weights_path=None, api_key=None):
     print("Prepare model ...")
-    job_backend = JobBackend(api_token=api_token)
+    job_backend = JobBackend(api_key=api_key)
     job_backend.load(job_id)
 
     job_model = job_backend.get_job_model()

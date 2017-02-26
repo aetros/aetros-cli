@@ -16,7 +16,6 @@ def get_current_branch():
 
     return current_branch
 
-
 def get_current_commit_hash():
     commit_sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'])
 

@@ -22,9 +22,9 @@ class Server:
     :type: event_listener : EventListener
     """
 
-    def __init__(self, api_host, server_api_token, event_listener):
+    def __init__(self, api_host, server_api_key, event_listener):
         self.event_listener = event_listener
-        self.server_api_token = server_api_token
+        self.server_api_key = server_api_key
         self.api_host = api_host
         self.active = False
         self.connected = False
@@ -62,7 +62,7 @@ class Server:
             self.lock.release()
             locked = False
 
-            self.send_message({'register_server': self.server_api_token})
+            self.send_message({'register_server': self.server_api_key})
             messages = self.read_full_message(self.s)
 
             if isinstance(messages, list):
@@ -263,6 +263,7 @@ class ServerCommand:
         self.job_processes = []
         self.max_parallel_jobs = 2
         self.registered = False
+        self.show_stdout = False
 
     def main(self, args):
         import aetros.const
@@ -273,6 +274,7 @@ class ServerCommand:
                             help="Secure key of the server.")
         parser.add_argument('--max-jobs', help="How many jobs should be run at the same time.")
         parser.add_argument('--server', help="Default trainer.aetros.com.")
+        parser.add_argument('--show-stdout', action='store_true', help="Show all stdout of all jobs")
 
         parsed_args = parser.parse_args(args)
 
@@ -282,6 +284,8 @@ class ServerCommand:
 
         if parsed_args.max_jobs:
             self.max_parallel_jobs = int(parsed_args.max_jobs)
+        if parsed_args.show_stdout:
+            self.show_stdout = True
 
         event_listener = EventListener()
 
@@ -314,14 +318,15 @@ class ServerCommand:
 
             del self.queuedMap[id]
 
-
     def start_job(self, job):
         self.check_finished_jobs()
 
         if job['id'] in self.queuedMap:
             return
 
-        print("Queued job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
+        print("Queued job %s#%d (%s, prio:%d) by %s in %s ..." % (
+            job['modelId'], job['index'], job['id'], job['priority'], job['username'], os.getcwd()
+        ))
 
         self.server.send_message({'type': 'job-queued', 'id': job['id']})
 
@@ -335,7 +340,7 @@ class ServerCommand:
             if exit_code > 0:
                 reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
                 print(reason)
-                self.server.send_message({'type': 'job-failed', 'job': job, 'reason': reason})
+                self.server.send_message({'type': 'job-failed', 'job': job, 'error': reason, 'stderr': process})
             elif exit_code == 0:
                 print('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
 
@@ -356,7 +361,8 @@ class ServerCommand:
             self.execute_job(self.queue.pop(0))
 
     def execute_job(self, job):
-        print("Execute job %s#%d (%s) by %s in %s ..." % (job['modelId'], job['index'], job['id'], job['username'], os.getcwd()))
+        print("Execute job %s#%d (%s) by %s using job's API_KEY=%s in %s ..." % (
+            job['modelId'], job['index'], job['id'], job['username'], job['apiKey'], os.getcwd()))
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
@@ -365,8 +371,9 @@ class ServerCommand:
                 my_env['PYTHONPATH'] = ''
 
             my_env['PYTHONPATH'] += ':' + os.getcwd()
-            args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--secure-key=' + job['apiKey']]
-            process = subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL, stderr=sys.stderr, close_fds=True, env=my_env)
+            args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--api-key=' + job['apiKey']]
+            process = subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL if not self.show_stdout else sys.stdout, stderr=sys.stderr, close_fds=True,
+                                       env=my_env)
             setattr(process, 'job', job)
             self.job_processes.append(process)
 
@@ -438,9 +445,9 @@ class ServerCommand:
 
             if id in self.last_net and self.last_utilization:
                 values['nets'][id]['upload'] = (net.bytes_sent - self.last_net[id]['sent']) / (
-                time.time() - self.last_utilization)
+                    time.time() - self.last_utilization)
                 values['nets'][id]['download'] = (net.bytes_recv - self.last_net[id]['recv']) / (
-                time.time() - self.last_utilization)
+                    time.time() - self.last_utilization)
 
             self.last_net[id] = dict(values['nets'][id])
 
