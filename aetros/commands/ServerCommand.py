@@ -340,7 +340,7 @@ class ServerCommand:
             if exit_code > 0:
                 reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
                 print(reason)
-                self.server.send_message({'type': 'job-failed', 'job': job, 'error': reason, 'stderr': process})
+                self.server.send_message({'type': 'job-failed', 'id': job['id'], 'error': reason})
             elif exit_code == 0:
                 print('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
 

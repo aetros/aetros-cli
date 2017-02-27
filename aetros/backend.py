@@ -146,9 +146,19 @@ class Client:
                 self.active = False
                 return False
 
+            if "JOB_REGISTRATION_FAILED" in messages:
+                reason = ''
+                for message in messages:
+                    if 'reason' in message:
+                        reason = message['reason']
+
+                self.event_listener.fire('registration_failed', {'reason': reason})
+                return False
+
             if "JOB_REGISTERED" in messages:
                 self.registered = True
                 print("Connected to %s " % (self.api_host,))
+                self.event_listener.fire('registration')
                 self.handle_messages(messages)
                 return True
 
@@ -516,6 +526,7 @@ class JobBackend:
         self.job_id = job_id
         self.client = None
         self.job = None
+        self.ended = False
         self.running = False
         self.monitoring_thread = None
         self.general_logger_stdout = GeneralLogger(job_backend=self)
@@ -532,8 +543,19 @@ class JobBackend:
         self.stop_requested = False
         self.event_listener.on('stop', self.external_stop)
         self.event_listener.on('aborted', self.external_aborted)
+        self.event_listener.on('registration', self.on_registration)
+        self.event_listener.on('registration_failed', self.on_registration_failed)
 
         self.client = Client(self.host, self.api_key, self.event_listener, self.port)
+
+    def on_registration_failed(self, params):
+        print("Connecting to AETROS failed. Reasons: %s. Wrong API_KEY='%s'?" % (params['reason'], self.api_key,))
+        print("All monitoring disabled for AETROS. Job may still run.", file=sys.stderr)
+        self.crash('Client could not connect to AETROS. Job may still run. Reason: %s' % (params['reason'],))
+
+    def on_registration(self, params):
+        print("Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
+              (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
 
     def keras_model_integration(self, model, insights=False, confusion_matrix=False):
         import aetros.keras
@@ -625,9 +647,6 @@ class JobBackend:
         self.client.start(self.job_id)
         self.detect_git_version()
 
-        print("Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
-              (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
-
     def detect_git_version(self):
         try:
             commit_sha = git.get_current_commit_hash()
@@ -647,7 +666,7 @@ class JobBackend:
         self.monitoring_thread.start()
 
     def on_shutdown(self):
-        if hasattr(sys, 'last_value'):
+        if not self.ended and hasattr(sys, 'last_value'):
             # sys.last_value contains a exception, when there was an uncaught one
             self.crash('Uncaught exception')
         elif self.running:
@@ -657,9 +676,11 @@ class JobBackend:
         if not self.running:
             return
 
+
         self.post('job/stopped', json={'id': self.job_id})
 
         self.client.end()
+        self.ended = True
         self.running = False
 
         if self.monitoring_thread:
@@ -672,6 +693,7 @@ class JobBackend:
         self.post('job/aborted', json={'id': self.job_id})
 
         self.client.close()
+        self.ended = True
         self.running = False
         if self.monitoring_thread:
             self.monitoring_thread.stop()
@@ -681,6 +703,7 @@ class JobBackend:
         self.post('job/crashed', json=data)
 
         self.client.close()
+        self.ended = True
         self.running = False
         if self.monitoring_thread:
             self.monitoring_thread.stop()
