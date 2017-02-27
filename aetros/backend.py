@@ -526,7 +526,11 @@ class JobBackend:
         self.job_id = job_id
         self.client = None
         self.job = None
+
+        #done means: done, abort or crash method has been called.
         self.ended = False
+
+        # running means: the syncer client is running.
         self.running = False
         self.monitoring_thread = None
         self.general_logger_stdout = GeneralLogger(job_backend=self)
@@ -563,6 +567,7 @@ class JobBackend:
 
     def external_aborted(self, params):
         self.client.close()
+        self.ended = True
         self.running = False
 
         if self.monitoring_thread:
@@ -641,6 +646,7 @@ class JobBackend:
             raise Exception('No job id found. Use create() first.')
 
         self.running = True
+        self.ended = False
         self.collect_system_information()
         self.start_monitoring()
 
