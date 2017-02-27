@@ -62,7 +62,7 @@ class GeneralLogger(object):
         self.terminal.write(message)
         self.last_messages += message
         if len(self.last_messages) > 500 * 1024:
-            self.last_messages = self.last_message[-500 * 1024:]
+            self.last_messages = self.last_messages[-500 * 1024:]
 
         for char in message:
             if '\b' == char:
