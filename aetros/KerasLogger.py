@@ -28,12 +28,13 @@ from .keras_model_utils import ensure_dir, get_total_params
 import six
 
 class KerasLogger(Callback):
-    def __init__(self, trainer, job_backend, general_logger):
+    def __init__(self, trainer, job_backend, general_logger, force_insights=False):
         self.params = {}
         super(KerasLogger, self).__init__()
         self.validation_per_batch = []
         self.ins = None
         self.insights_sample_path = None
+        self.force_insights = force_insights
 
         self.trainer = trainer
         self.current = {}
@@ -199,7 +200,7 @@ class KerasLogger(Callback):
                 log['epoch'], log['loss'], log.get('acc', 0), log.get('val_loss', 0), total_accuracy, )
             self.general_logger.write(line)
 
-        if self.job_model.job['insights']:
+        if self.force_insights or self.job_model.job['insights']:
             # Todo, support multiple inputs
             first_input_layer = self.model.input_layers[0]
 

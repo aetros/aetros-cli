@@ -114,7 +114,7 @@ class KerasIntegration():
         self.trainer.model = self.model
         self.trainer.data_train = {'x': x}
 
-        self.callback = KerasLogger(self.trainer, self.job_backend, self.job_backend.general_logger_stdout)
+        self.callback = KerasLogger(self.trainer, self.job_backend, self.job_backend.general_logger_stdout, force_insights=self.insights)
         self.callback.log_epoch = False
         self.callback.model = self.model
         self.callback.confusion_matrix = self.confusion_matrix
