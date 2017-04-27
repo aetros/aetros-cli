@@ -9,11 +9,10 @@ from PIL import Image
 
 import numpy as np
 from aetros.Trainer import Trainer
+from aetros.keras import load_weights
 from aetros.logger import GeneralLogger
-from aetros import keras_model_utils
 from aetros.keras_model_utils import ensure_dir
 from aetros.backend import JobBackend
-from six.moves import zip
 
 def create_simple(id, last_weights=False):
     job_backend = JobBackend()
@@ -46,7 +45,7 @@ def create_simple(id, last_weights=False):
 
     model = job_model.get_built_model(trainer)
 
-    job_model.load_weights(model, weights_path)
+    load_weights(model, weights_path)
 
     return job_model, model
 
@@ -150,56 +149,6 @@ class JobModel:
             model_provider.compile(trainer, model, loss, optimizer)
 
         return model
-
-    def load_weights(self, model, weights_path=None):
-        from keras import backend as K
-
-        if not weights_path:
-            weights_path = self.get_weights_filepath_best()
-
-        if not os.path.isfile(weights_path):
-            raise Exception("File does not exist.")
-
-        import h5py
-        f = h5py.File(weights_path, mode='r')
-
-        # new file format
-        layer_names = [n.decode('utf8') for n in f.attrs['layer_names']]
-        if len(layer_names) != len(model.layers):
-            print("Warning: Layer count different")
-
-        # we batch weight value assignments in a single backend call
-        # which provides a speedup in TensorFlow.
-        weight_value_tuples = []
-        for k, name in enumerate(layer_names):
-            g = f[name]
-            weight_names = [n.decode('utf8') for n in g.attrs['weight_names']]
-
-            layer = model.get_layer(name=name)
-            if layer and len(weight_names):
-                weight_values = [g[weight_name] for weight_name in weight_names]
-                if not hasattr(layer, 'trainable_weights'):
-                    print("Layer %s (%s) has no trainable weights, but we tried to load it." % (
-                    name, type(layer).__name__))
-                else:
-                    symbolic_weights = layer.trainable_weights + layer.non_trainable_weights
-
-                    if len(weight_values) != len(symbolic_weights):
-                        raise Exception('Layer #' + str(k) +
-                                        ' (named "' + layer.name +
-                                        '" in the current model) was found to '
-                                        'correspond to layer ' + name +
-                                        ' in the save file. '
-                                        'However the new layer ' + layer.name +
-                                        ' expects ' + str(len(symbolic_weights)) +
-                                        ' weights, but the saved weights have ' +
-                                        str(len(weight_values)) +
-                                        ' elements.')
-
-                    weight_value_tuples += list(zip(symbolic_weights, weight_values))
-        K.batch_set_value(weight_value_tuples)
-
-        f.close()
 
     def predict(self, model, input):
         prediction = model.predict(input)

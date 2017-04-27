@@ -302,14 +302,19 @@ class KerasLogger(Callback):
                 Y = fn(input_data_x_sample)[0]
 
                 data = np.squeeze(Y)
-                image = PIL.Image.fromarray(get_layer_vis_square(data))
-
-                images.append(JobImage(layer.name, image))
+                try:
+                    image = PIL.Image.fromarray(get_layer_vis_square(data))
+                    images.append(JobImage(layer.name, image))
+                except:
+                    pass
 
                 if hasattr(layer, 'W') and layer.W:
-                    data = layer.get_weights()[0]
-                    image = PIL.Image.fromarray(get_layer_vis_square(data))
-                    images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights'))
+                    try:
+                        data = layer.get_weights()[0]
+                        image = PIL.Image.fromarray(get_layer_vis_square(data))
+                        images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights'))
+                    except:
+                        pass
 
             if isinstance(layer, keras.layers.Dense):
 

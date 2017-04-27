@@ -10,6 +10,7 @@ import numpy as np
 import os
 
 from aetros import keras_model_utils
+from aetros.keras import load_weights
 from aetros.keras_model_utils import ensure_dir
 from .backend import JobBackend, invalid_json_values
 
@@ -51,7 +52,7 @@ def predict(job_id, file_paths, insights=False, weights_path=None, api_key=None)
 
     model = job_model.get_built_model(trainer)
 
-    job_model.load_weights(model, weights_path)
+    load_weights(model, weights_path)
 
     inputs = []
     for idx, file_path in enumerate(file_paths):

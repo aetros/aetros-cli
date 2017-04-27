@@ -558,7 +558,7 @@ class JobBackend:
         self.crash('Client could not connect to AETROS. Job may still run. Reason: %s' % (params['reason'],))
 
     def on_registration(self, params):
-        print("Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
+        print("Job %s#%d (%s) started. Open http://%s/job/%s to monitor the training." %
               (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
 
     def keras_model_integration(self, model, insights=False, confusion_matrix=False):
@@ -874,7 +874,7 @@ class JobBackend:
             self.load(id)
 
             print(
-                "Job %s#%d (%s) created and started. Open http://%s/trainer/app#/job=%s to monitor the training." %
+                "Job %s#%d (%s) created and started. Open http://%s/job/%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))
         else:
             self.load(id)
@@ -883,7 +883,7 @@ class JobBackend:
                 self.load(id)
 
             print(
-                "Job %s#%d (%s) started. Open http://%s/trainer/app#/job=%s to monitor the training." %
+                "Job %s#%d (%s) started. Open http://%s/job/%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))
 
     def ensure_model(self, name, model_json, settings=None, type='custom', layers=None, graph=None):
