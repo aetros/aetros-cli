@@ -14,9 +14,6 @@ import traceback
 from aetros.utils import git
 from . import keras_model_utils
 from .backend import JobBackend
-from .logger import GeneralLogger
-from .JobModel import JobModel
-from .MonitorThread import MonitoringThread
 from .Trainer import Trainer
 from .keras_model_utils import ensure_dir
 import six

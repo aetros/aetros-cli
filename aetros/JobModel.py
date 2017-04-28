@@ -9,7 +9,6 @@ from PIL import Image
 
 import numpy as np
 from aetros.Trainer import Trainer
-from aetros.keras import load_weights
 from aetros.logger import GeneralLogger
 from aetros.keras_model_utils import ensure_dir
 from aetros.backend import JobBackend
@@ -45,6 +44,7 @@ def create_simple(id, last_weights=False):
 
     model = job_model.get_built_model(trainer)
 
+    from aetros.keras import load_weights
     load_weights(model, weights_path)
 
     return job_model, model

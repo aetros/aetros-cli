@@ -1,12 +1,6 @@
 from __future__ import print_function, division
-
 from __future__ import absolute_import
-
 import os
-
-from keras.engine import InputLayer, Merge
-from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
-from keras.models import Sequential
 
 from aetros.backend import start_job
 from aetros.KerasLogger import KerasLogger
@@ -96,6 +90,8 @@ class KerasIntegration():
         """
         self.confusion_matrix = confusion_matrix
         self.model = model
+
+        from keras.models import Sequential
 
         if isinstance(model, Sequential) and not model.built:
             raise Exception('Sequential model is not built.')
@@ -226,6 +222,9 @@ class KerasIntegration():
         self.job_backend.set_status('DONE')
 
     def model_to_graph(self, model):
+        from keras.engine import InputLayer, Merge
+        from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
+
         graph = {
             'nodes': [],
             'links': [],
@@ -327,6 +326,8 @@ class KerasIntegration():
 
     def model_to_layers(self, model):
         layers = []
+        from keras.engine import InputLayer
+        from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense
 
         # from keras.models import Sequential
         # if isinstance(model, Sequential):
