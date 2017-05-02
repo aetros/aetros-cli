@@ -274,6 +274,7 @@ def get_layer_vis_square(data,
                          min_img_dim=100,
                          max_width=1200,
                          channel_order='RGB',
+                         colormap='jet',
                          ):
     """
     Returns a vis_square for the given layer data
@@ -345,6 +346,7 @@ def get_layer_vis_square(data,
     vis = vis_square(data,
                      padsize=padsize,
                      normalize=normalize,
+                     colormap=colormap
                      )
 
     # find minimum dimension and upscale if necessary
