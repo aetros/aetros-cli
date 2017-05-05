@@ -109,11 +109,12 @@ class KerasLogger(Callback):
             dataset_infos['input1'] = dataset_info
             self.job_backend.set_system_info('datasets', dataset_infos)
 
-        batch_size = logs['size']
-        nb_batches = math.ceil(self.current['nb_sample'] / batch_size)  # normal nb batches
+        if 'nb_batches' not in self.current:
+            batch_size = logs['size']
+            nb_batches = math.ceil(self.current['nb_sample'] / batch_size)  # normal nb batches
 
-        self.current['nb_batches'] = nb_batches
-        self.current['batch_size'] = batch_size
+            self.current['nb_batches'] = nb_batches
+            self.current['batch_size'] = batch_size
 
     def on_batch_end(self, batch, logs={}):
         self.filter_invalid_json_values(logs)
@@ -121,38 +122,7 @@ class KerasLogger(Callback):
 
         self.validation_per_batch.append(loss)
 
-        current_batch = logs['batch']
-        # how many training items in this batch, differs for the last run
-        current_batch_size = logs['size']
-
-        self.made_batches += 1
-
-        time_diff = time.time() - self.last_batch_time
-
-        if time_diff > 2 or batch == self.current['nb_batches']:  # only each second second or last batch
-            self.batches_per_second = self.made_batches / time_diff
-            self.made_batches = 0
-            self.last_batch_time = time.time()
-
-            nb_sample = self.params['nb_sample']  # training samples total
-            batch_size = self.current['batch_size']  # normal batch size
-            nb_batches = nb_sample / batch_size  # normal nb batches
-
-            self.current['batchesPerSecond'] = self.batches_per_second
-            self.current['itemsPerSecond'] = self.batches_per_second * current_batch_size
-
-            epochs_per_second = self.batches_per_second / nb_batches  # all batches
-            self.current['epochsPerSecond'] = epochs_per_second
-
-            self.current['currentBatch'] = current_batch
-            self.current['currentBatchSize'] = current_batch_size
-            elapsed = time.time() - self.start_time
-            self.current['elapsed'] = elapsed
-
-            self.job_backend.set_system_info('itemsPerSecond', self.batches_per_second * current_batch_size)
-            self.job_backend.set_system_info('currentBatch', current_batch)
-            self.job_backend.set_system_info('currentBatchSize', batch_size)
-            self.job_backend.set_system_info('nb_batches', nb_batches)
+        self.job_backend.batch(batch, self.current['nb_batches'], logs['size'])
 
     def write(self, line):
         self.general_logger.write(line)

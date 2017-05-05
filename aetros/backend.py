@@ -527,6 +527,14 @@ class JobBackend:
         self.client = None
         self.job = None
 
+        self.last_batch_time = time.time()
+        self.start_time = time.time()
+        self.current_epoch = 0
+        self.current_batch = 0
+        self.total_epochs = 0
+        self.made_batches = 0
+        self.batches_per_second = 0
+
         #done means: done, abort or crash method has been called.
         self.ended = False
 
@@ -585,28 +593,65 @@ class JobBackend:
         self.stop_requested = True
         os.kill(os.getpid(), signal.SIGINT)
 
+    def batch(self, batch, total, size=None):
+        self.set_system_info('currentBatch', batch)
+        self.set_system_info('nb_batches', total)
+
+        time_diff = time.time() - self.last_batch_time
+        self.made_batches += 1
+
+        if time_diff > 1 or batch == total:  # only each second second or last batch
+            self.batches_per_second = self.made_batches / time_diff
+            self.made_batches = 0
+            self.last_batch_time = time.time()
+
+            if size:
+                self.set_system_info('samplesPerSecond', self.batches_per_second * size)
+
+            epochs_per_second = self.batches_per_second / total  # all batches
+            self.set_system_info('epochsPerSecond', epochs_per_second)
+
+            elapsed = time.time() - self.start_time
+            self.set_system_info('elapsed', elapsed)
+
+            if self.total_epochs:
+                eta = 0
+                if batch < total:
+                    # time to end this epoch
+                    eta += (total - batch) / self.batches_per_second
+
+                # time until all epochs are done
+                if self.total_epochs - (self.current_epoch-1) > 0:
+                    eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
+
+                self.set_system_info('eta', eta)
+
+        self.current_batch = batch
+
     def progress(self, epoch, total):
-        max_epochs = total
+        self.current_epoch = epoch
+        self.total_epochs = total
         epoch_limit = False
+
         if 'maxEpochs' in self.job['config']['settings'] and self.job['config']['settings']['maxEpochs'] > 0:
             epoch_limit = True
-            max_epochs = self.job['config']['settings']['maxEpochs']
+            self.total_epochs = self.job['config']['settings']['maxEpochs']
 
         if epoch is not 0 and self.last_progress_call:
             # how long took it since the last call?
             time_per_epoch = time.time() - self.last_progress_call
-            eta = time_per_epoch * (max_epochs-epoch)
+            eta = time_per_epoch * (self.total_epochs-epoch)
             self.set_system_info('eta', eta)
             if time_per_epoch > 0:
                 self.set_system_info('epochsPerSecond', 1 / time_per_epoch)
 
         self.set_system_info('epoch', epoch)
-        self.set_system_info('epochs', max_epochs)
+        self.set_system_info('epochs', self.total_epochs)
         self.last_progress_call = time.time()
 
-        if epoch_limit and max_epochs > 0:
-            if epoch >= max_epochs:
-                print("\nMaxEpochs of %d/%d reached" % (epoch, max_epochs))
+        if epoch_limit and self.total_epochs > 0:
+            if epoch >= self.total_epochs:
+                print("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
                 self.done()
                 os.kill(os.getpid(), signal.SIGINT)
                 return
@@ -682,6 +727,8 @@ class JobBackend:
         if not self.running:
             return
 
+        if self.total_epochs:
+            self.progress(self.total_epochs, self.total_epochs)
 
         self.post('job/stopped', json={'id': self.job_id})
 
