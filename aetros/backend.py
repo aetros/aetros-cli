@@ -594,13 +594,13 @@ class JobBackend:
         os.kill(os.getpid(), signal.SIGINT)
 
     def batch(self, batch, total, size=None):
-        self.set_system_info('currentBatch', batch)
-        self.set_system_info('nb_batches', total)
-
         time_diff = time.time() - self.last_batch_time
         self.made_batches += 1
 
         if time_diff > 1 or batch == total:  # only each second second or last batch
+            self.set_system_info('currentBatch', batch)
+            self.set_system_info('nb_batches', total)
+
             self.batches_per_second = self.made_batches / time_diff
             self.made_batches = 0
             self.last_batch_time = time.time()
@@ -693,6 +693,7 @@ class JobBackend:
         self.running = True
         self.ended = False
         self.collect_system_information()
+        self.collect_environment()
         self.start_monitoring()
 
         self.client.start(self.job_id)
@@ -1133,6 +1134,17 @@ class JobBackend:
         image.save(buffer, format="JPEG", optimize=True, quality=80)
         return base64.b64encode(buffer.getvalue())
 
+    def collect_environment(self):
+        import socket
+        import os
+        import pip
+
+        env = {}
+
+        env['hostname'] = socket.gethostname()
+        env['variables'] = dict(os.environ)
+        env['pip_packages'] = sorted([[i.key, i.version] for i in pip.get_installed_distributions()])
+        self.set_system_info('environment', env)
 
     def collect_system_information(self):
         import psutil
@@ -1154,8 +1166,8 @@ class JobBackend:
                 if cuda.cuda_ndarray.cuda_ndarray.mem_info:
                     gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
                     self.set_system_info('cuda_device_max_memory', gpu[1])
-                    free = gpu[0] / 1024 / 1024 / 1024
-                    total = gpu[1] / 1024 / 1024 / 1024
+                    free = gpu[0] / 1024.0 / 1024.0 / 1024.0
+                    total = gpu[1] / 1024.0 / 1024.0 / 1024.0
                     used = total - free
 
                     print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (used, total, cuda.active_device_name(), cuda.active_device_number()))
