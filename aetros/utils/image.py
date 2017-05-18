@@ -38,7 +38,7 @@ def upscale(image, ratio):
     """
     return upscaled image array
     Arguments:
-    image -- a (heigt, width , channels) numpy.ndarray
+    image -- a (H,W,C) numpy.ndarray
     ratio -- scaling factor (>1)
     """
     if not isinstance(image, np.ndarray):
@@ -50,7 +50,7 @@ def upscale(image, ratio):
     channels = image.shape[2]
     out = np.ndarray((height, width, channels), dtype=np.uint8)
     for x, y in np.ndindex((width, height)):
-        out[y, x] = image[math.floor(y / ratio), math.floor(x / ratio)]
+        out[y, x] = image[int(math.floor(y / ratio)), int(math.floor(x / ratio))]
     return out
 
 
