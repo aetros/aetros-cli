@@ -109,30 +109,77 @@ class KerasIntegration():
 
         copy = {'fit': self.model.fit, 'fit_generator': self.model.fit_generator}
 
-        def overwritten_fit(x, y, batch_size=32, nb_epoch=10, verbose=1, callbacks=[], validation_split=0.,
-                            validation_data=None, shuffle=True, class_weight=None, sample_weight=None, **kwargs):
+        def overwritten_fit(
+                    x=None,
+                    y=None,
+                    batch_size=32,
+                    epochs=1,
+                    verbose=1,
+                    callbacks=[],
+                    validation_split=0.,
+                    validation_data=None,
+                    shuffle=True,
+                    class_weight=None,
+                    sample_weight=None,
+                    initial_epoch=0,
+                    **kwargs):
 
-            callback = self.setup(x, nb_epoch, batch_size)
+            callback = self.setup(x, epochs, batch_size)
             callbacks.append(callback)
-            copy['fit'](x, y, batch_size, nb_epoch, verbose, callbacks, validation_split, validation_data, True,
-                        class_weight, sample_weight, **kwargs)
+
+            setattr(self.model, 'validation_data', validation_data)
+
+            copy['fit'](x,
+                    y,
+                    batch_size,
+                    epochs,
+                    verbose,
+                    callbacks,
+                    validation_split,
+                    validation_data,
+                    shuffle,
+                    class_weight,
+                    sample_weight,
+                    initial_epoch,
+                    **kwargs)
 
             self.end()
 
-        def overwritten_fit_generator(generator, samples_per_epoch, nb_epoch,
-                                      verbose=1, callbacks=[],
-                                      validation_data=None, nb_val_samples=None,
-                                      class_weight={}, max_q_size=10, nb_worker=1, pickle_safe=False):
+        # def overwritten_fit_generator(generator, samples_per_epoch, nb_epoch,
+        #                               verbose=1, callbacks=[],
+        #                               validation_data=None, nb_val_samples=None,
+        #                               class_weight={}, max_q_size=10, nb_worker=1, pickle_safe=False):
+        def overwritten_fit_generator(
+                      generator,
+                      steps_per_epoch,
+                      epochs=1,
+                      verbose=1,
+                      callbacks=[],
+                      validation_data=None,
+                      validation_steps=None,
+                      class_weight=None,
+                      max_q_size=10,
+                      workers=1,
+                      pickle_safe=False,
+                      initial_epoch=0):
 
-            callback = self.setup(generator, nb_epoch)
-            self.trainer.nb_val_samples = nb_val_samples
+            callback = self.setup(generator, epochs)
+            self.trainer.nb_val_samples = nb_val_samples #todo
             self.trainer.data_validation = validation_data
             callbacks.append(callback)
 
-            copy['fit_generator'](generator, samples_per_epoch, nb_epoch,
-                                  verbose, callbacks,
-                                  validation_data, nb_val_samples,
-                                  class_weight, max_q_size, nb_worker, pickle_safe)
+            copy['fit_generator'](generator,
+                      steps_per_epoch,
+                      epochs,
+                      verbose,
+                      callbacks,
+                      validation_data,
+                      validation_steps,
+                      class_weight,
+                      max_q_size,
+                      workers,
+                      pickle_safe,
+                      initial_epoch)
             self.end()
 
         self.model.fit = overwritten_fit
@@ -222,8 +269,8 @@ class KerasIntegration():
         self.job_backend.set_status('DONE')
 
     def model_to_graph(self, model):
-        from keras.engine import InputLayer, Merge
-        from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector
+        from keras.engine import InputLayer
+        from keras.layers import Convolution2D, MaxPooling2D, Dropout, Activation, Dense, Embedding, RepeatVector, Merge
 
         graph = {
             'nodes': [],
@@ -241,15 +288,15 @@ class KerasIntegration():
             info = {}
 
             if isinstance(layer, Dropout):
-                info['dropout'] = layer.p
+                info['dropout'] = layer.rate
 
             if isinstance(layer, Dense):
-                info['neurons'] = layer.output_dim
+                info['neurons'] = layer.units
                 info['activaton'] = layer.activation.__name__
 
             if isinstance(layer, Convolution2D):
-                info['receptiveField'] = [layer.nb_col, layer.nb_row]
-                info['features'] = layer.nb_filter
+                info['receptiveField'] = layer.kernel_size
+                info['features'] = layer.filters
 
             if isinstance(layer, MaxPooling2D):
                 info['poolingArea'] = [layer.pool_size[0], layer.pool_size[1]]
@@ -257,7 +304,6 @@ class KerasIntegration():
             if isinstance(layer, Embedding):
                 info['inputDim'] = layer.input_dim
                 info['outputDim'] = layer.output_dim
-                info['dropout'] = layer.dropout
 
             if isinstance(layer, Activation):
                 info['activaton'] = layer.activation.__name__
@@ -381,9 +427,9 @@ class KerasIntegration():
             }
 
             if isinstance(keras_layer, Convolution2D):
-                layer['receptiveField']['width'] = keras_layer.nb_col
-                layer['receptiveField']['height'] = keras_layer.nb_row
-                layer['features'] = keras_layer.nb_filter
+                layer['receptiveField']['width'] = keras_layer.kernel_size[0]
+                layer['receptiveField']['height'] = keras_layer.kernel_size[1]
+                layer['features'] = keras_layer.filters
             if isinstance(keras_layer, MaxPooling2D):
                 layer['poolingArea']['width'] = keras_layer.pool_size[0]
                 layer['poolingArea']['height'] = keras_layer.pool_size[1]
@@ -411,10 +457,10 @@ class KerasIntegration():
                     layer['shape'] = keras_layer.input_shape
 
             if isinstance(keras_layer, Dense):
-                layer['weight'] = keras_layer.output_dim
+                layer['weight'] = keras_layer.units
 
             if isinstance(keras_layer, Dropout):
-                layers[-1][0]['dropout'] = keras_layer.p
+                layers[-1][0]['dropout'] = keras_layer.rate
 
                 continue
 

@@ -75,8 +75,8 @@ class KerasLogger(Callback):
         self.current['epoch'] = 0
         self.current['started'] = self.start_time
         self.job_backend.set_system_info('current', self.current)
-        nb_sample = self.params['nb_sample']  # training samples total
-        nb_epoch = self.params['nb_epoch']  # training epoches total
+        nb_sample = self.params['samples']  # training samples total
+        nb_epoch = self.params['epochs']  # training epoches total
 
         self.current['nb_sample'] = nb_sample
         self.current['nb_epoch'] = nb_epoch
@@ -94,7 +94,7 @@ class KerasLogger(Callback):
         self.accuracy_channel = self.job_backend.create_channel('accuracy', main=True, kpi=True, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
         self.loss_channel = self.job_backend.create_loss_channel('loss', xaxis=xaxis)
         self.learning_rate_channel = self.job_backend.create_channel('learning rate', traces=['start', 'end'], xaxis=xaxis)
-        self.job_backend.progress(0, self.params['nb_epoch'])
+        self.job_backend.progress(0, self.params['epochs'])
 
     def on_batch_begin(self, batch, logs={}):
         if not self.data_gathered:
@@ -103,7 +103,7 @@ class KerasLogger(Callback):
             self.data_gathered = True
             dataset_infos = {}
             dataset_info = {
-                'Training': self.params['nb_sample'],
+                'Training': self.params['samples'],
                 'Validation': len(self.model.validation_data[0]) if self.model.validation_data else self.trainer.nb_val_samples,
             }
             dataset_infos['input1'] = dataset_info
@@ -162,7 +162,7 @@ class KerasLogger(Callback):
         self.loss_channel.send(log['epoch'], log.get('loss', 0), log.get('val_loss', 0))
         self.accuracy_channel.send(log['epoch'], total_accuracy*100)
 
-        self.job_backend.progress(log['epoch'], self.params['nb_epoch'])
+        self.job_backend.progress(log['epoch'], self.params['epochs'])
         self.send_optimizer_info(log['epoch'])
 
         if self.log_epoch:
@@ -272,19 +272,20 @@ class KerasLogger(Callback):
                 Y = fn(input_data_x_sample)[0]
 
                 data = np.squeeze(Y)
-                try:
-                    image = PIL.Image.fromarray(get_layer_vis_square(data))
-                    images.append(JobImage(layer.name, image))
-                except:
-                    pass
+                if K.image_data_format() == 'channels_last':
+                    data = np.transpose(data, (2, 0, 1))
+
+                image = PIL.Image.fromarray(get_layer_vis_square(data))
+                images.append(JobImage(layer.name, image))
 
                 if hasattr(layer, 'W') and layer.W:
-                    try:
-                        data = layer.get_weights()[0]
-                        image = PIL.Image.fromarray(get_layer_vis_square(data))
-                        images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights'))
-                    except:
-                        pass
+                    data = layer.get_weights()[0]
+
+                    if K.image_data_format() == 'channels_last':
+                        data = np.transpose(data, (2, 0, 1))
+
+                    image = PIL.Image.fromarray(get_layer_vis_square(data))
+                    images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights'))
 
             if isinstance(layer, keras.layers.Dense):
 
