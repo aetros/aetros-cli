@@ -17,6 +17,7 @@ import six
 import base64
 import PIL.Image
 import sys
+import msgpack
 
 from aetros.const import JOB_STATUS
 from aetros.logger import GeneralLogger
@@ -33,6 +34,7 @@ from aetros.MonitorThread import MonitoringThread
 def on_shutdown():
     for job in on_shutdown.started_jobs:
         job.on_shutdown()
+
 
 on_shutdown.started_jobs = []
 
@@ -53,6 +55,8 @@ def invalid_json_values(obj):
         return obj.tolist()
     if isinstance(obj, bytes):
         return obj.decode('cp437')
+    if isinstance(obj, map):
+        return list(obj)
     raise TypeError('Invalid data type passed to json encoder: ' + type(obj).__name__)
 
 
@@ -87,8 +91,8 @@ class EventListener:
                 callback(parameter)
 
 
-class Client:
-    def __init__(self, api_host, api_key, event_listener, api_port):
+class BackendClient:
+    def __init__(self, api_host, api_port, event_listener):
         """
 
         :type api_host: string
@@ -96,12 +100,15 @@ class Client:
         :type event_listener: EventListener
         :type job_id: integer
         """
-        self.api_key = api_key
-        self.api_host = api_host
-        self.api_port = api_port
+        self.api_host = api_host or os.getenv('API_HOST') or 'trainer.aetros.com'
+        self.api_port = int(api_port or os.getenv('API_PORT') or 8051)
+
         self.event_listener = event_listener
         self.message_id = 0
+
+        self.api_key = None
         self.job_id = None
+
         self.thread_instance = None
         self.s = None
 
@@ -113,17 +120,18 @@ class Client:
         self.external_stopped = False
         self.registered = False
         self.connected = False
-        self.read_buffer = ''
+        self.read_unpacker = msgpack.Unpacker(encoding='utf8')
 
-    def start(self, job_id):
-        self.job_id = job_id
-
+    def start(self):
         self.active = True
 
         if not self.thread_instance:
             self.thread_instance = Thread(target=self.thread)
             self.thread_instance.daemon = True
             self.thread_instance.start()
+
+    def on_connect(self):
+        pass
 
     def connect(self):
         locked = False
@@ -137,33 +145,7 @@ class Client:
             self.lock.release()
             locked = False
 
-            self.send_message({'register_job_worker': self.api_key, 'job_id': self.job_id})
-            messages = self.read_full_message(self.s)
-
-            if "JOB_ABORTED" in messages:
-                print("Job aborted meanwhile. Exiting")
-                self.event_listener.fire('stop')
-                self.active = False
-                return False
-
-            if "JOB_REGISTRATION_FAILED" in messages:
-                reason = ''
-                for message in messages:
-                    if 'reason' in message:
-                        reason = message['reason']
-
-                self.event_listener.fire('registration_failed', {'reason': reason})
-                return False
-
-            if "JOB_REGISTERED" in messages:
-                self.registered = True
-                print("Connected to %s " % (self.api_host,))
-                self.event_listener.fire('registration')
-                self.handle_messages(messages)
-                return True
-
-            print("Registration of job %s failed." % (self.job_id,))
-            return False
+            return self.on_connect()
         except socket.error as error:
             if locked:
                 self.lock.release()
@@ -207,37 +189,39 @@ class Client:
 
         while True:
             if self.connected and self.registered:
-                try:
-                    if last_ping < time.time() - 1:
-                        # ping every second
-                        last_ping = time.time()
-                        self.send_message("PING")
+                if last_ping < time.time() - 1:
+                    # ping every second
+                    last_ping = time.time()
+                    self.send_message("PING")
 
-                    if self.connected:
-                        # send pending messages
-                        max_messages = 1
-                        for message in self.queue:
-                            if not message['sending'] and not message['sent']:
-                                max_messages += 1
-                                self.send_message(message)
-                                if max_messages > 10:
-                                    # not too much at once, so we have time to listen for incoming messages
+                # see if we can read something
+                self.lock.acquire()
+                readable, writable, exceptional = select.select([self.s], [self.s], [self.s])
+                self.lock.release()
+
+                if exceptional:
+                    self.connection_error()
+
+                if readable:
+                    messages = self.read(self.s)
+                    if messages is not None:
+                        for message in messages:
+                            self.handle_message(message)
+
+                if writable:
+                    # send pending messages
+                    self.lock.acquire()
+                    sent_size = 0
+                    for message in self.queue:
+                        if not message['sending'] and not message['sent']:
+                            size = self.send_message(message)
+                            if size is not False:
+                                sent_size += size
+                                if sent_size > 1024 * 1024:
+                                    # not too much at once (max 1MB), so we have time to listen for incoming messages
                                     break
+                    self.lock.release()
 
-                        # see if we can read something
-                        self.lock.acquire()
-                        readable, writable, exceptional = select.select([self.s], [self.s], [])
-                        self.lock.release()
-                        if exceptional:
-                            self.connection_error()
-
-                        for s in readable:
-                            messages = self.read(s)
-                            if messages:
-                                self.handle_messages(messages)
-
-                except Exception as error:
-                    self.connection_error(error)
 
             elif not self.connected and self.active:
                 if not self.connect():
@@ -246,13 +230,17 @@ class Client:
             time.sleep(0.1)
 
     def end(self):
-        #send all missing messages
+        # send all missing messages
+
+        i = 0
         while True:
             if len(self.queue) == 0:
                 break
 
+            i += 1
             time.sleep(0.1)
-
+            if i % 50 == 0:
+                print("[AETROS] we still sync job data. %d messages left." % (len(self.queue),))
 
     def close(self):
         self.active = False
@@ -277,85 +265,117 @@ class Client:
         if isinstance(message, dict):
             message['sending'] = True
 
-        msg = json.dumps(message, default=invalid_json_values)
+        import msgpack
+        msg = msgpack.packb(message, default=invalid_json_values)
 
         try:
-            self.lock.acquire()
-            self.s.sendall(msg + "\n")
-            self.lock.release()
+            self.s.sendall(msg)
 
-            return True
+            return len(msg)
         except:
-            self.lock.release()
             self.connection_error()
             return False
 
-    def handle_messages(self, messages):
-        for message in messages:
-            if 'handled' in message:
-                for qm in self.queue:
-                    if qm['id'] == message['id']:
+    def handle_message(self, message):
+        if 'handled' in message and message['handled'] is True:
+            for qm in self.queue:
+                if qm['id'] == message['id']:
 
-                        if message['handled']:
-                            qm['sent'] = True
-                            self.queue.remove(qm)
-                        else:
-                            qm['sending'] = False
+                    if message['handled']:
+                        qm['sent'] = True
+                        self.queue.remove(qm)
+                    else:
+                        qm['sending'] = False
 
-                        break
+                    break
 
-            if not self.external_stopped and 'stop' in message:
-                self.external_stopped = True
-                self.event_listener.fire('stop')
+        if not self.external_stopped and 'stop' in message:
+            self.external_stopped = True
+            self.event_listener.fire('stop')
 
-    def read_full_message(self, s):
+    def read_one_message(self, s):
         """
-        Reads until we receive a message termination (\n)
+        Reads until we receive a message we can unpack
         """
-        message = ''
+
+        unpacker = msgpack.Unpacker(encoding='utf8')
 
         while True:
             chunk = ''
             try:
                 self.lock.acquire()
-                chunk = s.recv(2048)
+                chunk = s.recv(1024)
             finally:
                 self.lock.release()
 
             if chunk == '':
+                # happens only when connection broke. If nothing is to be received, it hangs instead.
                 self.connection_error()
                 return False
 
-            message += chunk
+            unpacker.feed(chunk)
 
-            message, parsed = parse_message(message)
-            if parsed:
-                return parsed
+            try:
+                for message in unpacker:
+                    return message
+            except:
+                pass
 
     def read(self, s):
         """
-        Reads per call current buffer from network stack. If a full message has been collected (\n retrieved)
-        the message will be parsed and returned. If no message has yet been completley transmitted it returns []
-
-        :return: list
+        Reads from the socket and tries to unpack the message. If successful (because msgpack was able to unpack)
+        then we return that message. Else None. Keep calling .read() when new data is available so we try it 
+        again.
         """
 
-        chunk = ''
-
+        self.lock.acquire()
         try:
-            self.lock.acquire()
-            chunk = s.recv(2048)
+            chunk = s.recv(1024 * 1024)
         finally:
             self.lock.release()
 
         if chunk == '':
+            # socket connection broken
             self.connection_error()
-            return False
+            return None
 
-        self.read_buffer += chunk
+        # self.read_buffer.seek(0, 2) #make sure we write at the end
+        self.read_unpacker.feed(chunk)
 
-        self.read_buffer, parsed = parse_message(self.read_buffer)
-        return parsed
+        # self.read_buffer.seek(0)
+        messages = [m for m in self.read_unpacker]
+
+        return messages if messages else None
+
+
+class JobClient(BackendClient):
+    def configure(self, job_id, api_key):
+        self.job_id = job_id
+        self.api_key = api_key
+
+    def on_connect(self):
+        self.send_message({'register_job_worker': self.api_key, 'job_id': self.job_id})
+        message = self.read_one_message(self.s)
+
+        if isinstance(message, dict) and 'a' in message:
+            if "JOB_ABORTED" in message['a']:
+                print("Job aborted meanwhile. Exiting")
+                self.event_listener.fire('stop')
+                self.active = False
+                return False
+
+            if "JOB_REGISTRATION_FAILED" in message['a']:
+                self.event_listener.fire('registration_failed', {'reason': message['reason']})
+                return False
+
+            if "JOB_REGISTERED" in message['a']:
+                self.registered = True
+                print("Connected to %s " % (self.api_host,))
+                self.event_listener.fire('registration')
+                return True
+
+        print("Registration of job %s failed." % (self.job_id,))
+        return False
 
 
 def start_job(name, api_key=None):
@@ -377,7 +397,7 @@ def start_job(name, api_key=None):
         job = create_job(name, api_key)
 
     job.start()
-    job.setup_logging()
+    job.setup_std_output_logging()
 
     return job
 
@@ -401,6 +421,7 @@ class JobLossChannel:
     """
     :type job_backend : JobBackend
     """
+
     def __init__(self, job_backend, name, xaxis=None, yaxis=None, layout=None):
         self.name = name
         self.job_backend = job_backend
@@ -417,13 +438,13 @@ class JobLossChannel:
         self.job_backend.job_add_status('channel', message)
 
     def send(self, x, training_loss, validation_loss):
-
         message = {
             'name': self.name,
             'x': x,
             'y': [training_loss, validation_loss],
         }
         self.job_backend.job_add_status('channel-value', message)
+
 
 class JobImage:
     def __init__(self, id, image, title=None):
@@ -443,6 +464,7 @@ class JobChannel:
     """
     :type job_backend: JobBackend
     """
+
     def __init__(self, job_backend, name, traces=None,
                  main=False, kpi=False, max_optimization=True,
                  type=None, xaxis=None, yaxis=None, layout=None):
@@ -467,13 +489,14 @@ class JobChannel:
         self.job_backend = job_backend
 
         if not (isinstance(traces, list) or traces is None):
-            raise Exception('traces can only be None or a list of dicts: [{name: "name", option1: ...}, {name: "name2"}, ...]')
+            raise Exception(
+                'traces can only be None or a list of dicts: [{name: "name", option1: ...}, {name: "name2"}, ...]')
 
         if not traces:
             traces = [{'name': name}]
 
         if isinstance(traces, list) and isinstance(traces[0], six.string_types):
-            traces = map(lambda x: {'name': x}, traces)
+            traces = list(map(lambda x: {'name': x}, traces))
 
         message = {
             'name': name,
@@ -494,8 +517,9 @@ class JobChannel:
             y = [y]
 
         if len(y) != len(self.traces):
-            raise Exception('You tried to set more y values (%d items) then traces available in channel %s (%d traces).' % (
-                len(y), self.name, len(self.traces)))
+            raise Exception(
+                'You tried to set more y values (%d items) then traces available in channel %s (%d traces).' % (
+                    len(y), self.name, len(self.traces)))
 
         message = {
             'name': self.name,
@@ -535,7 +559,7 @@ class JobBackend:
         self.made_batches = 0
         self.batches_per_second = 0
 
-        #done means: done, abort or crash method has been called.
+        # done means: done, abort or crash method has been called.
         self.ended = False
 
         # running means: the syncer client is running.
@@ -558,7 +582,7 @@ class JobBackend:
         self.event_listener.on('registration', self.on_registration)
         self.event_listener.on('registration_failed', self.on_registration_failed)
 
-        self.client = Client(self.host, self.api_key, self.event_listener, self.port)
+        self.client = JobClient(self.host, self.port, self.event_listener)
 
     def on_registration_failed(self, params):
         print("Connecting to AETROS failed. Reasons: %s. Wrong API_KEY='%s'?" % (params['reason'], self.api_key,))
@@ -571,19 +595,24 @@ class JobBackend:
 
     def keras_model_integration(self, model, insights=False, confusion_matrix=False):
         import aetros.keras
-        aetros.keras.KerasIntegration(self.model_id, model, job_backend=self, insights=insights, confusion_matrix=confusion_matrix)
+        aetros.keras.KerasIntegration(self.model_id, model, job_backend=self, insights=insights,
+                                      confusion_matrix=confusion_matrix)
 
     def external_aborted(self, params):
-        self.client.close()
         self.ended = True
         self.running = False
 
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
+        self.client.close()
+
         os.kill(os.getpid(), signal.SIGINT)
 
-    def setup_logging(self):
+    def setup_std_output_logging(self):
+        """
+        Overwrites sys.stdout and sys.stderr so we can send it additionally to Aetros.
+        """
         sys.stdout = self.general_logger_stdout
         sys.stderr = self.general_logger_error
 
@@ -599,6 +628,7 @@ class JobBackend:
 
         if time_diff > 1 or batch == total:  # only each second second or last batch
             self.set_system_info('currentBatch', batch)
+            self.set_system_info('batchSize', size)
             self.set_system_info('nb_batches', total)
 
             self.batches_per_second = self.made_batches / time_diff
@@ -621,7 +651,7 @@ class JobBackend:
                     eta += (total - batch) / self.batches_per_second
 
                 # time until all epochs are done
-                if self.total_epochs - (self.current_epoch-1) > 0:
+                if self.total_epochs - (self.current_epoch - 1) > 0:
                     eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
 
                 self.set_system_info('eta', eta)
@@ -640,7 +670,7 @@ class JobBackend:
         if epoch is not 0 and self.last_progress_call:
             # how long took it since the last call?
             time_per_epoch = time.time() - self.last_progress_call
-            eta = time_per_epoch * (self.total_epochs-epoch)
+            eta = time_per_epoch * (self.total_epochs - epoch)
             self.set_system_info('eta', eta)
             if time_per_epoch > 0:
                 self.set_system_info('epochsPerSecond', 1 / time_per_epoch)
@@ -696,7 +726,8 @@ class JobBackend:
         self.collect_environment()
         self.start_monitoring()
 
-        self.client.start(self.job_id)
+        self.client.configure(self.job_id, self.api_key)
+        self.client.start()
         self.detect_git_version()
 
     def detect_git_version(self):
@@ -711,7 +742,6 @@ class JobBackend:
         except:
             pass
 
-
     def start_monitoring(self):
         self.monitoring_thread = MonitoringThread(self)
         self.monitoring_thread.daemon = True
@@ -720,7 +750,11 @@ class JobBackend:
     def on_shutdown(self):
         if not self.ended and hasattr(sys, 'last_value'):
             # sys.last_value contains a exception, when there was an uncaught one
-            self.crash('Uncaught exception')
+            if isinstance(sys.last_value, KeyboardInterrupt):
+                self.abort()
+            else:
+                self.crash(type(sys.last_value).__name__ + ': ' + str(sys.last_value))
+
         elif self.running:
             self.done()
 
@@ -733,12 +767,12 @@ class JobBackend:
 
         self.post('job/stopped', json={'id': self.job_id})
 
-        self.client.end()
-        self.ended = True
-        self.running = False
-
         if self.monitoring_thread:
             self.monitoring_thread.stop()
+
+        self.ended = True
+        self.running = False
+        self.client.end()
 
     def abort(self):
         if not self.running:
@@ -746,21 +780,24 @@ class JobBackend:
 
         self.post('job/aborted', json={'id': self.job_id})
 
-        self.client.close()
-        self.ended = True
-        self.running = False
         if self.monitoring_thread:
             self.monitoring_thread.stop()
+
+        self.ended = True
+        self.running = False
+        self.client.close()
 
     def crash(self, error=None):
-        data = {'id': self.job_id, 'error': str(error) if error else None, 'stderr': self.general_logger_error.last_messages}
+        data = {'id': self.job_id, 'error': str(error) if error else None,
+                'stderr': self.general_logger_error.last_messages}
         self.post('job/crashed', json=data)
 
-        self.client.close()
-        self.ended = True
-        self.running = False
         if self.monitoring_thread:
             self.monitoring_thread.stop()
+
+        self.ended = True
+        self.running = False
+        self.client.close()
 
     def get_url(self, affix):
 
@@ -906,7 +943,8 @@ class JobBackend:
 
         return self.job_id
 
-    def ensure_job(self, id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_key=None):
+    def ensure_job(self, id, hyperparameter=None, dataset_id=None, server_id='local', insights=False,
+                   insights_sample_path=None, api_key=None):
         """
         Makes sure that either
         1. id is a model name, a job is created and loaded, or
@@ -918,7 +956,7 @@ class JobBackend:
         if '/' in id:
             # it's a model name
             id = self.create(id, server_id=server_id, hyperparameter=hyperparameter,
-                                    dataset_id=dataset_id, insights=insights)
+                             dataset_id=dataset_id, insights=insights)
             self.load(id)
 
             print(
@@ -934,14 +972,12 @@ class JobBackend:
                 "Job %s#%d (%s) started. Open http://%s/job/%s to monitor the training." %
                 (self.model_id, self.job_index, self.job_id, self.host, id))
 
-    def ensure_model(self, name, model_json, settings=None, type='custom', layers=None, graph=None):
+    def ensure_model(self, name, settings=None, type='custom', layers=None):
         response = self.put('model/ensure', {
             'id': name,
             'type': type,
-            'model': model_json,
             'settings': json.dumps(settings, allow_nan=False, default=invalid_json_values) if settings else None,
             'layers': json.dumps(layers, allow_nan=False, default=invalid_json_values),
-            'graph': json.dumps(graph, allow_nan=False, default=invalid_json_values),
         })
 
         if response.status_code != 200:
@@ -1005,7 +1041,6 @@ class JobBackend:
 
         if response.status_code != 200:
             raise Exception("Could not restart job: %s" % (response.content,))
-
 
     def load(self, id=None):
         """
@@ -1101,10 +1136,35 @@ class JobBackend:
             'data': {'key': key, 'value': value}
         })
 
+    def set_graph(self, graph):
+        self.client.send({
+            'type': 'job-graph',
+            'data': {'graph': graph}
+        })
+
     def set_system_info(self, key, value):
         self.client.send({
             'type': 'job-info',
             'data': {'key': key, 'value': value}
+        })
+
+    def upload_file(self, file_path, name=None, mime_type=None):
+        if os.path.getsize(file_path) > 10 * 1024 * 1024 * 1024:
+            raise Exception('Can not upload file bigger than 10MB')
+
+        with open(file_path, 'rb') as f:
+            contents = f.read()
+
+        if mime_type is None:
+            import mimetypes
+            mime_type, encoding = mimetypes.guess_type(file_path)
+
+        path = os.path.relpath(file_path)
+
+        self.client.send({
+            'type': 'job-file',
+            'time': time.time(),
+            'data': {'path': path, 'name': name, 'mime': mime_type, 'content': contents}
         })
 
     def job_add_insight(self, x, images, confusion_matrix):
@@ -1118,7 +1178,7 @@ class JobBackend:
             converted_images.append({
                 'id': image.id,
                 'title': image.title,
-                'image': self.to_base64(image.image)
+                'image': self.pil_image_to_jpeg(image.image)
             })
 
         self.client.send({
@@ -1127,12 +1187,11 @@ class JobBackend:
             'data': {'info': info, 'images': converted_images}
         })
 
-    def to_base64(self, image):
-        buffer = BytesIO()
-        if (six.PY2):
-            buffer = StringIO()
+    def pil_image_to_jpeg(self, image):
+        buffer = six.BytesIO()
+
         image.save(buffer, format="JPEG", optimize=True, quality=80)
-        return base64.b64encode(buffer.getvalue())
+        return buffer.getvalue()
 
     def collect_environment(self):
         import socket
@@ -1170,7 +1229,8 @@ class JobBackend:
                     total = gpu[1] / 1024.0 / 1024.0 / 1024.0
                     used = total - free
 
-                    print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (used, total, cuda.active_device_name(), cuda.active_device_number()))
+                    print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (
+                    used, total, cuda.active_device_name(), cuda.active_device_number()))
 
         self.set_system_info('on_gpu', on_gpu)
 

@@ -19,6 +19,7 @@ class Trainer():
         self.samples_per_epoch = 1
         # validation sample count per epoch for generator. same name as in keras fit_generator
         self.nb_val_samples = 1
+        self.nb_val_steps = None
 
         self.data_validation = None
         self.data_train = None

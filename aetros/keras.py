@@ -2,6 +2,8 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 import os
 
+import numpy
+
 from aetros.backend import start_job
 from aetros.KerasLogger import KerasLogger
 from aetros.Trainer import Trainer
@@ -103,6 +105,7 @@ class KerasIntegration():
         self.job_backend = job_backend
         self.trainer = None
         self.callback = None
+        self.insight_layer = []
 
         if not self.job_backend:
             self.job_backend = start_job(model_name, api_key=api_key)
@@ -150,36 +153,37 @@ class KerasIntegration():
         #                               validation_data=None, nb_val_samples=None,
         #                               class_weight={}, max_q_size=10, nb_worker=1, pickle_safe=False):
         def overwritten_fit_generator(
-                      generator,
-                      steps_per_epoch,
-                      epochs=1,
-                      verbose=1,
-                      callbacks=[],
-                      validation_data=None,
-                      validation_steps=None,
-                      class_weight=None,
-                      max_q_size=10,
-                      workers=1,
-                      pickle_safe=False,
-                      initial_epoch=0):
+                generator,
+                steps_per_epoch,
+                epochs=1,
+                verbose=1,
+                callbacks=[],
+                validation_data=None,
+                validation_steps=None,
+                class_weight=None,
+                max_q_size=10,
+                workers=1,
+                pickle_safe=False,
+                initial_epoch=0):
 
             callback = self.setup(generator, epochs)
-            self.trainer.nb_val_samples = nb_val_samples #todo
+            self.trainer.nb_val_steps = validation_steps
             self.trainer.data_validation = validation_data
             callbacks.append(callback)
 
-            copy['fit_generator'](generator,
-                      steps_per_epoch,
-                      epochs,
-                      verbose,
-                      callbacks,
-                      validation_data,
-                      validation_steps,
-                      class_weight,
-                      max_q_size,
-                      workers,
-                      pickle_safe,
-                      initial_epoch)
+            copy['fit_generator'](
+                generator,
+                steps_per_epoch,
+                epochs=epochs,
+                verbose=verbose,
+                callbacks=callbacks,
+                validation_data=validation_data,
+                validation_steps=validation_steps,
+                class_weight=class_weight,
+                max_q_size=max_q_size,
+                workers=workers,
+                pickle_safe=pickle_safe,
+                initial_epoch=initial_epoch)
             self.end()
 
         self.model.fit = overwritten_fit
@@ -199,25 +203,27 @@ class KerasIntegration():
             'optimizer': type(self.model.optimizer).__name__ if hasattr(self.model, 'optimizer') else ''
         }
 
-        self.job_backend.ensure_model(self.job_backend.model_id, self.model.to_json(), settings=settings,
-                                      type=self.model_type, graph=graph)
+        self.job_backend.ensure_model(self.job_backend.model_id, settings=settings, type=self.model_type)
 
         self.trainer = Trainer(self.job_backend, self.job_backend.general_logger_stdout)
 
         self.trainer.model = self.model
         self.trainer.data_train = {'x': x}
+        self.job_backend.set_graph(graph)
 
         self.callback = KerasLogger(self.trainer, self.job_backend, self.job_backend.general_logger_stdout, force_insights=self.insights)
         self.callback.log_epoch = False
         self.callback.model = self.model
+        self.callback.insight_layer = self.insight_layer
         self.callback.confusion_matrix = self.confusion_matrix
 
         return self.callback
 
-    def publish(self):
-        graph = self.model_to_graph(self.model)
-        self.job_backend.ensure_model(self.model_name, self.model.to_json(), type=self.model_type,
-                                      graph=graph)
+    def add_insight_layer(self, layer):
+        if self.callback:
+            self.callback.insight_layer.append(layer)
+        else:
+            self.insight_layer.append(layer)
 
     def start(self, nb_epoch=1, nb_sample=1, title="TRAINING"):
         """
@@ -317,7 +323,8 @@ class KerasIntegration():
             if isinstance(layer, InputLayer):
                 info['inputShape'] = layer.input_shape
 
-            info['outputShape'] = layer.output_shape
+            if hasattr(layer, 'output_shape'):
+                info['outputShape'] = layer.output_shape
 
             return {
                 'name': layer.name,
@@ -346,7 +353,7 @@ class KerasIntegration():
                         # map['group_pointer'] += 1
                         extract_layers(layer.layers)
                         # map['group_pointer'] -= 1
-                    else:
+                    elif hasattr(layer, 'inbound_nodes'):
                         for inbound_node in layer.inbound_nodes:
                             extract_layers(inbound_node.inbound_layers)
 
@@ -355,12 +362,13 @@ class KerasIntegration():
         # build edges
         for layer in map['flatten']:
 
-            for inbound_node in layer.inbound_nodes:
-                for inbound_layer in inbound_node.inbound_layers:
-                    graph['links'].append({
-                        'source': get_idx(inbound_layer),
-                        'target': get_idx(layer),
-                    })
+            if hasattr(layer, 'inbound_nodes'):
+                for inbound_node in layer.inbound_nodes:
+                    for inbound_layer in inbound_node.inbound_layers:
+                        graph['links'].append({
+                            'source': get_idx(inbound_layer),
+                            'target': get_idx(layer),
+                        })
 
             if hasattr(layer, 'layers') and isinstance(layer.layers, list):
                 graph['links'].append({

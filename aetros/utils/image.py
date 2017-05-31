@@ -327,6 +327,69 @@ def get_layer_vis_square(data,
     else:
         raise RuntimeError('unrecognized data shape: %s' % (data.shape,))
 
+    return get_layer_vis_square_raw(data,
+                         allow_heatmap,
+                         normalize,
+                         min_img_dim,
+                         max_width,
+                         colormap,
+                         )
+
+def get_image_tales(images, colormap='jet', min_img_dim=100, max_width=1000):
+
+    print('get_weights_image images', images.shape)
+    padsize = 1
+    # convert to float since we're going to do some math
+    images = images.astype('float32')
+
+    images -= images.min()
+    if images.max() > 0:
+        images /= images.max()
+        images *= 255
+
+    if images.ndim == 3:
+        # they're grayscale - convert to a colormap
+        redmap, greenmap, bluemap = get_color_map(colormap)
+
+        red = np.interp(images * (len(redmap) - 1) / 255.0, range(len(redmap)), redmap)
+        green = np.interp(images * (len(greenmap) - 1) / 255.0, range(len(greenmap)), greenmap)
+        blue = np.interp(images * (len(bluemap) - 1) / 255.0, range(len(bluemap)), bluemap)
+
+        # Slap the channels back together
+        images = np.concatenate(
+            (red[..., np.newaxis], green[..., np.newaxis], blue[..., np.newaxis]), axis=3)
+        images = np.minimum(images, 255)
+        images = np.maximum(images, 0)
+
+    # convert back to uint8
+    images = images.astype('uint8')
+
+    # Compute the output image matrix dimensions
+    n = int(np.ceil(np.sqrt(images.shape[0])))
+    ny = n
+    nx = n
+    length = images.shape[0]
+    if n * (n - 1) >= length:
+        nx = n - 1
+
+    # Add padding between the images
+    padding = ((0, nx * ny - length), (0, padsize), (0, padsize)) + ((0, 0),) * (images.ndim - 3)
+    padded = np.pad(images, padding, mode='constant', constant_values=0)
+
+    # Tile the images beside each other
+    tiles = padded.reshape(
+        (ny, nx) + padded.shape[1:]).transpose((0, 2, 1, 3) + tuple(range(4, padded.ndim + 1)))
+    tiles = tiles.reshape((ny * tiles.shape[1], nx * tiles.shape[3]) + tiles.shape[4:])
+
+    return tiles
+
+def get_layer_vis_square_raw(data,
+                         allow_heatmap=True,
+                         normalize=True,
+                         min_img_dim=100,
+                         max_width=1200,
+                         colormap='jet',
+                         ):
     # chop off data so that it will fit within max_width
     padsize = 0
     width = data.shape[2]

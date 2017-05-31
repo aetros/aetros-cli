@@ -22,5 +22,6 @@ setup(name='aetros',
                         'cherrypy>=7.1.0',
                         'Pillow>=4.0.0',
                         'py-cpuinfo==0.2.3'
-                        ),
+                        'py-cpuinfo==0.2.3'
+                        'msgpack-python>=0.4'),
       packages=find_packages())

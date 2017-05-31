@@ -44,7 +44,7 @@ class GeneralLogger(object):
             if self.logFD:
                 self.logFD.write(self.buffer)
 
-            if self.job_backend:
+            if self.job_backend and self.job_backend.running:
                 self.job_backend.write_log(self.buffer)
 
         self.buffer = ''
