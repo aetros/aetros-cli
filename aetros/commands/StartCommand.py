@@ -17,8 +17,9 @@ class StartCommand:
         parser.add_argument('--api-key', help="Secure key. Alternatively use API_KEY environment varibale.")
         parser.add_argument('--gpu', action='store_true', help="Activates GPU if available. Only for Theano models.")
         parser.add_argument('--device', help="Which device index should be used. Default 0 (which means with --gpu => 'gpu0'). Only for Theano models.")
-        parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano. Only for Keras models.")
-        parser.add_argument('--mp', help="Activates multithreading if available with given thread count. Only for Theano models.")
+        parser.add_argument('--tf', action='store_true', help="Force TensorFlow as library. Only for Keras models.")
+        parser.add_argument('--th', action='store_true', help="Force Theano as library. Only for Keras models.")
+        parser.add_argument('--mp', help="Activates multithreading if available with given thread count. Only when Theano is active.")
         parser.add_argument('--no-hardware-monitoring', action='store_true', help="Deactivates hardware monitoring")
         parser.add_argument('--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
 
@@ -41,7 +42,11 @@ class StartCommand:
 
         os.environ['THEANO_FLAGS'] = flags
 
-        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
+        if parsed_args.tf:
+            os.environ['KERAS_BACKEND'] = 'tensorflow'
+
+        if parsed_args.th:
+            os.environ['KERAS_BACKEND'] = 'theano'
 
         hyperparameter = {}
         if parsed_args.param:
