@@ -72,7 +72,8 @@ class KerasLogger(Callback):
         self.start_time = time.time()
         self.last_batch_time = time.time()
         self.job_backend.set_status('TRAINING')
-        self.job_backend.set_system_info('total_params', get_total_params(self.model))
+        self.job_backend.set_info('parameters', get_total_params(self.model))
+        self.job_backend.set_info('backend', K.backend())
 
         if self.model.optimizer and hasattr(self.model.optimizer, 'get_config'):
             config = self.model.optimizer.get_config()
@@ -119,10 +120,11 @@ class KerasLogger(Callback):
     def on_batch_begin(self, batch, logs={}):
 
         if not self.data_gathered:
-            validation_samples = 0
+            validation_samples = self.trainer.nb_val_samples
             if 'samples' in self.params:
                 training_samples = self.params['samples']
-                validation_samples = len(self.model.validation_data[0]) if self.model.validation_data else self.trainer.nb_val_samples
+                if hasattr(self.model, 'validation_data'):
+                    validation_samples = len(self.model.validation_data[0])
             else:
                 training_samples = self.params['steps'] * logs['size']
                 if self.trainer.is_generator(self.trainer.data_validation):
