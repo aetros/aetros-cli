@@ -27,8 +27,8 @@ def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=
 
     job_backend = JobBackend(api_key=api_key)
     job_backend.ensure_job(id, hyperparameter, dataset_id, server_id, insights, insights_sample_path)
-    job_backend.setup_logging()
-    job_backend.client.start(job_backend.job_id)
+    job_backend.setup_std_output_logging()
+    job_backend.start()
 
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
