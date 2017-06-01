@@ -27,8 +27,9 @@ class ServerClient(BackendClient):
 
     def on_connect(self):
         self.send_message({'register_server': self.server_api_key})
-        message = self.read_one_message(self.s)
+        messages = self.wait_for_at_least_one_message(self.s)
 
+        message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:
             if "ACCESS_DENIED" in message['a']:
                 print('Access denied')
@@ -43,16 +44,16 @@ class ServerClient(BackendClient):
                 server_id = message['id']
                 self.event_listener.fire('registration', server_id)
                 print("Connected to %s as server %s" % (self.api_host, server_id))
+                self.handle_messages(messages)
                 return True
 
         print("Registration failed due to protocol error.")
         return False
 
-    def handle_message(self, messages):
+    def handle_messages(self, messages):
         for message in messages:
-
             if not isinstance(message, dict):
-                continue
+                return
 
             if 'stop' in message:
                 self.close()
