@@ -205,8 +205,7 @@ class BackendClient:
                 if readable:
                     messages = self.read(self.s)
                     if messages is not None:
-                        for message in messages:
-                            self.handle_message(message)
+                        self.handle_messages(messages)
 
                 if writable:
                     # send pending messages
@@ -276,26 +275,27 @@ class BackendClient:
             self.connection_error()
             return False
 
-    def handle_message(self, message):
-        if 'handled' in message and message['handled'] is True:
-            for qm in self.queue:
-                if qm['id'] == message['id']:
+    def handle_messages(self, messages):
+        for message in messages:
+            if 'handled' in message and message['handled'] is True:
+                for qm in self.queue:
+                    if qm['id'] == message['id']:
 
-                    if message['handled']:
-                        qm['sent'] = True
-                        self.queue.remove(qm)
-                    else:
-                        qm['sending'] = False
+                        if message['handled']:
+                            qm['sent'] = True
+                            self.queue.remove(qm)
+                        else:
+                            qm['sending'] = False
 
-                    break
+                        break
 
-        if not self.external_stopped and 'stop' in message:
-            self.external_stopped = True
-            self.event_listener.fire('stop')
+            if not self.external_stopped and 'stop' in message:
+                self.external_stopped = True
+                self.event_listener.fire('stop')
 
-    def read_one_message(self, s):
+    def wait_for_at_least_one_message(self, s):
         """
-        Reads until we receive a message we can unpack
+        Reads until we receive at least one message we can unpack. Return all found messages.
         """
 
         unpacker = msgpack.Unpacker(encoding='utf8')
@@ -315,11 +315,9 @@ class BackendClient:
 
             unpacker.feed(chunk)
 
-            try:
-                for message in unpacker:
-                    return message
-            except:
-                pass
+            messages = [m for m in unpacker]
+            if messages:
+                return messages
 
     def read(self, s):
         """
@@ -355,8 +353,9 @@ class JobClient(BackendClient):
 
     def on_connect(self):
         self.send_message({'register_job_worker': self.api_key, 'job_id': self.job_id})
-        message = self.read_one_message(self.s)
+        messages = self.wait_for_at_least_one_message(self.s)
 
+        message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:
             if "JOB_ABORTED" in message['a']:
                 print("Job aborted meanwhile. Exiting")
@@ -372,6 +371,7 @@ class JobClient(BackendClient):
                 self.registered = True
                 print("Connected to %s " % (self.api_host,))
                 self.event_listener.fire('registration')
+                self.handle_messages(messages)
                 return True
 
         print("Registration of job %s failed." % (self.job_id,))
@@ -967,10 +967,6 @@ class JobBackend:
             if self.job['progressStatus'] > JOB_STATUS.PROGRESS_STATUS_QUEUED:
                 self.restart(id)
                 self.load(id)
-
-            print(
-                "Job %s#%d (%s) started. Open http://%s/job/%s to monitor the training." %
-                (self.model_id, self.job_index, self.job_id, self.host, id))
 
     def ensure_model(self, name, settings=None, type='custom', layers=None):
         response = self.put('model/ensure', {
