@@ -717,6 +717,9 @@ class JobBackend:
         return JobChannel(self, name, traces, main, kpi, max_optimization, type, xaxis, yaxis, layout)
 
     def start(self):
+        if self.running:
+            raise Exception('Job already running.')
+
         if not self.job_id:
             raise Exception('No job id found. Use create() first.')
 
@@ -743,9 +746,10 @@ class JobBackend:
             pass
 
     def start_monitoring(self):
-        self.monitoring_thread = MonitoringThread(self)
-        self.monitoring_thread.daemon = True
-        self.monitoring_thread.start()
+        if not self.monitoring_thread:
+            self.monitoring_thread = MonitoringThread(self)
+            self.monitoring_thread.daemon = True
+            self.monitoring_thread.start()
 
     def on_shutdown(self):
         if not self.ended and hasattr(sys, 'last_value'):
@@ -767,12 +771,19 @@ class JobBackend:
 
         self.post('job/stopped', json={'id': self.job_id})
 
+        self.stop(True)
+
+    def stop(self, wait_for_client=False):
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
         self.ended = True
         self.running = False
-        self.client.end()
+
+        if wait_for_client:
+            self.client.end()
+        else:
+            self.client.close()
 
     def abort(self):
         if not self.running:
@@ -780,24 +791,14 @@ class JobBackend:
 
         self.post('job/aborted', json={'id': self.job_id})
 
-        if self.monitoring_thread:
-            self.monitoring_thread.stop()
-
-        self.ended = True
-        self.running = False
-        self.client.close()
+        self.stop()
 
     def crash(self, error=None):
         data = {'id': self.job_id, 'error': str(error) if error else None,
                 'stderr': self.general_logger_error.last_messages}
         self.post('job/crashed', json=data)
 
-        if self.monitoring_thread:
-            self.monitoring_thread.stop()
-
-        self.ended = True
-        self.running = False
-        self.client.close()
+        self.stop()
 
     def get_url(self, affix):
 

@@ -125,7 +125,7 @@ def start_custom(job_backend):
 
     args = (sys.executable, git_python_script)
     print("$ %s %s" % args)
-    job_backend.client.end()
+    job_backend.stop(True)
 
     subprocess.Popen(args, close_fds=True, env=my_env).wait()
 
@@ -141,8 +141,6 @@ def start_keras(job_backend, insights_sample_path=None):
     from keras import backend as K
     # all our shapes are theano schema. (channels, height, width)
     K.set_image_dim_ordering('th')
-
-    job_backend.start()
 
     ensure_dir('aetros-cli-data/models/%s/%s' % (job_model.model_id, job_model.id))
 
