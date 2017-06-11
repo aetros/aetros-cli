@@ -1202,6 +1202,10 @@ class JobBackend:
 
         env['hostname'] = socket.gethostname()
         env['variables'] = dict(os.environ)
+
+        if 'API_KEY' in env['variables']:
+            del env['variables']['API_KEY']
+
         env['pip_packages'] = sorted([[i.key, i.version] for i in pip.get_installed_distributions()])
         self.set_system_info('environment', env)
 
