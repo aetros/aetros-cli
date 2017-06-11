@@ -85,6 +85,10 @@ class KerasLogger(Callback):
         self.current['started'] = self.start_time
         self.job_backend.set_system_info('current', self.current)
 
+        #compatibility with keras 1.x
+        if 'epochs' not in self.params and 'nb_epoch' in self.params:
+            self.params['epochs'] = self.params['nb_epoch']
+
         xaxis = {
             'range': [1, self.params['epochs']],
             'title': u'Epoch ⇢'
