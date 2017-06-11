@@ -1198,7 +1198,7 @@ class JobBackend:
         env = {}
 
         env['python_version'] = platform.python_version()
-        env['python_executable'] = sys.executable()
+        env['python_executable'] = sys.executable
 
         env['hostname'] = socket.gethostname()
         env['variables'] = dict(os.environ)
