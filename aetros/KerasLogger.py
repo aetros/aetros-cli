@@ -27,6 +27,17 @@ from aetros.utils.image import get_layer_vis_square, get_layer_vis_square_raw, g
 from .keras_model_utils import ensure_dir, get_total_params
 import six
 
+# compatibility with keras 1.x
+def image_data_format():
+    if hasattr(K, 'image_data_format'):
+        return K.image_data_format()
+
+    if K.image_dim_ordering() == 'th':
+        return 'channel_first'
+    else:
+        return 'channel_last'
+
+
 class KerasLogger(Callback):
     def __init__(self, trainer, job_backend, general_logger, force_insights=False):
         self.params = {}
@@ -341,7 +352,7 @@ class KerasLogger(Callback):
                 Y = fn(input_data_x_sample)[0]
 
                 data = np.squeeze(Y)
-                if K.image_data_format() == 'channels_last':
+                if image_data_format() == 'channels_last':
                     data = np.transpose(data, (2, 0, 1))
 
                 image = PIL.Image.fromarray(get_image_tales(data))
