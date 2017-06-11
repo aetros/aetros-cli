@@ -88,6 +88,8 @@ class KerasLogger(Callback):
         #compatibility with keras 1.x
         if 'epochs' not in self.params and 'nb_epoch' in self.params:
             self.params['epochs'] = self.params['nb_epoch']
+        if 'samples' not in self.params and 'nb_sample' in self.params:
+            self.params['samples'] = self.params['nb_sample']
 
         xaxis = {
             'range': [1, self.params['epochs']],
