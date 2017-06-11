@@ -337,7 +337,6 @@ def get_layer_vis_square(data,
 
 def get_image_tales(images, colormap='jet', min_img_dim=100, max_width=1000):
 
-    print('get_weights_image images', images.shape)
     padsize = 1
     # convert to float since we're going to do some math
     images = images.astype('float32')
