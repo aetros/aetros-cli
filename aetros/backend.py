@@ -1193,8 +1193,12 @@ class JobBackend:
         import socket
         import os
         import pip
+        import platform
 
         env = {}
+
+        env['python_version'] = platform.python_version()
+        env['python_executable'] = sys.executable()
 
         env['hostname'] = socket.gethostname()
         env['variables'] = dict(os.environ)
