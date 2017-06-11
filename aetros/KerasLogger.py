@@ -129,7 +129,7 @@ class KerasLogger(Callback):
             validation_samples = self.trainer.nb_val_samples
             if 'samples' in self.params:
                 training_samples = self.params['samples']
-                if hasattr(self.model, 'validation_data'):
+                if hasattr(self.model, 'validation_data') and self.model.validation_data:
                     validation_samples = len(self.model.validation_data[0])
             else:
                 training_samples = self.params['steps'] * logs['size']
