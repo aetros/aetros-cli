@@ -157,11 +157,11 @@ class ServerCommand:
         for process in self.job_processes:
             job = getattr(process, 'job')
             exit_code = process.poll()
-            if exit_code > 0:
+            if exit_code is not None and exit_code > 0:
                 reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
                 print(reason)
                 self.server.send_message({'type': 'job-failed', 'id': job['id'], 'error': reason})
-            elif exit_code == 0:
+            elif exit_code is not None and exit_code == 0:
                 print('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
 
             if exit_code is not None and job['id'] in self.queuedMap:
