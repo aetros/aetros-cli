@@ -224,7 +224,7 @@ class ServerCommand:
             name = self.get_disk_name(disk[1])
             values['disks'][name] = psutil.disk_usage(disk[1]).total
 
-        for id, net in psutil.net_if_stats().iteritems():
+        for id, net in psutil.net_if_stats().items():
             if 0 != id.find('lo') and net.isup:
                 self.nets.append(id)
                 values['nets'][id] = net.speed or 1000
