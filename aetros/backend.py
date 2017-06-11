@@ -221,7 +221,6 @@ class BackendClient:
                                     break
                     self.lock.release()
 
-
             elif not self.connected and self.active:
                 if not self.connect():
                     time.sleep(5)
