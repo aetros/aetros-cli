@@ -106,7 +106,8 @@ class ImageDownloaderWorker(Thread):
                         img.save(local_image_path, 'JPEG', quality=quality, optimize=True)
                 except IOError as e:
                     print(("No valid image found %s" % (local_image_path,)))
-                    os.remove(local_image_path)
+                    if os.path.exists(local_image_path):
+                        os.remove(local_image_path)
                 except KeyboardInterrupt:
                     self.controller['running'] = False
 
