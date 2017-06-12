@@ -423,6 +423,11 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
 def get_images(job_model, dataset, node, trainer):
     concurrent = 15
 
+    from PIL import ImageFile
+    if hasattr(ImageFile, 'LOAD_TRUNCATED_IMAGES'):
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
     q = Queue(concurrent)
     config = dataset['config']
 
