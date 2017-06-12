@@ -160,7 +160,6 @@ class KerasLogger(Callback):
             dataset_infos['input1'] = dataset_info
             self.job_backend.set_system_info('datasets', dataset_infos)
 
-
         if 'nb_batches' not in self.current:
             batch_size = logs['size']
             if 'samples' in self.params:
@@ -170,6 +169,7 @@ class KerasLogger(Callback):
 
             self.current['nb_batches'] = nb_batches
             self.current['batch_size'] = batch_size
+            self.job_backend.set_info('Batch size', batch_size)
 
     def on_batch_end(self, batch, logs={}):
         self.filter_invalid_json_values(logs)
