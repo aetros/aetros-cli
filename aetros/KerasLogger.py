@@ -146,7 +146,7 @@ class KerasLogger(Callback):
                 training_samples = self.params['steps'] * logs['size']
                 if self.trainer.is_generator(self.trainer.data_validation):
                     validation_samples = self.trainer.nb_val_steps * logs['size']
-                elif self.trainer.data_validation:
+                elif self.trainer.data_validation and isinstance(self.trainer.data_validation, list):
                     validation_samples = len(self.trainer.data_validation[0])
 
             # we need to do it in on_batch_begin due to the fact that
