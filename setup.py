@@ -13,7 +13,7 @@ setup(name='aetros',
       entry_points={
           'console_scripts': ['aetros = aetros:main'],
       },
-      install_requires=('keras>=1.0.6,<2',
+      install_requires=('keras',
                         'requests',
                         'numpy',
                         'scipy',

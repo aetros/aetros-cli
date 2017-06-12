@@ -59,16 +59,22 @@ class GeneralLogger(object):
         # if not self.error:
         #     message = self.get_line(message)
 
-        self.terminal.write(message)
-        self.last_messages += message
-        if len(self.last_messages) > 500 * 1024:
-            self.last_messages = self.last_messages[-500 * 1024:]
+        try:
+            self.terminal.write(message)
 
-        for char in message:
-            if '\b' == char:
-                self.buffer = self.buffer[:-1]
-            else:
-                self.buffer += char
+            self.last_messages += message
+            if len(self.last_messages) > 500 * 1024:
+                self.last_messages = self.last_messages[-500 * 1024:]
+
+            for char in message:
+                if '\b' == char:
+                    self.buffer = self.buffer[:-1]
+                else:
+                    self.buffer += char
+        except:
+            self.last_messages = ''
+            self.buffer = ''
+            pass
 
         if not self.last_timer:
             self.last_timer = Timer(1.0, self.send_to_buffer)
