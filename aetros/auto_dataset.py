@@ -368,8 +368,6 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
     trainer.set_job_system_info('classes', classes)
     trainer.classes = classes
 
-    trainer.output_size = train_generator.nb_class
-
     # ensure_dir(dataset_config['path'] + '/preview')
 
     test_datagen = ImageDataGenerator(rescale=1. / 255)
@@ -381,11 +379,31 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
         color_mode='grayscale' if grayscale is True else 'rgb',
         class_mode='categorical')
 
-    trainer.set_generator_validation_nb(validation_generator.nb_sample)
-    trainer.set_generator_training_nb(train_generator.nb_sample)
+    validation_samples = 0
+    train_samples = 0
+
+    # Keras 2
+    if hasattr(train_generator, 'num_class'):
+        trainer.output_size = train_generator.num_class
+    if hasattr(train_generator, 'samples'):
+        train_samples = train_generator.samples
+    if hasattr(validation_generator, 'samples'):
+        validation_samples = validation_generator.samples
+
+    # Keras 1
+    if hasattr(train_generator, 'nb_class'):
+        trainer.output_size = train_generator.nb_class
+    if hasattr(train_generator, 'nb_sample'):
+        train_samples = train_generator.nb_sample
+    if hasattr(validation_generator, 'nb_sample'):
+        validation_samples = validation_generator.nb_sample
+
+
+    trainer.set_generator_validation_nb(validation_samples)
+    trainer.set_generator_training_nb(train_samples)
 
     print(("Found %d classes, %d images (%d in training [%saugmented], %d in validation) in %s " %
-           (len(classes), validation_generator.nb_sample + train_generator.nb_sample, train_generator.nb_sample, 'not ' if augmentation is False else '', validation_generator.nb_sample, dataset_config['path'])))
+           (len(classes), validation_samples + train_samples, train_samples, 'not ' if augmentation is False else '', validation_samples, dataset_config['path'])))
 
     if trainer.output_size == 0:
         print("Could not find any classes. Does the directory contains images?")
