@@ -7,6 +7,7 @@ import time
 
 from keras.optimizers import Adadelta, Adam, Adamax, Adagrad, RMSprop, SGD
 
+from aetros.Trainer import is_generator
 from aetros.backend import JobImage
 
 try:
@@ -38,23 +39,23 @@ def image_data_format():
         return 'channel_last'
 
 
-class KerasLogger(Callback):
-    def __init__(self, trainer, job_backend, general_logger, force_insights=False):
+class KerasCallback(Callback):
+    def __init__(self, job_backend, general_logger, force_insights=False):
         self.params = {}
-        super(KerasLogger, self).__init__()
+        super(KerasCallback, self).__init__()
         self.validation_per_batch = []
         self.insight_layer = []
         self.ins = None
         self.insights_sample_path = None
+        self.data_validation = None
+        self.data_validation_size = None
         self.force_insights = force_insights
 
-        self.trainer = trainer
         self.current = {}
-        self.log_epoch = True
+        self.log_epoch = False
         self.confusion_matrix = True
 
         self.job_backend = job_backend
-        self.job_model = job_backend.get_job_model()
         self.general_logger = general_logger
         self._test_with_acc = None
         self.last_batch_time = time.time()
@@ -63,11 +64,12 @@ class KerasLogger(Callback):
         self.batches_per_second = 0
         self.stats = []
         self.last_current = None
+
+        self.job_model = job_backend.get_job_model()
         self.filepath_best = self.job_model.get_weights_filepath_best()
         self.filepath_latest = self.job_model.get_weights_filepath_latest()
 
         ensure_dir(os.path.dirname(self.filepath_best))
-        self.data_gathered = False
 
         self.accuracy_channel = None
         self.all_losses = None
@@ -79,12 +81,58 @@ class KerasLogger(Callback):
         self.insights_x = None
         self.best_total_accuracy = 0
 
+    def set_validation_data(self, validation_data, validation_data_size=None):
+
+        self.data_validation = validation_data
+        self.data_validation_size = None
+
+        if self.data_validation is None:
+            return
+
+        input_data_x = None
+
+        # It's dict of AETROS code generation
+        if isinstance(self.data_validation, dict) and 'x' in self.data_validation:
+
+            if is_generator(self.data_validation['x']):
+                # single input
+                input_data_x = self.data_validation['x']
+
+            elif isinstance(self.data_validation['x'], dict):
+                # multiple inputs named
+                input_data_x = next(six.itervalues(self.data_validation['x']))
+
+        # Not from AETROS code generation
+        else:
+            if is_generator(self.data_validation):
+                input_data_x = self.data_validation
+
+            elif isinstance(self.data_validation, dict):
+                input_data_x = next(six.itervalues(self.data_validation))
+
+            elif isinstance(self.data_validation, tuple):
+                input_data_x = self.data_validation[0]
+
+        if is_generator(input_data_x):
+            if validation_data_size is None:
+                raise Exception('validation_data_size needs to be set when a generator is given.')
+            self.data_validation_size = validation_data_size
+
+        elif input_data_x is not None:
+            self.data_validation_size = len(input_data_x)
+
+        if self.data_validation_size is None:
+            raise Exception('data_validation_size could not be determined for given validation_data. Please specify it.')
+
     def on_train_begin(self, logs={}):
         self.start_time = time.time()
         self.last_batch_time = time.time()
         self.job_backend.set_status('TRAINING')
         self.job_backend.set_info('parameters', get_total_params(self.model))
         self.job_backend.set_info('backend', K.backend())
+        self.job_backend.set_info('Keras version', keras.__version__)
+
+        self.job_backend.upload_keras_graph(self.model)
 
         if self.model.optimizer and hasattr(self.model.optimizer, 'get_config'):
             config = self.model.optimizer.get_config()
@@ -135,31 +183,6 @@ class KerasLogger(Callback):
         self.job_backend.job_add_insight(0, images, None)
 
     def on_batch_begin(self, batch, logs={}):
-
-        if not self.data_gathered:
-            validation_samples = self.trainer.nb_val_samples
-            if 'samples' in self.params:
-                training_samples = self.params['samples']
-                if hasattr(self.model, 'validation_data') and self.model.validation_data:
-                    validation_samples = len(self.model.validation_data[0])
-            else:
-                training_samples = self.params['steps'] * logs['size']
-                if self.trainer.is_generator(self.trainer.data_validation):
-                    validation_samples = self.trainer.nb_val_steps * logs['size']
-                elif self.trainer.data_validation and isinstance(self.trainer.data_validation, list):
-                    validation_samples = len(self.trainer.data_validation[0])
-
-            # we need to do it in on_batch_begin due to the fact that
-            # self.model.validation_data is not availabe in on_train_begin
-            self.data_gathered = True
-            dataset_infos = {}
-            dataset_info = {
-                'Training': training_samples,
-                'Validation': validation_samples,
-            }
-            dataset_infos['input1'] = dataset_info
-            self.job_backend.set_system_info('datasets', dataset_infos)
-
         if 'nb_batches' not in self.current:
             batch_size = logs['size']
             if 'samples' in self.params:
@@ -292,44 +315,29 @@ class KerasLogger(Callback):
         if K.image_dim_ordering() == 'tf':
             return (x.shape[2] == 1 or x.shape[2] == 3)
 
-    def get_first_input_sample(self):
-        if hasattr(self.model, 'validation_data'):
-            input_data_x = []
-            for i, input in enumerate(self.model.inputs):
-                input_data_x.append([self.model.validation_data[i][0]])
-        else:
-            if isinstance(self.trainer.data_train['x'], dict):
-                input_data_x = []
-                for layer in self.model.input_layers:
-                    X = self.trainer.data_train['x'][layer.name]
-                    if self.trainer.is_generator(X):
-                        batch_x, batch_y = next(X)
-                        input_data_x.append([batch_x[0]])
-                    else:
-                        input_data_x.append([X[0]])
-            else:
-                input_data_x = []
-                if self.trainer.is_generator(self.trainer.data_train['x']):
-                    batch_x, batch_y = next(self.trainer.data_train['x'])
-                    input_data_x.append([batch_x[0]])
-                else:
-                    for X in self.trainer.data_train['x']:
-                        if self.trainer.is_generator(X):
-                            batch_x, batch_y = next(X)
-                            input_data_x.append([batch_x[0]])
-                        else:
-                            input_data_x.append([X[0]])
-
-        return input_data_x
+    def has_multiple_inputs(self):
+        return len(self.model.inputs) > 1
 
     def build_insight_images(self):
         if self.insights_x is None:
-            self.insights_x = self.get_first_input_sample()
+            print("Insights requested, but no 'insights_x' in create_keras_callback() given.")
 
         images = []
+        input_data_x_sample = []
+
+        if self.has_multiple_inputs():
+            if not isinstance(self.insights_x, dict) and not isinstance(self.insights_x, (list, tuple)):
+                raise Exception('insights_x must be a list or dict')
+
+            for i, layer in enumerate(self.model.input_layers):
+                x = self.insights_x[i] if isinstance(self.insights_x, list) else self.insights_x[layer.name]
+                input_data_x_sample.append([x])
+        else:
+            x = self.insights_x
+            input_data_x_sample.append([x])
 
         for i, layer in enumerate(self.model.input_layers):
-            x = np.squeeze(self.insights_x[i])
+            x = input_data_x_sample[i][0]
             if self.is_image_shape(x):
                 image = self.make_image(x)
                 if image:
@@ -337,13 +345,13 @@ class KerasLogger(Callback):
 
         uses_learning_phase = self.model.uses_learning_phase
         inputs = self.model.inputs[:]
-        input_data_x_sample = self.insights_x[:]
 
         if uses_learning_phase:
             inputs += [K.learning_phase()]
             input_data_x_sample += [0.]  # disable learning_phase
 
         layers = self.model.layers + self.insight_layer
+
 
         for layer in layers:
             if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
@@ -352,7 +360,7 @@ class KerasLogger(Callback):
                 Y = fn(input_data_x_sample)[0]
 
                 data = np.squeeze(Y)
-                if image_data_format() == 'channels_last':
+                if K.image_dim_ordering() == 'tf':
                     data = np.transpose(data, (2, 0, 1))
 
                 image = PIL.Image.fromarray(get_image_tales(data))
@@ -361,7 +369,16 @@ class KerasLogger(Callback):
                 if layer.get_weights():
                     data = layer.get_weights()[0]
 
-                    data = np.transpose(data, (2, 3, 0, 1))
+                    # Keras 1 has channel only in last element when dim_ordering=tf
+                    is_weights_channel_last = keras.__version__[0] == '1' and K.image_dim_ordering() == 'tf'
+
+                    # Keras > 1 has channel always in last element
+                    if keras.__version__[0] != '1':
+                        is_weights_channel_last = True
+
+                    # move channel/filters to first elements to generate correct image
+                    if is_weights_channel_last:
+                        data = np.transpose(data, (2, 3, 0, 1))
 
                     data = data.reshape((data.shape[0] * data.shape[1], data.shape[2], data.shape[3]))
 
@@ -376,6 +393,7 @@ class KerasLogger(Callback):
                 pass
             else:
                 outputs = self.get_layout_output_tensors(layer)
+
                 if len(outputs) > 0:
                     fn = K.function(inputs, outputs)
                     Y = fn(input_data_x_sample)[0]
@@ -388,6 +406,10 @@ class KerasLogger(Callback):
 
                     image = None
                     if len(Y.shape) > 1:
+
+                        if len(Y.shape) == 3 and isinstance(layer, keras.layers.Activation) and K.image_dim_ordering() == 'tf':
+                            Y = np.transpose(Y, (2, 0, 1))
+
                         image = PIL.Image.fromarray(get_layer_vis_square(Y))
                     elif len(Y.shape) == 1:
                         if node and node['activationFunction'] == 'softmax':
@@ -412,14 +434,10 @@ class KerasLogger(Callback):
     def build_confusion_matrix(self):
         confusion_matrix = {}
 
-        model_has_validation_data = hasattr(self.model, 'validation_data') and self.model.validation_data
-
-        if not model_has_validation_data and not self.trainer.data_validation:
-            return confusion_matrix
-
         if len(self.model.output_layers) > 1:
             return confusion_matrix
 
+        first_input_layer = self.model.input_layers[0]
         first_output_layer = self.model.output_layers[0]
 
         if 'Softmax' not in str(first_output_layer.output) or len(first_output_layer.output_shape) != 2:
@@ -428,44 +446,44 @@ class KerasLogger(Callback):
         input_data_x = None
         input_data_y = []
 
-        if model_has_validation_data:
-            input_data_x = []
-            for i, layer in enumerate(self.model.input_layers):
-                input_data_x.append(self.model.validation_data[i])
+        # It's dict of AETROS code generation
+        if isinstance(self.data_validation, dict) and 'x' in self.data_validation:
 
-            input_data_y = np.squeeze(self.model.validation_data[len(self.model.input_layers)])
+            if is_generator(self.data_validation['x']):
+                # single input
+                input_data_x = self.data_validation['x']
+
+            elif isinstance(self.data_validation['x'], dict):
+                # multiple inputs named
+                input_data_x = self.data_validation['x'][first_input_layer.name]
+                input_data_y = self.data_validation['y'][first_output_layer.name]
+
+        # Not from AETROS code generation
         else:
-            # model does not have validation_data attribute, which is the case when a
-            # generator is given
-            if self.trainer.is_generator(self.trainer.data_validation):
-                input_data_x = self.trainer.data_validation
-            else:
-                # it's probably struct of AETROS code generation
-                if 'x' in self.trainer.data_validation:
-                    if self.trainer.is_generator(self.trainer.data_validation['x']):
-                        input_data_x = self.trainer.data_validation['x']
-                    elif isinstance(self.trainer.data_validation['x'], dict):
-                        for k, X in six.iteritems(self.trainer.data_validation['x']):
-                            input_data_x = X
+            if is_generator(self.data_validation):
+                input_data_x = self.data_validation
 
-                        if not self.trainer.is_generator(input_data_x):
-                            for k, Y in six.iteritems(self.trainer.data_validation['y']):
-                                input_data_y = Y
+            elif isinstance(self.data_validation, dict):
+                if len(self.model.input_layers) > 1:
+                    input_data_x = []
+                    for layer in self.model.input_layers:
+                        input_data_x.append(self.data_validation[layer.name])
 
-                    elif isinstance(self.trainer.data_validation['x'], list):
-                        input_data_x = self.trainer.data_validation['x'][0]
-                        if not self.trainer.is_generator(input_data_x):
-                            input_data_y = self.trainer.data_validation['y'][0]
+                input_data_y = self.data_validation[first_output_layer.name]
+
+            elif isinstance(self.data_validation, tuple):
+                input_data_x = self.data_validation[0]
+                input_data_y = self.data_validation[1]
 
         if input_data_x is None:
             return confusion_matrix
 
         matrix = np.zeros((first_output_layer.output_shape[1], first_output_layer.output_shape[1]))
 
-        if self.trainer.is_generator(input_data_x):
+        if is_generator(input_data_x):
             processed_samples = 0
 
-            while processed_samples < self.trainer.nb_val_samples:
+            while processed_samples < self.data_validation_size:
                 generator_output = next(input_data_x)
                 if len(generator_output) == 2:
                     x, y = generator_output
@@ -499,8 +517,8 @@ class KerasLogger(Callback):
                     pass
 
         else:
-            prediction = self.model.predict(
-                input_data_x, batch_size=self.job_model.get_batch_size())
+            batch_size = self.current['batch_size'] if 'batch_size' in self.current else 16
+            prediction = self.model.predict(input_data_x, batch_size=batch_size)
             predicted_classes = prediction.argmax(axis=-1)
             expected_classes = np.array(input_data_y).argmax(axis=-1)
 

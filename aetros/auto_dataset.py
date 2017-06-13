@@ -218,13 +218,15 @@ def read_images_in_memory(job_model, dataset, node, trainer):
     images = []
     max = 0
 
-    path = trainer.job_model.get_dataset_downloads_dir(dataset)
+    path = job_model.get_dataset_downloads_dir(dataset)
     if 'path' in dataset['config']:
         path = dataset['config']['path']
 
     classes_count = 0
     category_map = {}
     classes = []
+
+    trainer.set_status('LOAD IMAGES INTO MEMORY')
 
     try:
         for i in range(concurrent):
@@ -280,6 +282,7 @@ def read_images_in_memory(job_model, dataset, node, trainer):
                                      'config']['settings']['batchSize'])
 
         nb_sample = len(train_images)
+        trainer.set_info('Dataset size', {'training': nb_sample, 'validation': len(test_images)})
         trainer.set_generator_training_nb(nb_sample)
         trainer.set_generator_validation_nb(len(test_images))
 
@@ -291,7 +294,7 @@ def read_images_in_memory(job_model, dataset, node, trainer):
             sys.exit(1)
 
         trainer.output_size = classes_count
-        trainer.set_job_system_info('classes', classes)
+        trainer.set_info('Classes', classes)
         trainer.classes = classes
 
         result['X_train'] = train
@@ -376,7 +379,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
         directory=os.path.join(dataset_config['path'], 'validation'),
         # save_to_dir=dataset_config['path'] + '/preview',
         target_size=size,
-        batch_size=trainer.get_batch_size(),
+        batch_size=job_model.get_batch_size(),
         color_mode='grayscale' if grayscale is True else 'rgb',
         class_mode='categorical')
 
@@ -399,7 +402,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
     if hasattr(validation_generator, 'nb_sample'):
         validation_samples = validation_generator.nb_sample
 
-
+    trainer.set_info('Dataset size', {'training': train_samples, 'validation': len(validation_samples)})
     trainer.set_generator_validation_nb(validation_samples)
     trainer.set_generator_training_nb(train_samples)
 
@@ -432,7 +435,7 @@ def get_images(job_model, dataset, node, trainer):
     q = Queue(concurrent)
     config = dataset['config']
 
-    dir = trainer.job_model.get_dataset_downloads_dir(dataset)
+    dir = job_model.get_dataset_downloads_dir(dataset)
 
     ensure_dir(dir)
 
@@ -447,24 +450,27 @@ def get_images(job_model, dataset, node, trainer):
 
     classes = config['classes']
 
-    trainer.set_status('PREPARE_IMAGES')
+    trainer.set_status('LOAD IMAGES')
 
     max = 0
     images = {}
 
-    dataset_path = trainer.job_model.get_dataset_downloads_dir(dataset)
+    dataset_path = job_model.get_dataset_downloads_dir(dataset)
     meta_information_file = dataset_path + '/meta.json'
 
     classes_changed = False
     config_changed = False
     had_previous = False
-    classes_md5 = hashlib.md5(json.dumps(classes, default=invalid_json_values).encode('utf-8')).hexdigest()
+    classes_md5 = hashlib.md5(json.dumps(classes, default=invalid_json_values, sort_keys=True).encode('utf-8')).hexdigest()
 
     validationFactor = 0.2
 
+    meta = {}
     if os.path.isdir(dataset_path):
         if os.path.isfile(meta_information_file):
+            print("meta.json exists!")
             with open(meta_information_file) as f:
+                print("meta.json content", f)
                 meta = json.load(f)
                 if meta:
                     had_previous = True
@@ -483,12 +489,13 @@ def get_images(job_model, dataset, node, trainer):
     need_download = classes_changed or config_changed
 
     if need_download:
+
         if had_previous:
             print("Reset dataset and re-download images to " + dir)
             if classes_changed:
-                print(" .. because classes changed")
+                print(" .. because classes changed in", meta['classes_md5'], classes_md5, meta_information_file)
             if config_changed:
-                print(" .. because settings changed")
+                print(" .. because settings changed in", meta_information_file)
         else:
             print("Download images to " + dir)
 
@@ -498,7 +505,7 @@ def get_images(job_model, dataset, node, trainer):
                           int(get_option(config, 'resizeHeight', 64)))
             print(" .. with resizing to %dx%d " % resizeSize)
 
-        # we need to donwload all images
+        # # we need to donwload all images
         shutil.rmtree(dataset_path)
 
         controller = {'running': True}
@@ -547,6 +554,7 @@ def get_images(job_model, dataset, node, trainer):
                     'classes_md5': classes_md5,
                     'config': config
                 }
+                print("save meta.json", classes_md5)
                 json.dump(meta, f, default=invalid_json_values)
 
         except KeyboardInterrupt:
@@ -557,7 +565,6 @@ def get_images(job_model, dataset, node, trainer):
         print(" - Remove this directory if you want to re-download all images of your dataset and re-shuffle training/validation images.")
 
     trainer.output_size = len(classes)
-    trainer.set_status('LOAD IMAGE DONE')
 
     # change to type local_images
     dataset_transformed = dataset.copy()

@@ -4,6 +4,8 @@ from __future__ import print_function
 import sys
 import aetros.const
 
+__version__ = const.__version__
+
 command_summaries = [
     ['start', 'Starts a job of a model in current working directory'],
     ['predict', 'Runs a prediction locally'],

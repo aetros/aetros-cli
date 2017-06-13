@@ -592,11 +592,6 @@ class JobBackend:
         print("Job %s#%d (%s) started. Open http://%s/job/%s to monitor the training." %
               (self.model_id, self.job_index, self.job_id, self.host, self.job_id))
 
-    def keras_model_integration(self, model, insights=False, confusion_matrix=False):
-        import aetros.keras
-        aetros.keras.KerasIntegration(self.model_id, model, job_backend=self, insights=insights,
-                                      confusion_matrix=confusion_matrix)
-
     def external_aborted(self, params):
         self.ended = True
         self.running = False
@@ -749,6 +744,40 @@ class JobBackend:
             self.monitoring_thread = MonitoringThread(self)
             self.monitoring_thread.daemon = True
             self.monitoring_thread.start()
+
+    def create_keras_callback(self, model,
+                              insights=False, insights_x=None,
+                              additional_insights_layer=[],
+                              confusion_matrix=False, validation_data=None, validation_data_size=None):
+
+        """
+
+        :type validation_data: int|None: (x, y) or generator
+        :type validation_data_size: int|None: Defines the size of validation_data, if validation_data is a generator
+        """
+        self.ensure_model(self.model_id, settings={}, type='custom')
+
+        from aetros.Trainer import Trainer
+        self.trainer = Trainer(self)
+
+        self.trainer.model = model
+
+        from aetros.KerasCallback import KerasCallback
+        self.callback = KerasCallback(self, self.general_logger_stdout, force_insights=insights)
+        self.callback.insights_x = insights_x
+        self.callback.insight_layer = additional_insights_layer
+        self.callback.confusion_matrix = confusion_matrix
+        self.callback.set_validation_data(validation_data, validation_data_size)
+
+        return self.callback
+
+    def upload_keras_graph(self, model):
+        from aetros.keras import model_to_graph
+        import keras
+
+        if keras.__version__[0] == '2':
+            graph = model_to_graph(model)
+            self.set_graph(graph)
 
     def on_shutdown(self):
         if not self.ended and hasattr(sys, 'last_value'):
@@ -1197,6 +1226,8 @@ class JobBackend:
 
         env = {}
 
+        import aetros
+        env['aetros_version'] = aetros.__version__
         env['python_version'] = platform.python_version()
         env['python_executable'] = sys.executable
 

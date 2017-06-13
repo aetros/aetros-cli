@@ -19,14 +19,14 @@ from .keras_model_utils import ensure_dir
 import six
 
 
-def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, insights_sample_path=None, api_key=None):
+def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, api_key=None):
     """
     Starts the training process with all logging of a job_id
     :type id: string : job id or model name
     """
 
     job_backend = JobBackend(api_key=api_key)
-    job_backend.ensure_job(id, hyperparameter, dataset_id, server_id, insights, insights_sample_path)
+    job_backend.ensure_job(id, hyperparameter, dataset_id, server_id, insights)
     job_backend.setup_std_output_logging()
     job_backend.start()
 
@@ -37,7 +37,7 @@ def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=
         os.environ["API_KEY"] = api_key
 
     if job_backend.is_keras_model():
-        start_keras(job_backend, insights_sample_path)
+        start_keras(job_backend)
     else:
         start_custom(job_backend)
 
@@ -134,24 +134,21 @@ def subprocess_call(args):
     return subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
 
 
-def start_keras(job_backend, insights_sample_path=None):
-    job_model = job_backend.get_job_model()
-
+def start_keras(job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
     # all our shapes are theano schema. (channels, height, width)
     K.set_image_dim_ordering('th')
 
+    job_model = job_backend.get_job_model()
     ensure_dir('aetros-cli-data/models/%s/%s' % (job_model.model_id, job_model.id))
 
     log = io.open('aetros-cli-data/models/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
     log.truncate()
 
-    from .KerasLogger import KerasLogger
-    trainer = Trainer(job_backend, job_backend.general_logger_stdout)
-    keras_logger = KerasLogger(trainer, job_backend, job_backend.general_logger_stdout)
-    keras_logger.insights_sample_path = insights_sample_path
-    trainer.callbacks.append(keras_logger)
+    from .KerasCallback import KerasCallback
+    trainer = Trainer(job_backend)
+    keras_logger = KerasCallback(job_backend, job_backend.general_logger_stdout)
 
     def ctrlc(sig, frame):
         print("signal %s received\n" % str(sig))
@@ -165,7 +162,7 @@ def start_keras(job_backend, insights_sample_path=None):
         job_backend.progress(0, job_backend.job['config']['settings']['epochs'])
 
         print("Start job")
-        keras_model_utils.job_start(job_model, trainer, keras_logger, job_backend.general_logger_stdout)
+        keras_model_utils.job_start(job_backend, trainer, keras_logger)
 
         job_backend.sync_weights()
         job_backend.done()
@@ -174,7 +171,7 @@ def start_keras(job_backend, insights_sample_path=None):
         sys.exit(0)
     except KeyboardInterrupt:
         if job_backend.running:
-            trainer.set_status('ABORTED')
+            job_backend.set_status('ABORTED')
             print('Early stopping ...')
 
             if job_backend.stop_requested:

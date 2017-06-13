@@ -108,6 +108,20 @@ class JobModel:
     def get_weights_filepath_best(self):
         return os.getcwd() + '/aetros-cli-data/weights/%s/best.hdf5' % (self.id,)
 
+    def get_input_names(self):
+        names = []
+        for node in self.job['config']['layer'][0]:
+            names.append(node['varName'])
+
+        return names
+
+    def get_input_dataset_names(self):
+        names = []
+        for node in self.job['config']['layer'][0]:
+            names.append(node['datasetId'])
+
+        return names
+
     def set_input_shape(self, trainer):
 
         trainer.input_shape = {}
@@ -193,6 +207,8 @@ class JobModel:
                 return []
 
             image = image.resize(size, Image.ANTIALIAS)
+
+            from keras.preprocessing.image import img_to_array
 
             image = self.convert_image_to_node(image, input_node)
 

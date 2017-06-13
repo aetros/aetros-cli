@@ -2,6 +2,8 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 import json
 import os
+
+from aetros.Trainer import is_generator
 from .backend import invalid_json_values
 import six
 from six.moves import range
@@ -9,6 +11,7 @@ from six.moves import range
 def ensure_dir(d):
     if not os.path.isdir(d):
         if os.path.isfile(d):  # but a file, so delete it
+            print("Deleted", d, "because it was a file, but needs to be an directory.")
             os.remove(d)
 
         os.makedirs(d)
@@ -26,53 +29,52 @@ def get_total_params(model):
     return total_params
 
 
-def job_start(job_model, trainer, keras_logger, general_logger):
+def job_start(job_backend, trainer, keras_logger):
     """
     Starts the training of a job. Needs job_prepare() first.
 
-    :param job_model: JobModel
-    :param trainer: Trainer
-    :param keras_logger: KerasLogger
-    :param general_logger: GeneralLogger
+    :type job_backend: JobBackend
+    :type trainer: Trainer
     :return:
     """
-    trainer.set_status('STARTING')
+
+    job_backend.set_status('STARTING')
+    job_model = job_backend.get_job_model()
 
     model_provider = job_model.get_model_provider()
 
-    trainer.set_status('LOAD DATA')
+    job_backend.set_status('LOAD DATA')
     datasets = job_model.get_datasets(trainer)
-    general_logger.write('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape, default=invalid_json_values),))
-    general_logger.write('trainer.classes = %s\n' % (json.dumps(trainer.classes, default=invalid_json_values),))
 
-    dataset_infos = {}
-    for idx, dataset in six.iteritems(datasets):
+    print('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape, default=invalid_json_values),))
+    print('trainer.classes = %s\n' % (json.dumps(trainer.classes, default=invalid_json_values),))
 
-        if trainer.is_generator(dataset['X_train']):
-            training = trainer.samples_per_epoch
+    multiple_inputs = len(datasets) > 1
+    insights_x = [] if multiple_inputs else None
+
+    for dataset_name in job_model.get_input_dataset_names():
+        dataset = datasets[dataset_name]
+
+        if is_generator(dataset['X_train']):
+            batch_x, batch_y = dataset['X_train'].next()
+
+            if multiple_inputs:
+                insights_x.append(batch_x[0])
+            else:
+                insights_x = batch_x[0]
         else:
-            training = len(dataset['X_train'])
+            if multiple_inputs:
+                insights_x.append(dataset['X_train'][0])
+            else:
+                insights_x = dataset['X_train'][0]
 
-        if trainer.is_generator(dataset['X_test']):
-            validation = trainer.nb_val_samples
-        else:
-            validation = len(dataset['X_test'])
-
-        dataset_info = {
-            'Training': training,
-            'Validation': validation,
-        }
-
-        dataset_infos[idx] = dataset_info
-
-    trainer.set_job_system_info('datasets', dataset_infos)
+    keras_logger.insights_x = insights_x
     keras_logger.write("Possible data keys '%s'\n" % "','".join(list(datasets.keys())))
 
     data_train = model_provider.get_training_data(trainer, datasets)
     data_validation = model_provider.get_validation_data(trainer, datasets)
 
-    trainer.data_train = data_train
-    trainer.data_validation = data_validation
+    keras_logger.data_validation = data_validation
 
     trainer.set_status('CONSTRUCT')
     model = model_provider.get_model(trainer)
@@ -84,6 +86,7 @@ def job_start(job_model, trainer, keras_logger, general_logger):
     model_provider.compile(trainer, model, loss, optimizer)
     model.summary()
 
+    trainer.callbacks.append(keras_logger)
     model_provider.train(trainer, model, data_train, data_validation)
 
 
