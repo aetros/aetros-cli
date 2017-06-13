@@ -402,7 +402,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
     if hasattr(validation_generator, 'nb_sample'):
         validation_samples = validation_generator.nb_sample
 
-    trainer.set_info('Dataset size', {'training': train_samples, 'validation': len(validation_samples)})
+    trainer.set_info('Dataset size', {'training': train_samples, 'validation': validation_samples})
     trainer.set_generator_validation_nb(validation_samples)
     trainer.set_generator_training_nb(train_samples)
 
