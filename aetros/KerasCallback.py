@@ -359,12 +359,14 @@ class KerasCallback(Callback):
                 fn = K.function(inputs, self.get_layout_output_tensors(layer))
                 Y = fn(input_data_x_sample)[0]
 
-                data = np.squeeze(Y)
-                if K.image_dim_ordering() == 'tf':
-                    data = np.transpose(data, (2, 0, 1))
+                data = Y[0]
 
-                image = PIL.Image.fromarray(get_image_tales(data))
-                images.append(JobImage(layer.name, image))
+                if len(data.shape) == 3:
+                    if K.image_dim_ordering() == 'tf':
+                        data = np.transpose(data, (2, 0, 1))
+
+                    image = PIL.Image.fromarray(get_image_tales(data))
+                    images.append(JobImage(layer.name, image))
 
                 if layer.get_weights():
                     data = layer.get_weights()[0]
@@ -433,6 +435,9 @@ class KerasCallback(Callback):
 
     def build_confusion_matrix(self):
         confusion_matrix = {}
+
+        if self.data_validation_size is None:
+            return confusion_matrix
 
         if len(self.model.output_layers) > 1:
             return confusion_matrix

@@ -69,12 +69,13 @@ def job_start(job_backend, trainer, keras_logger):
                 insights_x = dataset['X_train'][0]
 
     keras_logger.insights_x = insights_x
+    print('Insights sample shape', keras_logger.insights_x.shape)
     keras_logger.write("Possible data keys '%s'\n" % "','".join(list(datasets.keys())))
 
     data_train = model_provider.get_training_data(trainer, datasets)
     data_validation = model_provider.get_validation_data(trainer, datasets)
 
-    keras_logger.data_validation = data_validation
+    keras_logger.set_validation_data(data_validation, trainer.nb_val_samples)
 
     trainer.set_status('CONSTRUCT')
     model = model_provider.get_model(trainer)

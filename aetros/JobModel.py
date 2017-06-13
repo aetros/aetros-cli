@@ -294,7 +294,13 @@ class JobModel:
                     data_provider = __import__(name, '')
                     print("Imported dataset provider in %s " % (datasets_dir + '/' + name + '.py',))
                     sys.path.pop()
-                    datasets[dataset['id']] = data_provider.get_data()
+                    import inspect
+                    argSpec = inspect.getargspec(data_provider.get_data)
+
+                    if len(argSpec.args) > 0:
+                        datasets[dataset['id']] = data_provider.get_data(trainer)
+                    else:
+                        datasets[dataset['id']] = data_provider.get_data()
 
         return datasets
 
