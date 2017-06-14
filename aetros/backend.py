@@ -149,7 +149,10 @@ class BackendClient:
         except socket.error as error:
             if locked:
                 self.lock.release()
-            print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
+            if hasattr(error, 'message'):
+                print("Connection error during connecting to %s: %d: %s." % (self.api_host, error.errno, error.message))
+            else:
+                print("Connection error during connecting to %s." % (self.api_host,))
             time.sleep(1)
             return False
 
