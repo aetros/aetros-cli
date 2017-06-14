@@ -32,12 +32,15 @@ class ServerClient(BackendClient):
         message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:
             if "ACCESS_DENIED" in message['a']:
-                print('Access denied')
-                return False
+                print('Access denied. Try a different secure key.')
+                self.close()
+                self.event_listener.fire('failed')
+
 
             if "SERVER_ALREADY_REGISTERED" in message['a']:
                 print("Registration failed. This server is already registered.")
-                return
+                self.close()
+                self.event_listener.fire('failed')
 
             if "SERVER_REGISTERED" in message['a']:
                 self.registered = True
@@ -76,6 +79,7 @@ class ServerCommand:
         self.last_net = {}
         self.nets = []
         self.server = None
+        self.active = True
         self.queue = []
         self.queuedMap = {}
         self.job_processes = []
@@ -109,6 +113,7 @@ class ServerCommand:
         event_listener = EventListener()
 
         event_listener.on('registration', self.registration_complete)
+        event_listener.on('failed', self.connection_failed)
         event_listener.on('start-jobs', self.start_jobs)
         event_listener.on('stop-job', self.stop_job)
 
@@ -116,12 +121,16 @@ class ServerCommand:
         self.server.configure(parsed_args.secure_key)
         self.server.start()
 
-        while True:
+        while self.active:
             if self.registered:
                 self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
                 self.process_queue()
 
             time.sleep(1)
+
+    def connection_failed(self, params):
+        self.active = False
+        sys.exit(1)
 
     def start_jobs(self, jobs):
         for job in jobs:
