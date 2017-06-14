@@ -37,8 +37,7 @@ def create_simple(id, last_weights=False):
 
     model.job_prepare(job_model)
 
-    general_logger = GeneralLogger(job_backend=job_backend)
-    trainer = Trainer(job_backend, general_logger)
+    trainer = Trainer(job_backend)
 
     job_model.set_input_shape(trainer)
 
@@ -133,9 +132,9 @@ class JobModel:
         for node in self.job['config']['layer'][0]:
             size = (int(node['width']), (node['height']))
             if node['inputType'] == 'image':
-                shape = (1, size[0], size[1])
+                shape = (size[0], size[1], 1)
             elif node['inputType'] == 'image_rgb':
-                shape = (3, size[0], size[1])
+                shape = (size[0], size[1], 3)
             else:
                 shape = (size[0] * size[1],)
 

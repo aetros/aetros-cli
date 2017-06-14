@@ -131,6 +131,7 @@ class KerasCallback(Callback):
         self.job_backend.set_info('parameters', get_total_params(self.model))
         self.job_backend.set_info('backend', K.backend())
         self.job_backend.set_info('Keras version', keras.__version__)
+        self.job_backend.set_info('Keras image_data_format', K.image_data_format())
 
         self.job_backend.upload_keras_graph(self.model)
 
