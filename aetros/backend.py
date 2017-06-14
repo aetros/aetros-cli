@@ -1263,24 +1263,14 @@ class JobBackend:
 
         on_gpu = False
 
-        import sys
-        if 'theano.sandbox' in sys.modules:
-            # at this point, theano is already initialised, so we can use it to monitor the GPU.
-            from theano.sandbox import cuda
-            self.set_system_info('cuda_available', cuda.cuda_available)
-            if cuda.cuda_available:
-                on_gpu = cuda.use.device_number is not None
-                self.set_system_info('cuda_device_number', cuda.active_device_number())
-                self.set_system_info('cuda_device_name', cuda.active_device_name())
-                if cuda.cuda_ndarray.cuda_ndarray.mem_info:
-                    gpu = cuda.cuda_ndarray.cuda_ndarray.mem_info()
-                    self.set_system_info('cuda_device_max_memory', gpu[1])
-                    free = gpu[0] / 1024.0 / 1024.0 / 1024.0
-                    total = gpu[1] / 1024.0 / 1024.0 / 1024.0
-                    used = total - free
+        import aetros.cuda_gpu
+        props = aetros.cuda_gpu.get_device_properties(0)
+        if props:
+            self.set_system_info('cuda_available', True)
+            self.set_system_info('cuda_device_number', props['device'])
+            self.set_system_info('cuda_device_name', props['name'])
+            self.set_system_info('cuda_device_max_memory', props['memory'])
 
-                    print("%.2fGB GPU memory used of %.2fGB, %s, device id %d" % (
-                    used, total, cuda.active_device_name(), cuda.active_device_number()))
 
         self.set_system_info('on_gpu', on_gpu)
 
