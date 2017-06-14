@@ -179,8 +179,9 @@ class KerasCallback(Callback):
 
             self.all_losses = self.job_backend.create_channel('All loss', main=True, xaxis=xaxis, traces=loss_traces)
 
-        images = self.build_insight_images()
-        self.job_backend.job_add_insight(0, images, None)
+        if self.force_insights or self.job_model.job['insights']:
+            images = self.build_insight_images()
+            self.job_backend.job_add_insight(0, images, None)
 
     def on_batch_begin(self, batch, logs={}):
         if 'nb_batches' not in self.current:
