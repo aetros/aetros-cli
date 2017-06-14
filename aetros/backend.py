@@ -307,6 +307,9 @@ class BackendClient:
             try:
                 self.lock.acquire()
                 chunk = s.recv(1024)
+            except:
+                self.connection_error()
+                return None
             finally:
                 self.lock.release()
 
@@ -331,6 +334,9 @@ class BackendClient:
         self.lock.acquire()
         try:
             chunk = s.recv(1024 * 1024)
+        except:
+            self.connection_error()
+            return None
         finally:
             self.lock.release()
 

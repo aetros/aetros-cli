@@ -6,6 +6,7 @@ import logging
 import os
 import pprint
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -143,7 +144,12 @@ def start_keras(job_backend):
         K.set_image_dim_ordering('tf')
 
     job_model = job_backend.get_job_model()
-    ensure_dir('aetros-job/%s/%s' % (job_model.model_id, job_model.index))
+
+    directory = 'aetros-job/%s/%s' % (job_model.model_id, job_model.index)
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
+
+    ensure_dir(directory)
 
     log = io.open('aetros-job/%s/%s/output.log' % (job_model.model_id, job_model.index), 'w', encoding='utf8')
     log.truncate()

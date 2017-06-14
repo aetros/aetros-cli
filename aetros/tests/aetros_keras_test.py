@@ -12,7 +12,7 @@ class TestAetrosCallback(unittest.TestCase):
 
     def test_set_validation_data(self):
         job_backend = JobBackend('test')
-        job_backend.job = {'id': 'test'}
+        job_backend.job = {'id': 'test', 'index': 1}
 
         keras_callback = KerasCallback(job_backend, sys.stdout)
 
