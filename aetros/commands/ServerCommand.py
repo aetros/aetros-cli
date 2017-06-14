@@ -230,8 +230,11 @@ class ServerCommand:
         values['boot_time'] = psutil.boot_time()
 
         for disk in psutil.disk_partitions():
-            name = self.get_disk_name(disk[1])
-            values['disks'][name] = psutil.disk_usage(disk[1]).total
+            try:
+                name = self.get_disk_name(disk[1])
+                values['disks'][name] = psutil.disk_usage(disk[1]).total
+            except:
+                pass
 
         for id, net in psutil.net_if_stats().items():
             if 0 != id.find('lo') and net.isup:
@@ -259,8 +262,11 @@ class ServerCommand:
         values['processes'] = []
 
         for disk in psutil.disk_partitions():
-            name = self.get_disk_name(disk[1])
-            values['disks'][name] = psutil.disk_usage(disk[1]).used
+            try:
+                name = self.get_disk_name(disk[1])
+                values['disks'][name] = psutil.disk_usage(disk[1]).used
+            except:
+                pass
 
         net_stats = psutil.net_io_counters(pernic=True)
         for id in self.nets:
