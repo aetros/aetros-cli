@@ -66,6 +66,10 @@ class JobModel:
         return self.job['id']
 
     @property
+    def index(self):
+        return self.job['index']
+
+    @property
     def config(self):
         return self.job['config']
 
@@ -91,22 +95,22 @@ class JobModel:
         return self.job['config']['settings']['batchSize']
 
     def get_model_h5_path(self):
-        return os.getcwd() + '/aetros-cli-data/models/%s/%s/model.h5' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros-job/%s/%s/model.h5' % (self.model_id, self.index)
 
     def get_dataset_dir(self):
-        return os.getcwd() + '/aetros-cli-data/models/%s/%s/datasets' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros-job/%s/%s/datasets' % (self.model_id, self.index)
 
     def get_base_dir(self):
-        return os.getcwd() + '/aetros-cli-data/models/%s/%s' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros-job/%s/%s' % (self.model_id, self.index)
 
     def get_dataset_downloads_dir(self, dataset):
-        return os.getcwd() + '/aetros-cli-data/datasets/%s/datasets_downloads' % (dataset['id'],)
+        return os.getcwd() + '/aetros-job/datasets/%s/datasets_downloads' % (dataset['id'],)
 
     def get_weights_filepath_latest(self):
-        return os.getcwd() + '/aetros-cli-data/weights/%s/latest.hdf5' % (self.id,)
+        return os.getcwd() + '/aetros-job/%s/%s/weights_latest.hdf5' % (self.model_id, self.index)
 
     def get_weights_filepath_best(self):
-        return os.getcwd() + '/aetros-cli-data/weights/%s/best.hdf5' % (self.id,)
+        return os.getcwd() + '/aetros-job/%s/%s/weights_best.hdf5' % (self.model_id, self.index)
 
     def get_input_names(self):
         names = []
@@ -140,6 +144,12 @@ class JobModel:
             else:
                 # older models
                 trainer.input_shape = shape
+
+    def is_python_model(self):
+        return 'fromCode' in self.job['config'] and self.job['config']['fromCode']
+
+    def is_keras_model(self):
+        return 'fromCode' not in self.job['config'] or not self.job['config']['fromCode']
 
     def get_built_model(self, trainer):
 

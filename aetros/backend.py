@@ -852,7 +852,7 @@ class JobBackend:
             'data': item
         })
 
-    def upload_weights(self, name, file_path, accuracy=None, with_status=False):
+    def upload_weights(self, name, file_path, kpi=None, with_status=False):
         if not os.path.isfile(file_path):
             return
 
@@ -922,8 +922,13 @@ class JobBackend:
 
         body = BufferReader(data, progress)
 
-        url = self.get_url('job/weights?id=%s&accuracy=%f.2' %
-                           (self.job_id, accuracy if accuracy is not None else -1))
+        url = 'job/weights?id=%s' % (self.job_id, )
+
+        if kpi is not None:
+            url += '&kpi=' + str(kpi)
+
+        url = self.get_url(url)
+        print(url)
         response = requests.post(url, data=body, headers=headers)
 
         if response.status_code != 200:
@@ -1093,6 +1098,7 @@ class JobBackend:
                             (job['error'], job['message']))
 
         self.job = response.json()
+        self.job_id = self.job['id']
 
     def get_job_model(self):
         """
@@ -1110,7 +1116,7 @@ class JobBackend:
         self.job_add_status('status', 'SYNC WEIGHTS')
         print("Sync weights ...")
         try:
-            self.upload_weights('best.hdf5', self.get_job_model().get_weights_filepath_best(), with_status=True)
+            self.upload_weights('latest.hdf5', self.get_job_model().get_weights_filepath_latest(), with_status=True)
         except:
             pass
         print("Weights synced.")

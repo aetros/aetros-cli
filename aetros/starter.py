@@ -137,13 +137,15 @@ def subprocess_call(args):
 def start_keras(job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
-    # all our shapes are theano schema. (channels, height, width)
-    K.set_image_dim_ordering('th')
+
+    # all our shapes are Tensorflow schema. (height, width, channels)
+    if hasattr(K, 'set_image_dim_ordering'):
+        K.set_image_dim_ordering('tf')
 
     job_model = job_backend.get_job_model()
-    ensure_dir('aetros-cli-data/models/%s/%s' % (job_model.model_id, job_model.id))
+    ensure_dir('aetros-job/%s/%s' % (job_model.model_id, job_model.index))
 
-    log = io.open('aetros-cli-data/models/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
+    log = io.open('aetros-job/%s/%s/output.log' % (job_model.model_id, job_model.index), 'w', encoding='utf8')
     log.truncate()
 
     from .KerasCallback import KerasCallback
