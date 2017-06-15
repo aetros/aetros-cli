@@ -7,8 +7,8 @@
 [![Build Status](https://travis-ci.org/aetros/aetros-cli.svg?branch=master)](https://travis-ci.org/aetros/aetros-cli)
 [![PyPI version](https://badge.fury.io/py/aetros.svg)](https://badge.fury.io/py/aetros)
 
-This package is a python application you need to use when you want to train [simple models](/docu/trainer/models/simple-model)
-or if you want to integrate AETROS in your [python model](/docu/trainer/models/custom-python) using the [AETROS Python SDK](/docu/python-sdk/getting-started).
+This package is a python application you need to use when you want to train [simple models](http://aetros.com/docu/trainer/models/simple-model)
+or if you want to integrate AETROS in your [python model](http://aetros.com/docu/trainer/models/custom-python) using the [AETROS Python SDK](http://aetros.com/docu/python-sdk/getting-started).
 
 ### Simple models
 
@@ -20,7 +20,7 @@ which is used if you have a image dataset configured in AETROS Trainer.
 
 ### Python models
 
-Please see our documentation [Python SDK: Getting started](/docu/python-sdk/getting-started).
+Please see our documentation [Python SDK: Getting started](http://aetros.com/docu/python-sdk/getting-started).
 
 ## Installation
 

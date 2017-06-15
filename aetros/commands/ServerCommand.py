@@ -306,7 +306,10 @@ class ServerCommand:
                 pass
 
         try:
-            values['loadavg'] = os.getloadavg()
+            if hasattr(os, 'getloadavg'):
+                values['loadavg'] = os.getloadavg()
+            else:
+                values['loadavg'] = ''
         except OSError:
             pass
 
