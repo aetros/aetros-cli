@@ -8,6 +8,7 @@ def is_generator(obj):
 
     return obj is not None and (inspect.isgeneratorfunction(obj) or inspect.isgenerator(obj) or hasattr(obj, 'next') or hasattr(obj, '__next__'))
 
+
 class Trainer():
     """
     :type job_backend : aetros.backend.JobBackend
@@ -51,6 +52,10 @@ class Trainer():
         diff_to_batch = number % self.get_batch_size()
         if diff_to_batch > 0:
             self.nb_val_samples += self.get_batch_size() - diff_to_batch
+
+        import keras
+        if '1' != keras.__version__[0]:
+            self.nb_val_samples = self.nb_val_samples // self.get_batch_size()
 
     def set_generator_training_nb(self, number):
         """
