@@ -95,8 +95,8 @@ class ServerCommand:
         parser.add_argument('--secure-key', nargs='?',
                             help="Secure key of the server.")
         parser.add_argument('--max-jobs', help="How many jobs should be run at the same time.")
-        parser.add_argument('--server', help="Default 8051.")
-        parser.add_argument('--port', help="Default ")
+        parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
+        parser.add_argument('--port', help="Default 8051. Read from environment variable API_PORT.")
         parser.add_argument('--show-stdout', action='store_true', help="Show all stdout of all jobs")
 
         parsed_args = parser.parse_args(args)
@@ -117,7 +117,7 @@ class ServerCommand:
         event_listener.on('start-jobs', self.start_jobs)
         event_listener.on('stop-job', self.stop_job)
 
-        self.server = ServerClient(parsed_args.server, parsed_args.port, event_listener)
+        self.server = ServerClient(parsed_args.host, parsed_args.port, event_listener)
         self.server.configure(parsed_args.secure_key)
         self.server.start()
 

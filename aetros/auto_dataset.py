@@ -468,9 +468,7 @@ def get_images(job_model, dataset, node, trainer):
     meta = {}
     if os.path.isdir(dataset_path):
         if os.path.isfile(meta_information_file):
-            print("meta.json exists!")
             with open(meta_information_file) as f:
-                print("meta.json content", f)
                 meta = json.load(f)
                 if meta:
                     had_previous = True

@@ -11,7 +11,8 @@ command_summaries = [
     ['predict', 'Runs a prediction locally'],
     ['upload-weights', 'Uploads weights as new or existing job.'],
     ['prediction-server', 'Spawns a http server that handles incoming data as input and predicts output.'],
-    ['server', 'Spawns a job server that handles jobs managed through AETROS Trainer'],
+    ['server', 'Spawns a job server that handles jobs managed through AETROS Trainer.'],
+    ['run', 'Executes a command on an AETROS server.'],
 ]
 
 def parseopts(args):
@@ -41,6 +42,7 @@ def main(args=None):
     from aetros.commands.PredictCommand import PredictCommand
     from aetros.commands.PredictionServerCommand import PredictionServerCommand
     from aetros.commands.StartCommand import StartCommand
+    from aetros.commands.RunCommand import RunCommand
 
     commands_dict = {
         'start': StartCommand,
@@ -48,6 +50,7 @@ def main(args=None):
         'upload-weights': UploadWeightsCommand,
         'prediction-server': PredictionServerCommand,
         'server': ServerCommand,
+        'run': RunCommand,
     }
     cmd_name, cmd_args = parseopts(args)
 

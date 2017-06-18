@@ -18,6 +18,7 @@ import base64
 import PIL.Image
 import sys
 import msgpack
+import zlib
 
 from aetros.const import JOB_STATUS
 from aetros.logger import GeneralLogger
@@ -89,6 +90,45 @@ class EventListener:
         if name in self.events:
             for callback in self.events[name]:
                 callback(parameter)
+
+
+class ApiClient():
+    def __init__(self, api_host, api_key):
+        self.api_host = api_host
+        self.api_key = api_key
+
+    def get(self, url, params=None, **kwargs):
+        json_chunk = kwargs.get('json')
+        if (json_chunk and not isinstance(json_chunk, str)):
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+
+        return requests.get(self.get_url(url), params=params, **kwargs)
+
+    def post(self, url, data=None, **kwargs):
+        json_chunk = kwargs.get('json')
+        if (json_chunk and not isinstance(json_chunk, str)):
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+
+        return requests.post(self.get_url(url), data=data, **kwargs)
+
+    def put(self, url, data=None, **kwargs):
+        json_chunk = kwargs.get('json')
+        if (json_chunk and not isinstance(json_chunk, str)):
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+
+        return requests.put(self.get_url(url), data=data, **kwargs)
+
+    def get_url(self, affix):
+
+        url = 'http://%s/api/%s' % (self.api_host, affix)
+
+        if self.api_key:
+            if '?' in url:
+                url += '&token=' + self.api_key
+            else:
+                url += '?token=' + self.api_key
+
+        return url
 
 
 class BackendClient:
@@ -179,6 +219,8 @@ class BackendClient:
 
         self.connected = False
         self.registered = False
+
+        self.event_listener.fire('disconnect')
 
         # set all messages that are in sending to sending=false
         for message in self.queue:
@@ -581,6 +623,8 @@ class JobBackend:
         if not self.host or self.host == 'false':
             self.host = 'trainer.aetros.com'
 
+        self.api_client = ApiClient(self.host, self.api_key)
+
         self.last_progress_call = None
         self.job_ids = []
         self.in_request = False
@@ -837,18 +881,6 @@ class JobBackend:
 
         self.stop()
 
-    def get_url(self, affix):
-
-        url = 'http://%s/api/%s' % (self.host, affix)
-
-        if self.api_key:
-            if '?' in url:
-                url += '&token=' + self.api_key
-            else:
-                url += '?token=' + self.api_key
-
-        return url
-
     def write_log(self, message):
         item = {'message': message}
 
@@ -928,12 +960,12 @@ class JobBackend:
 
         body = BufferReader(data, progress)
 
-        url = 'job/weights?id=%s' % (self.job_id, )
+        url = 'job/weights?id=%s' % (self.job_id,)
 
         if kpi is not None:
             url += '&kpi=' + str(kpi)
 
-        url = self.get_url(url)
+        url = self.api_client.get_url(url)
         print(url)
         response = requests.post(url, data=body, headers=headers)
 
@@ -950,25 +982,13 @@ class JobBackend:
         return response.json()
 
     def get(self, url, params=None, **kwargs):
-        json_chunk = kwargs.get('json')
-        if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
-
-        return requests.get(self.get_url(url), params=params, **kwargs)
+        return self.api_client.get(url, params, **kwargs)
 
     def post(self, url, data=None, **kwargs):
-        json_chunk = kwargs.get('json')
-        if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
-
-        return requests.post(self.get_url(url), data=data, **kwargs)
+        return self.api_client.post(url, data, **kwargs)
 
     def put(self, url, data=None, **kwargs):
-        json_chunk = kwargs.get('json')
-        if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
-
-        return requests.put(self.get_url(url), data=data, **kwargs)
+        return self.api_client.put(url, data, **kwargs)
 
     def create(self, name, server_id='local', hyperparameter=None, dataset_id=None, insights=False):
         response = self.put('job', json={
@@ -1201,10 +1221,13 @@ class JobBackend:
 
         path = os.path.relpath(file_path)
 
+        encoded = 'zlib'
+        contents = zlib.compress(contents)
+
         self.client.send({
             'type': 'job-file',
             'time': time.time(),
-            'data': {'path': path, 'name': name, 'mime': mime_type, 'content': contents}
+            'data': {'path': path, 'name': name, 'mime': mime_type, 'encoded': encoded, 'content': contents}
         })
 
     def job_add_insight(self, x, images, confusion_matrix):
@@ -1270,7 +1293,6 @@ class JobBackend:
             self.set_system_info('cuda_device_number', props['device'])
             self.set_system_info('cuda_device_name', props['name'])
             self.set_system_info('cuda_device_max_memory', props['memory'])
-
 
         self.set_system_info('on_gpu', on_gpu)
 
