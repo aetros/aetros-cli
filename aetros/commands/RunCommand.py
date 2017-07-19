@@ -22,6 +22,9 @@ class RunClient(BackendClient):
         self.send_message({'register_run': self.api_key, 'model': self.model_id})
         messages = self.wait_for_at_least_one_message(self.s)
 
+        if not messages:
+            return False
+
         message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:
             if "ACCESS_DENIED" in message['a']:

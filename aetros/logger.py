@@ -6,15 +6,14 @@ import six
 from threading import Timer
 
 class GeneralLogger(object):
-    def __init__(self, logFD=None, job_backend=None, error=False):
+    def __init__(self, job_backend, logger, error=False):
         self.error = error
+        self.logger = logger
         self.job_backend = job_backend
         self.buffer = ''
         self.last_timer = None
         self.last_messages = ''
-
         self.terminal = sys.__stdout__ if error is False else sys.__stderr__
-        self.logFD = logFD
 
     def get_time(self):
         ts = time.time()
@@ -32,35 +31,26 @@ class GeneralLogger(object):
         return sys.__stdout__.fileno() if self.error is False else sys.__stderr__.fileno()
 
     def flush(self):
-        if self.logFD:
-            self.logFD.flush()
-
-        self.terminal.flush()
+        pass
 
     def send_to_buffer(self):
         self.last_timer = None
 
         if self.buffer:
-            if self.logFD:
-                self.logFD.write(self.buffer)
-
             if self.job_backend and self.job_backend.running:
                 self.job_backend.write_log(self.buffer)
 
         self.buffer = ''
 
     def write(self, message):
-
-        # if message == '\n':
-        #     return
-
         message = six.text_type(message)
-
-        # if not self.error:
-        #     message = self.get_line(message)
 
         try:
             self.terminal.write(message)
+            # if self.error:
+            #     self.logger.error(message)
+            # else:
+            #     self.logger.info(message)
 
             self.last_messages += message
             if len(self.last_messages) > 500 * 1024:

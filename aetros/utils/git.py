@@ -2,7 +2,6 @@ import subprocess
 
 import re
 
-
 def get_branches():
     branches = subprocess.check_output(['git', 'branch']).strip().split('\n')
 

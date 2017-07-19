@@ -58,15 +58,11 @@ class JobModel:
 
     @property
     def model_id(self):
-        return self.job['modelId']
+        return self.job['name']
 
     @property
     def id(self):
         return self.job['id']
-
-    @property
-    def index(self):
-        return self.job['index']
 
     @property
     def config(self):
@@ -94,22 +90,22 @@ class JobModel:
         return self.job['config']['settings']['batchSize']
 
     def get_model_h5_path(self):
-        return os.getcwd() + '/aetros-job/%s/%s/model.h5' % (self.model_id, self.index)
+        return os.getcwd() + '/aetros-job/%s/%s/model.h5' % (self.model_id, self.id)
 
     def get_dataset_dir(self):
-        return os.getcwd() + '/aetros-job/%s/%s/datasets' % (self.model_id, self.index)
+        return os.getcwd() + '/aetros-job/%s/%s/datasets' % (self.model_id, self.id)
 
     def get_base_dir(self):
-        return os.getcwd() + '/aetros-job/%s/%s' % (self.model_id, self.index)
+        return os.getcwd() + '/aetros-job/%s/%s' % (self.model_id, self.id)
 
     def get_dataset_downloads_dir(self, dataset):
         return os.getcwd() + '/aetros-job/datasets/%s/datasets_downloads' % (dataset['id'],)
 
     def get_weights_filepath_latest(self):
-        return os.getcwd() + '/aetros-job/%s/%s/weights_latest.hdf5' % (self.model_id, self.index)
+        return os.getcwd() + '/aetros-job/%s/%s/weights_latest.hdf5' % (self.model_id, self.id)
 
     def get_weights_filepath_best(self):
-        return os.getcwd() + '/aetros-job/%s/%s/weights_best.hdf5' % (self.model_id, self.index)
+        return os.getcwd() + '/aetros-job/%s/%s/weights_best.hdf5' % (self.model_id, self.id)
 
     def get_input_names(self):
         names = []

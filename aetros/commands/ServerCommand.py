@@ -14,7 +14,8 @@ import select
 import psutil
 import subprocess
 
-from aetros.backend import invalid_json_values, EventListener, parse_message, BackendClient
+from aetros.backend import EventListener, parse_message, BackendClient
+from aetros.utils import invalid_json_values
 
 
 class ServerClient(BackendClient):
@@ -28,6 +29,9 @@ class ServerClient(BackendClient):
     def on_connect(self):
         self.send_message({'register_server': self.server_api_key})
         messages = self.wait_for_at_least_one_message(self.s)
+
+        if not messages:
+            return False
 
         message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:

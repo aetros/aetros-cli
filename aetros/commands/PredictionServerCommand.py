@@ -80,8 +80,7 @@ class PredictionServerCommand:
 
         keras_model_utils.job_prepare(self.job_model)
 
-        general_logger = GeneralLogger()
-        trainer = Trainer(job_backend, general_logger)
+        trainer = Trainer(job_backend)
 
         self.job_model.set_input_shape(trainer)
 

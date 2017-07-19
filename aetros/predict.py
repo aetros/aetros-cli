@@ -43,8 +43,7 @@ def predict(job_id, file_paths, insights=False, weights_path=None, api_key=None)
     from .logger import GeneralLogger
     from .Trainer import Trainer
 
-    general_logger = GeneralLogger(log, job_backend)
-    trainer = Trainer(job_backend, general_logger)
+    trainer = Trainer(job_backend)
     job_model.set_input_shape(trainer)
 
     print("Load model and compile ...")

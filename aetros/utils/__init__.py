@@ -15,6 +15,21 @@ def get_option(dict, key, default=None, type=None):
     return dict[key]
 
 
+def invalid_json_values(obj):
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, bytes):
+        return obj.decode('cp437')
+
+    if isinstance(map, type) and isinstance(obj, map):
+        # python 3 map
+        return list(obj)
+
+    raise TypeError('Invalid data type passed to json encoder: ' + type(obj).__name__)
+
+
 def get_time(self):
     ts = time.time()
     st = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
