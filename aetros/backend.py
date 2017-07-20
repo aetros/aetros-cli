@@ -29,7 +29,7 @@ import yaml
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
-from aetros.utils import git, invalid_json_values
+from aetros.utils import git, invalid_json_values, read_home_config, read_config
 
 try:
     from cStringIO import StringIO
@@ -197,9 +197,9 @@ class BackendClient:
                 self.lock.release()
 
     def debug(self):
-        sent = len(filter(lambda x: x['sent'], self.queue))
-        sending = len(filter(lambda x: x['sending'], self.queue))
-        open = len(filter(lambda x: not x['sending'], self.queue))
+        sent = len(filter(lambda x: x['_sent'], self.queue))
+        sending = len(filter(lambda x: x['_sending'], self.queue))
+        open = len(filter(lambda x: not x['_sending'], self.queue))
         self.logger.debug("%d sent, %d in sending, %d open " % (sent, sending, open))
 
     def connection_error(self, error=None):
@@ -226,20 +226,20 @@ class BackendClient:
 
         # set all messages that are in sending to sending=false
         for message in self.queue:
-            if message['sending'] and not message['sent']:
-                message['sending'] = False
+            if message['_sending'] and not message['_sent']:
+                message['_sending'] = False
 
         self.connection_errors += 1
 
     def thread_write(self):
 
-        while True:
+        while self.active:
             if self.connected and self.registered:
                 self.lock.acquire()
                 try:
                     sent_size = 0
                     for message in self.queue:
-                        if not message['sending'] and not message['sent']:
+                        if not message['_sending'] and not message['_sent']:
                             size = self.send_message(message)
                             if size is not False:
                                 sent_size += size
@@ -255,11 +255,12 @@ class BackendClient:
             time.sleep(0.1)
 
     def thread_read(self):
-        while True:
+        while self.active:
             if self.connected and self.registered:
-                self.lock.acquire()
                 try:
-                    messages = self.read()
+                    messages = self.read() # this blocks, so no lock before
+
+                    self.lock.acquire()
                     if messages is not None:
                         self.handle_messages(messages)
                 finally:
@@ -292,20 +293,21 @@ class BackendClient:
 
     def send(self, message):
         self.message_id += 1
-        message['id'] = self.message_id
-        message['sending'] = False
-        message['sent'] = False
+        message['_id'] = self.message_id
+        message['_sending'] = False
+        message['_sent'] = False
         self.queue.append(message)
 
     def send_message(self, message):
         if isinstance(message, dict):
-            message['sending'] = True
+            message['_sending'] = True
 
         import msgpack
         msg = msgpack.packb(message, default=invalid_json_values)
 
         try:
             self.ssh_stream.stdin.write(msg)
+            self.ssh_stream.stdin.flush()
             message['sent'] = True
 
             return len(msg)
@@ -381,7 +383,7 @@ class JobClient(BackendClient):
         self.job_id = job_id
 
     def on_connect(self):
-        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job_id': self.job_id})
+        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id})
         self.logger.info("Wait for one message")
         messages = self.wait_for_at_least_one_message()
         self.logger.info("Got: " + str(messages))
@@ -424,6 +426,7 @@ def start_job(name=None):
     """
 
     job = JobBackend(name)
+    job.setup_std_output_logging()
 
     if os.getenv('AETROS_JOB_ID'):
         job.load(os.getenv('AETROS_JOB_ID'))
@@ -431,7 +434,6 @@ def start_job(name=None):
         job.create()
 
     job.start()
-    job.setup_std_output_logging()
 
     return job
 
@@ -467,15 +469,14 @@ class JobLossChannel:
             'layout': layout,
             'lossChannel': True
         }
-        self.job_backend.job_add_status('channel', message)
+
+        self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
+        self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data')
+        self.stream.write("x;training;validation\n")
 
     def send(self, x, training_loss, validation_loss):
-        message = {
-            'name': self.name,
-            'x': x,
-            'y': [training_loss, validation_loss],
-        }
-        self.job_backend.job_add_status('channel-value', message)
+        line = ";".join([str(x), str(training_loss), str(validation_loss)])
+        self.stream.write(line + "\n")
 
 
 class JobImage:
@@ -542,7 +543,11 @@ class JobChannel:
             'layout': layout,
         }
         self.traces = traces
-        self.job_backend.job_add_status('channel', message)
+        self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
+        self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data')
+
+        line = "x;".join(str(x['name']) for x in traces)
+        self.stream.write(line + "\n")
 
     def send(self, x, y):
         if not isinstance(y, list):
@@ -553,12 +558,8 @@ class JobChannel:
                 'You tried to set more y values (%d items) then traces available in channel %s (%d traces).' % (
                     len(y), self.name, len(self.traces)))
 
-        message = {
-            'name': self.name,
-            'x': x,
-            'y': y
-        }
-        self.job_backend.job_add_status('channel-value', message)
+        line = str(x) + ";".join(str(x) for x in y)
+        self.stream.write(line + "\n")
 
 
 class JobBackend:
@@ -570,26 +571,21 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None, api_key=None):
+    def __init__(self, model_name=None):
         self.event_listener = EventListener()
 
         on_shutdown.started_jobs.append(self)
 
-        self.git_path = '.aetros/'
         self.log_file_handle = None
-        self.job = {}
-        self.job['parameters'] = {}
+        self.config = {}
+        self.job = {'parameters': {}}
 
-        self.host = os.getenv('API_HOST')
-        if not self.host or self.host == 'false':
-            self.host = 'trainer.aetros.com'
         self.git = None
 
         self.ssh_stream = None
         self.model_name = model_name
 
         self.client = None
-        self.job = None
         self.stream_log = None
 
         self.last_batch_time = time.time()
@@ -607,11 +603,11 @@ class JobBackend:
         self.running = False
         self.monitoring_thread = None
 
-        coloredlogs.install(level='INFO')
         self.logger = logging.getLogger('aetros')
+        coloredlogs.install(level='INFO', logger=self.logger)
 
-        self.general_logger_stdout = GeneralLogger(job_backend=self, logger=logging.getLogger('std'))
-        self.general_logger_error = GeneralLogger(job_backend=self, logger=logging.getLogger('std'), error=True)
+        self.general_logger_stdout = GeneralLogger(job_backend=self)
+        self.general_logger_error = GeneralLogger(job_backend=self, error=True)
 
         self.last_progress_call = None
         self.job_ids = []
@@ -623,8 +619,18 @@ class JobBackend:
         self.event_listener.on('registration', self.on_registration)
         self.event_listener.on('registration_failed', self.on_registration_failed)
 
-        self.client = JobClient(self.host, self.event_listener, self.logger)
         self.read_config()
+        self.client = JobClient(self.host, self.event_listener, self.logger)
+        self.git = Git(self.logger, self.client, self.host, self.git_path, self.model_name)
+
+
+    @property
+    def git_path(self):
+        return self.config['git_path']
+
+    @property
+    def host(self):
+        return self.config['host']
 
     def on_registration_failed(self, params):
         self.logger.warning("Connecting to AETROS Trainer at %s failed. Reasons: %s. Wrong ssh key?" % (self.host, params['reason'],))
@@ -663,64 +669,72 @@ class JobBackend:
         self.made_batches += 1
 
         if time_diff > 1 or batch == total:  # only each second second or last batch
-            self.set_system_info('currentBatch', batch)
-            self.set_system_info('batchSize', size)
-            self.set_system_info('nb_batches', total)
+            with self.git.batch_commit('BATCH'):
+                self.set_system_info('currentBatch', batch, True)
+                self.set_system_info('batchSize', size, True)
+                self.set_system_info('nb_batches', total, True)
 
-            self.batches_per_second = self.made_batches / time_diff
-            self.made_batches = 0
-            self.last_batch_time = time.time()
+                self.batches_per_second = self.made_batches / time_diff
+                self.made_batches = 0
+                self.last_batch_time = time.time()
 
-            if size:
-                self.set_system_info('samplesPerSecond', self.batches_per_second * size)
+                if size:
+                    self.set_system_info('samplesPerSecond', self.batches_per_second * size, True)
 
-            epochs_per_second = self.batches_per_second / total  # all batches
-            self.set_system_info('epochsPerSecond', epochs_per_second)
+                epochs_per_second = self.batches_per_second / total  # all batches
+                self.set_system_info('epochsPerSecond', epochs_per_second, True)
 
-            elapsed = time.time() - self.start_time
-            self.set_system_info('elapsed', elapsed)
+                elapsed = time.time() - self.start_time
+                self.set_system_info('elapsed', elapsed, True)
 
-            if self.total_epochs:
-                eta = 0
-                if batch < total:
-                    # time to end this epoch
-                    eta += (total - batch) / self.batches_per_second
+                if self.total_epochs:
+                    eta = 0
+                    if batch < total:
+                        # time to end this epoch
+                        eta += (total - batch) / self.batches_per_second
 
-                # time until all epochs are done
-                if self.total_epochs - (self.current_epoch - 1) > 0:
-                    eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
+                    # time until all epochs are done
+                    if self.total_epochs - (self.current_epoch - 1) > 0:
+                        eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
 
-                self.set_system_info('eta', eta)
+                    self.set_system_info('eta', eta, True)
 
         self.current_batch = batch
+
+    @property
+    def job_settings(self):
+        if 'settings' in self.job['config']:
+            return self.job['config']['settings']
+        return {}
 
     def progress(self, epoch, total):
         self.current_epoch = epoch
         self.total_epochs = total
         epoch_limit = False
 
-        if 'maxEpochs' in self.job['config']['settings'] and self.job['config']['settings']['maxEpochs'] > 0:
-            epoch_limit = True
-            self.total_epochs = self.job['config']['settings']['maxEpochs']
+        with self.git.batch_commit('PROGRESS ' + str(epoch)):
+            if 'maxEpochs' in self.job_settings and self.job_settings['maxEpochs'] > 0:
+                epoch_limit = True
+                self.total_epochs = self.job['config']['settings']['maxEpochs']
 
-        if epoch is not 0 and self.last_progress_call:
-            # how long took it since the last call?
-            time_per_epoch = time.time() - self.last_progress_call
-            eta = time_per_epoch * (self.total_epochs - epoch)
-            self.set_system_info('eta', eta)
-            if time_per_epoch > 0:
-                self.set_system_info('epochsPerSecond', 1 / time_per_epoch)
+            if epoch is not 0 and self.last_progress_call:
+                # how long took it since the last call?
+                time_per_epoch = time.time() - self.last_progress_call
+                eta = time_per_epoch * (self.total_epochs - epoch)
+                self.set_system_info('eta', eta)
+                if time_per_epoch > 0:
+                    self.set_system_info('epochsPerSecond', 1 / time_per_epoch)
 
-        self.set_system_info('epoch', epoch)
-        self.set_system_info('epochs', self.total_epochs)
-        self.last_progress_call = time.time()
+            self.set_system_info('epoch', epoch)
+            self.set_system_info('epochs', self.total_epochs)
+            self.last_progress_call = time.time()
 
-        if epoch_limit and self.total_epochs > 0:
-            if epoch >= self.total_epochs:
-                self.logger.info("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
-                self.done()
-                os.kill(os.getpid(), signal.SIGINT)
-                return
+            if epoch_limit and self.total_epochs > 0:
+                if epoch >= self.total_epochs:
+                    self.logger.info("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
+                    self.done()
+                    os.kill(os.getpid(), signal.SIGINT)
+                    return
 
     def create_loss_channel(self, name, xaxis=None, yaxis=None, layout=None):
         """
@@ -763,14 +777,18 @@ class JobBackend:
         self.client.configure(self.model_name, self.job_id)
         self.client.start()
 
-        self.logger.info('aetros/job/channels/log')
-        self.stream_log = self.git.git_stream_file('aetros/job/channels/log')
+        with self.git.batch_commit('JOB_STARTED'):
+            self.git.commit_json_file('JOB_STARTED', 'aetros/job/started', time.time())
+            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
+
+        self.stream_log = self.git.stream_file('aetros/job/log')
 
         self.running = True
         self.ended = False
         self.collect_system_information()
         self.collect_environment()
-        # self.start_monitoring()
+        #todo self.start_monitoring()
+
 
         self.detect_git_version()
 
@@ -778,7 +796,7 @@ class JobBackend:
         try:
             commit_sha = git.get_current_commit_hash()
             if commit_sha:
-                self.set_system_info('git_Version', commit_sha)
+                self.set_system_info('git_version', commit_sha)
 
             current_branch = git.get_current_branch()
             if current_branch:
@@ -840,10 +858,10 @@ class JobBackend:
         if not self.running:
             return
 
+        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_DONE)
+
         if self.total_epochs:
             self.progress(self.total_epochs, self.total_epochs)
-
-        self.post('job/stopped', json={'id': self.job_id})
 
         self.stop(True)
 
@@ -863,34 +881,34 @@ class JobBackend:
             self.client.end()
         else:
             self.client.close()
+        self.logger.info("Stopped.")
 
     def abort(self):
         if not self.running:
             return
 
-        self.set_status('ABORTED')
+        with self.git.batch_commit('ABORTED'):
+            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_ABORTED)
+            self.set_status('ABORTED')
 
         self.stop()
 
     def crash(self, error=None):
         with self.git.batch_commit('CRASH'):
+            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
             self.set_status('CRASHED')
-            self.git.commit_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
-            self.git.commit_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', self.general_logger_error.last_messages)
+            self.git.commit_json_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
+            self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', self.general_logger_error.last_messages)
 
         self.stop()
 
     def write_log(self, message):
         if self.stream_log:
-            self.stream_log(message)
+            self.stream_log.write(message)
 
     def set_status(self, status):
         self.logger.info('Job status changed to %s ' % (status,))
         self.job_add_status('status', status)
-
-    def get_best_weight_url(self, job_id):
-        response = self.get('job/weight-best', {'id': job_id})
-        return response.json()
 
     @property
     def git_host(self):
@@ -904,25 +922,26 @@ class JobBackend:
     def job_id(self):
         return self.git.job_id
 
-
-    def create(self, hyperparameter=None, dataset_id=None, insights=False):
+    def create(self, hyperparameter=None, server='local', dataset_id=None, insights=False):
         self.git.create_job_id()
 
         self.job['id'] = self.job_id
         self.job['name'] = self.model_name
         self.job['datasetId'] = dataset_id
         self.job['insights'] = insights
-        self.job['config'] = {}
+        self.job['server'] = server
+        self.job['config'] = self.config
+        self.job['optimization'] = None
 
         if hyperparameter:
             self.job['parameters'] = hyperparameter
 
         # get model config from where?
         with self.git.batch_commit('JOB_CONFIG'):
-            self.git.commit_file('JOB', 'aetros/job.json', self.job)
+            self.git.commit_json_file('JOB', 'aetros/job.json', self.job)
+            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CREATED)
 
         return self.job_id
-
 
     def is_keras_model(self):
         if not self.job:
@@ -931,20 +950,13 @@ class JobBackend:
         return not self.job['config']['fromCode']
 
     def read_config(self):
-        if os.path.exists('.aetros.yml'):
-            f = open('.aetros.yml', 'r')
-            self.job = yaml.load(f)
-            self.logger.info('Config loaded from ' + os.path.realpath('.aetros.yml'))
-        else:
-            self.job = {}
+        self.config = read_config(logger=self.logger)
 
-        if 'parameters' not in self.job:
-            self.job['parameters'] = {}
+        if 'parameters' in self.config:
+            self.job['parameters'] = self.config['parameters']
 
-        if not self.model_name and ('modelName' in self.job or not self.job['modelName']):
+        if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
-
-        self.git = Git(self.logger, self.client, self.host, self.git_path, self.model_name)
 
     def get_parameter(self, name, default=None):
         params = self.job['parameters']
@@ -997,7 +1009,9 @@ class JobBackend:
         self.job = self.git.git_read('aetros/job.json')
         print('self.job', self.job)
 
+        # todo, patch self.job['config'] from already existing
         # todo, patch self.job['parameters'] from already existing
+        # this is necessary, when the Trainer created the job already and should now be started.
 
         raise Exception('no implemented')
 
@@ -1077,10 +1091,10 @@ class JobBackend:
         self.job = job
 
     def job_add_status(self, key, value):
-        self.git.commit_file('STATUS ' + key, 'aetros/job/status/' + key, value)
+        self.git.commit_json_file('STATUS ' + key, 'aetros/job/status/' + key, value)
 
     def set_info(self, key, value):
-        self.git.commit_file('INFO ' + key, 'aetros/job/info/' + key, value)
+        self.git.commit_json_file('INFO ' + key, 'aetros/job/info/' + key, value)
 
     def set_graph(self, graph):
         self.client.send({
@@ -1088,30 +1102,20 @@ class JobBackend:
             'data': {'graph': graph}
         })
 
-    def set_system_info(self, key, value):
-        self.git.commit_file('SYSTEM_INFO ' + key, 'aetros/job/system/info/' + key, value)
+    def set_system_info(self, key, value, commit_end_of_job=False):
+        if commit_end_of_job:
+            self.git.store_file('aetros/job/system/' + key, json.dumps(value, default=invalid_json_values))
+        else:
+            self.git.commit_json_file('SYSTEM_INFO ' + key, 'aetros/job/system/' + key, value)
 
-    def upload_file(self, file_path, name=None, mime_type=None):
+    def commit_file(self, file_path, name=None):
         if os.path.getsize(file_path) > 10 * 1024 * 1024 * 1024:
             raise Exception('Can not upload file bigger than 10MB')
 
         with open(file_path, 'rb') as f:
             contents = f.read()
 
-        if mime_type is None:
-            import mimetypes
-            mime_type, encoding = mimetypes.guess_type(file_path)
-
-        path = os.path.relpath(file_path)
-
-        encoded = 'zlib'
-        contents = zlib.compress(contents)
-
-        self.client.send({
-            'type': 'job-file',
-            'time': time.time(),
-            'data': {'path': path, 'name': name, 'mime': mime_type, 'encoded': encoded, 'content': contents}
-        })
+        self.git.commit_file('FILE ' + (name or file_path), os.path.expanduser(file_path), contents)
 
     def job_add_insight(self, x, images, confusion_matrix):
         info = {'epoch': x, 'confusionMatrix': confusion_matrix}

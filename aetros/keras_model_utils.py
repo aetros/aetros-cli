@@ -4,9 +4,11 @@ import json
 import os
 
 from aetros.Trainer import is_generator
-from .backend import invalid_json_values
 import six
 from six.moves import range
+
+from aetros.utils import invalid_json_values
+
 
 def ensure_dir(d):
     if not os.path.isdir(d):

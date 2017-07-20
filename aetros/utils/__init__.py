@@ -1,8 +1,12 @@
 from __future__ import division
 from __future__ import absolute_import
+
+import os
 import time
 import datetime
 import numpy as np
+import six
+import yaml
 
 
 def get_option(dict, key, default=None, type=None):
@@ -14,6 +18,44 @@ def get_option(dict, key, default=None, type=None):
 
     return dict[key]
 
+
+def read_home_config(path = '~/.aetros.yml', logger=None):
+    path = os.path.expanduser(path)
+    custom_config = {}
+
+    if os.path.exists(path):
+        f = open(path, 'r')
+        try:
+            logger and logger.info('Home config loaded from ' + os.path.realpath(path))
+            custom_config = yaml.load(f)
+        except:
+            raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
+
+    config = {
+        'host': os.getenv('API_HOST') or 'trainer.aetros.com',
+        'git_path': '.aetros'
+    }
+
+    for k, v in six.iteritems(custom_config):
+        config[k] = v
+
+    return config
+
+
+def read_config(path = '.aetros.yml', logger=None):
+    path = os.path.expanduser(path)
+    home_config = read_home_config(logger=logger)
+
+    config = home_config
+    if os.path.exists(path):
+        f = open(path, 'r')
+        custom_config = yaml.load(f)
+        for k, v in six.iteritems(custom_config):
+            config[k] = v
+
+        logger and logger.info('Config loaded from ' + os.path.realpath(path))
+
+    return config
 
 def invalid_json_values(obj):
     if isinstance(obj, np.generic):

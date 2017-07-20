@@ -143,10 +143,6 @@ class KerasCallback(Callback):
             for i, v in config.items():
                 self.job_backend.set_info('optimizer.'+str(i), v)
 
-        self.current['epoch'] = 0
-        self.current['started'] = self.start_time
-        self.job_backend.set_system_info('current', self.current)
-
         #compatibility with keras 1.x
         if 'epochs' not in self.params and 'nb_epoch' in self.params:
             self.params['epochs'] = self.params['nb_epoch']
@@ -356,7 +352,6 @@ class KerasCallback(Callback):
 
         layers = self.model.layers + self.insight_layer
 
-
         for layer in layers:
             if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
 
@@ -408,7 +403,6 @@ class KerasCallback(Callback):
                     if Y.size == 1:
                         Y = np.array([Y])
 
-                    node = self.job_model.get_model_node(layer.name)
 
                     image = None
                     if len(Y.shape) > 1:
@@ -418,10 +412,7 @@ class KerasCallback(Callback):
 
                         image = PIL.Image.fromarray(get_layer_vis_square(Y))
                     elif len(Y.shape) == 1:
-                        if node and node['activationFunction'] == 'softmax':
-                            image = self.make_image_from_dense_softmax(Y)
-                        else:
-                            image = self.make_image_from_dense(Y)
+                        image = self.make_image_from_dense(Y)
 
                     if image:
                         images.append(JobImage(layer.name, image))

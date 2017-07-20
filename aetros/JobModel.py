@@ -13,6 +13,7 @@ from aetros.logger import GeneralLogger
 from aetros.keras_model_utils import ensure_dir
 from aetros.backend import JobBackend
 
+
 def create_simple(id, last_weights=False):
     job_backend = JobBackend()
     job_backend.load(id)
