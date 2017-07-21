@@ -44,7 +44,7 @@ class Git:
     def thread_push(self):
         while self.active_thread:
             if self.job_id and self.online:
-                self.command_exec(['git', '-C', self.git_path, 'push', 'origin', self.ref_head])
+                self.command_exec(['git', '-C', self.git_path, 'push', '-f', 'origin', self.ref_head])
 
             time.sleep(1)
 
@@ -221,7 +221,7 @@ class Git:
         return self.command_exec(['git', '-C', self.git_path, 'write-tree']).decode("utf-8") .strip()
 
     def commit_json_file(self, message, path, content):
-        return self.commit_file(message, path, json.dumps(content, default=invalid_json_values))
+        return self.commit_file(message, path + '.json', json.dumps(content, default=invalid_json_values))
 
     def commit_file(self, message, path, content):
 

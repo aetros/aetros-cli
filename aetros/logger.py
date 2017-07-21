@@ -52,7 +52,7 @@ class GeneralLogger(object):
                 self.last_messages = self.last_messages[-500 * 1024:]
 
             for char in message:
-                if '\b' == char:
+                if '\b' == char or '\r' == char:
                     self.buffer = self.buffer[:-1]
                 else:
                     self.buffer += char

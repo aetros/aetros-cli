@@ -178,7 +178,7 @@ class BackendClient:
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
 
             self.ssh_stream = subprocess.Popen(['ssh', 'git@' + self.host, 'stream'],
-                                               stdout=subprocess.PIPE, stdin=subprocess.PIPE,
+                                               stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
                                                preexec_fn=preexec_function)
             self.connected = True
             self.lock.release()
@@ -213,11 +213,11 @@ class BackendClient:
         message = "Connection error to " + self.host + ": "
 
         if hasattr(error, 'errno') and hasattr(error, 'message'):
-            print(message + "%d: %s" % (error.errno, error.message,))
+            self.logger.error(message + "%d: %s" % (error.errno, error.message,))
         elif error:
-            print(message + str(error))
+            self.logger.error(message + str(error))
         else:
-            print(message)
+            self.logger.error(message)
 
         self.connected = False
         self.registered = False
@@ -292,6 +292,8 @@ class BackendClient:
         self.ssh_stream.kill()
 
     def send(self, message):
+        if not self.active: return
+
         self.message_id += 1
         message['_id'] = self.message_id
         message['_sending'] = False
@@ -384,11 +386,16 @@ class JobClient(BackendClient):
 
     def on_connect(self):
         self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id})
-        self.logger.info("Wait for one message")
+        self.logger.info("Wait for one client registration")
         messages = self.wait_for_at_least_one_message()
-        self.logger.info("Got: " + str(messages))
 
         if not messages:
+            reason = self.ssh_stream.stderr.read()
+            if 'Permission denied' in reason:
+                # disable client, as this error can not be fixed during runtime
+                self.active = False
+
+            self.event_listener.fire('registration_failed', {'reason': reason})
             return False
 
         message = messages.pop(0)
@@ -472,11 +479,12 @@ class JobLossChannel:
 
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
         self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data')
-        self.stream.write("x;training;validation\n")
+        self.stream.write('"x","training","validation"\n')
 
     def send(self, x, training_loss, validation_loss):
-        line = ";".join([str(x), str(training_loss), str(validation_loss)])
+        line = json.dumps([x, training_loss, validation_loss])[1:-1]
         self.stream.write(line + "\n")
+        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last', line)
 
 
 class JobImage:
@@ -546,7 +554,10 @@ class JobChannel:
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
         self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data')
 
-        line = "x;".join(str(x['name']) for x in traces)
+        if kpi:
+            self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpiChannel', name)
+
+        line = json.dumps(['x'] + [str(x['name']) for x in traces])[1:-1]
         self.stream.write(line + "\n")
 
     def send(self, x, y):
@@ -558,8 +569,9 @@ class JobChannel:
                 'You tried to set more y values (%d items) then traces available in channel %s (%d traces).' % (
                     len(y), self.name, len(self.traces)))
 
-        line = str(x) + ";".join(str(x) for x in y)
+        line = json.dumps([x] + y)[1:-1]
         self.stream.write(line + "\n")
+        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last', line)
 
 
 class JobBackend:
@@ -613,6 +625,7 @@ class JobBackend:
         self.job_ids = []
         self.in_request = False
         self.stop_requested = False
+        self.online = False
 
         self.event_listener.on('stop', self.external_stop)
         self.event_listener.on('aborted', self.external_aborted)
@@ -633,12 +646,18 @@ class JobBackend:
         return self.config['host']
 
     def on_registration_failed(self, params):
-        self.logger.warning("Connecting to AETROS Trainer at %s failed. Reasons: %s. Wrong ssh key?" % (self.host, params['reason'],))
-        self.logger.warning("Live streaming disabled. Job continues to local git only. Use 'aetros push-job %s' to public your job when done." % (self.job_id, ), file=sys.stderr)
+        self.logger.warning("Connecting to AETROS Trainer at %s failed. Reasons: %s" % (self.host, params['reason'],))
+        if 'Permission denied' in params['reason']:
+            self.logger.warning("Make sure you have saved your ssh pub key in your AETROS Trainer user account.")
+        self.logger.warning("Live streaming disabled. Job continues to local git only. Use 'aetros push-job %s' to publish your job when done." % (self.job_id, ))
+        self.online = False
+        self.git.online = False
 
     def on_registration(self, params):
         self.logger.info("Job %s#%s started. Open http://%s/job/%s to monitor the training." %
               (self.model_name, self.job_id, self.host, self.job_id))
+        self.online = True
+        self.git.online = True
 
     def external_aborted(self, params):
         self.ended = True
@@ -670,9 +689,9 @@ class JobBackend:
 
         if time_diff > 1 or batch == total:  # only each second second or last batch
             with self.git.batch_commit('BATCH'):
-                self.set_system_info('currentBatch', batch, True)
+                self.set_system_info('batch', batch, True)
+                self.set_system_info('batches', total, True)
                 self.set_system_info('batchSize', size, True)
-                self.set_system_info('nb_batches', total, True)
 
                 self.batches_per_second = self.made_batches / time_diff
                 self.made_batches = 0
@@ -721,12 +740,12 @@ class JobBackend:
                 # how long took it since the last call?
                 time_per_epoch = time.time() - self.last_progress_call
                 eta = time_per_epoch * (self.total_epochs - epoch)
-                self.set_system_info('eta', eta)
+                self.set_system_info('eta', eta, True)
                 if time_per_epoch > 0:
-                    self.set_system_info('epochsPerSecond', 1 / time_per_epoch)
+                    self.set_system_info('epochsPerSecond', 1 / time_per_epoch, True)
 
-            self.set_system_info('epoch', epoch)
-            self.set_system_info('epochs', self.total_epochs)
+            self.set_system_info('epoch', epoch, True)
+            self.set_system_info('epochs', self.total_epochs, True)
             self.last_progress_call = time.time()
 
             if epoch_limit and self.total_epochs > 0:
@@ -922,19 +941,24 @@ class JobBackend:
     def job_id(self):
         return self.git.job_id
 
-    def create(self, hyperparameter=None, server='local', dataset_id=None, insights=False):
+    def create(self, hyperparameter=None, server='local', insights=None):
         self.git.create_job_id()
 
         self.job['id'] = self.job_id
         self.job['name'] = self.model_name
-        self.job['datasetId'] = dataset_id
         self.job['insights'] = insights
         self.job['server'] = server
         self.job['config'] = self.config
         self.job['optimization'] = None
 
-        if hyperparameter:
-            self.job['parameters'] = hyperparameter
+        if insights is not None:
+            self.job['config']['insights'] = insights
+
+        if hyperparameter is not None:
+            self.job['config']['parameters'] = hyperparameter
+
+        if 'parameters' not in self.job['config']:
+            self.job['config']['parameters'] = {}
 
         # get model config from where?
         with self.git.batch_commit('JOB_CONFIG'):
@@ -952,14 +976,11 @@ class JobBackend:
     def read_config(self):
         self.config = read_config(logger=self.logger)
 
-        if 'parameters' in self.config:
-            self.job['parameters'] = self.config['parameters']
-
         if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
 
     def get_parameter(self, name, default=None):
-        params = self.job['parameters']
+        params = self.job['config']['parameters']
 
         if name in params:
             return params[name]
@@ -1010,7 +1031,6 @@ class JobBackend:
         print('self.job', self.job)
 
         # todo, patch self.job['config'] from already existing
-        # todo, patch self.job['parameters'] from already existing
         # this is necessary, when the Trainer created the job already and should now be started.
 
         raise Exception('no implemented')
@@ -1091,20 +1111,20 @@ class JobBackend:
         self.job = job
 
     def job_add_status(self, key, value):
-        self.git.commit_json_file('STATUS ' + key, 'aetros/job/status/' + key, value)
+        self.git.store_file('aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))
 
-    def set_info(self, key, value):
-        self.git.commit_json_file('INFO ' + key, 'aetros/job/info/' + key, value)
+    def set_info(self, key, value, commit_end_of_job=False):
+        if commit_end_of_job:
+            self.git.store_file('aetros/job/info/' + key + '.json', json.dumps(value, default=invalid_json_values))
+        else:
+            self.git.commit_json_file('INFO ' + key, 'aetros/job/info/' + key, value)
 
     def set_graph(self, graph):
-        self.client.send({
-            'type': 'job-graph',
-            'data': {'graph': graph}
-        })
+        self.git.commit_json_file('GRAPH', 'aetros/job/graph', graph)
 
     def set_system_info(self, key, value, commit_end_of_job=False):
         if commit_end_of_job:
-            self.git.store_file('aetros/job/system/' + key, json.dumps(value, default=invalid_json_values))
+            self.git.store_file('aetros/job/system/' + key + '.json', json.dumps(value, default=invalid_json_values))
         else:
             self.git.commit_json_file('SYSTEM_INFO ' + key, 'aetros/job/system/' + key, value)
 
@@ -1118,7 +1138,6 @@ class JobBackend:
         self.git.commit_file('FILE ' + (name or file_path), os.path.expanduser(file_path), contents)
 
     def job_add_insight(self, x, images, confusion_matrix):
-        info = {'epoch': x, 'confusionMatrix': confusion_matrix}
 
         converted_images = []
         for image in images:
@@ -1131,11 +1150,12 @@ class JobBackend:
                 'image': self.pil_image_to_jpeg(image.image)
             })
 
-        self.client.send({
-            'type': 'job-insight',
-            'time': time.time(),
-            'data': {'info': info, 'images': converted_images}
-        })
+        with self.git.batch_commit('INSIGHT ' + str(x)):
+
+            for image in converted_images:
+                self.git.commit_file('INSIGHT ' + str(image['title']), 'aetros/job/insight/'+str(x)+'/image/'+image['id'], image['image'])
+
+            self.git.commit_json_file('INSIGHT CONFUSION_MATRIX', 'aetros/job/insight/'+str(x)+'/confusion_matrix', confusion_matrix)
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()
