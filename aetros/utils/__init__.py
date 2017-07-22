@@ -32,8 +32,7 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
             raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
 
     config = {
-        'host': os.getenv('API_HOST') or 'trainer.aetros.com',
-        'git_path': '.aetros'
+        'host': os.getenv('API_HOST') or 'trainer.aetros.com'
     }
 
     for k, v in six.iteritems(custom_config):

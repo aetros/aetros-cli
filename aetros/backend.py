@@ -478,13 +478,13 @@ class JobLossChannel:
         }
 
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
-        self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data')
+        self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data.csv')
         self.stream.write('"x","training","validation"\n')
 
     def send(self, x, training_loss, validation_loss):
         line = json.dumps([x, training_loss, validation_loss])[1:-1]
         self.stream.write(line + "\n")
-        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last', line)
+        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
 
 
 class JobImage:
@@ -500,7 +500,6 @@ class JobImage:
 class JobChannel:
     NUMBER = 'number'
     TEXT = 'text'
-    IMAGE = 'image'
 
     """
     :type job_backend: JobBackend
@@ -552,10 +551,10 @@ class JobChannel:
         }
         self.traces = traces
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
-        self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data')
+        self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data.csv')
 
         if kpi:
-            self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpiChannel', name)
+            self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpi/name.json', name)
 
         line = json.dumps(['x'] + [str(x['name']) for x in traces])[1:-1]
         self.stream.write(line + "\n")
@@ -571,7 +570,8 @@ class JobChannel:
 
         line = json.dumps([x] + y)[1:-1]
         self.stream.write(line + "\n")
-        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last', line)
+        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
+        self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[0]))
 
 
 class JobBackend:
@@ -632,7 +632,7 @@ class JobBackend:
         self.event_listener.on('registration', self.on_registration)
         self.event_listener.on('registration_failed', self.on_registration_failed)
 
-        self.read_config()
+        self.read_config(model_name)
         self.client = JobClient(self.host, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.host, self.git_path, self.model_name)
 
@@ -775,10 +775,10 @@ class JobBackend:
         :param kpi: bool : whether this channel is the KPI (key performance indicator).
                            Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
 
-        :param max_optimization: bool : whether the optimization maximizes or minmizes the kpi . Use max_optimization=False to
+        :param max_optimization: bool : whether the optimization maximizes or minmizes the kpi. Use max_optimization=False to
                                         tell the optimization algorithm that his channel minimizes a kpi, for instance the loss of a model.
 
-        :param type: str : One of JobChannel.NUMBER, JobChannel.TEXT, JobChannel.IMAGE
+        :param type: str : One of JobChannel.NUMBER, JobChannel.TEXT
         :param xaxis: dict
         :param yaxis: dict
         :param layout: dict
@@ -797,17 +797,18 @@ class JobBackend:
         self.client.start()
 
         with self.git.batch_commit('JOB_STARTED'):
-            self.git.commit_json_file('JOB_STARTED', 'aetros/job/started', time.time())
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
+            self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
 
-        self.stream_log = self.git.stream_file('aetros/job/log')
+        self.git.store_file('aetros/job/times/elapsed', str(0))
+
+        self.stream_log = self.git.stream_file('aetros/job/log.txt')
 
         self.running = True
         self.ended = False
         self.collect_system_information()
         self.collect_environment()
-        #todo self.start_monitoring()
-
+        self.start_monitoring()
 
         self.detect_git_version()
 
@@ -965,6 +966,8 @@ class JobBackend:
             self.git.commit_json_file('JOB', 'aetros/job.json', self.job)
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CREATED)
 
+            self.git.commit_file('JOB', 'aetros/job/times/created', str(time.time()))
+
         return self.job_id
 
     def is_keras_model(self):
@@ -973,8 +976,18 @@ class JobBackend:
 
         return not self.job['config']['fromCode']
 
-    def read_config(self):
+    def read_config(self, model_name=None):
         self.config = read_config(logger=self.logger)
+
+        if model_name is None and 'model' not in self.config:
+            raise Exception('No AETROS Trainer model name given. Specify it in aetros.backend.start_job("model/name") or in .aetros.yml `model: model/name`.')
+
+        if 'models' in self.config:
+            if model_name in self.config['models']:
+                self.config.update(self.config['models'][model_name])
+
+        if 'git_path' not in self.config:
+            self.config['git_path'] = '.aetros/' + model_name + '.git'
 
         if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
@@ -1156,11 +1169,12 @@ class JobBackend:
                 self.git.commit_file('INSIGHT ' + str(image['title']), 'aetros/job/insight/'+str(x)+'/image/'+image['id'], image['image'])
 
             self.git.commit_json_file('INSIGHT CONFUSION_MATRIX', 'aetros/job/insight/'+str(x)+'/confusion_matrix', confusion_matrix)
+            self.git.store_file('aetros/job/insight/'+str(x)+'/last.json', str(x))
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()
 
-        image.save(buffer, format="JPEG", optimize=True, quality=80)
+        image.save(buffer, format="JPEG", optimize=True, quality=70)
         return buffer.getvalue()
 
     def collect_environment(self):

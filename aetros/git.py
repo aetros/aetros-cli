@@ -27,14 +27,29 @@ class Git:
         self.git_batch_commit_messages = []
         self.git_last_commit = None
 
-        if not os.path.exists(git_path):
-            os.makedirs(git_path)
-
-        if not os.path.exists(git_path + '/.temp'):
-            os.makedirs(git_path + '/.temp')
-
         self.streamed_files = {}
         self.store_files = {}
+
+        if os.path.exists(self.git_path):
+            # check if its a git repo
+            p = subprocess.Popen(['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            p.wait()
+            if p.returncode != 0:
+                raise Exception('Given git_path (%s) already exists and does not seem to be a git repository. Error: %s' % (self.git_path, p.stderr.read()))
+        else:
+            self.command_exec(['git', 'clone', '--bare', self.git_url, self.git_path])
+
+        # check if given repo_path is current folder.
+        # check its origin remote and see if model_name matches
+        origin_url = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'], allowed_to_fail=True).strip().decode("utf-8")
+        # self.logger.warning("BITSCH:" + origin_url)
+        if origin_url and ':' + model_name + '.git' not in origin_url:
+            raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " % (self.git_path, origin_url, model_name))
+
+        if not os.path.exists(self.temp_path):
+            os.makedirs(self.temp_path)
+
+        self.logger.info("Started tracking of files in git %s for remote %s" % (self.git_path, origin_url))
 
         self.active_thread = True
         self.thread_push = Thread(target=self.thread_push)
@@ -44,9 +59,13 @@ class Git:
     def thread_push(self):
         while self.active_thread:
             if self.job_id and self.online:
-                self.command_exec(['git', '-C', self.git_path, 'push', '-f', 'origin', self.ref_head])
+                self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', '-f', 'origin', self.ref_head])
 
             time.sleep(1)
+
+    @property
+    def temp_path(self):
+        return self.git_path + '/temp'
 
     @property
     def ref_head(self):
@@ -54,9 +73,9 @@ class Git:
 
     @property
     def git_url(self):
-        return 'git@%s:%s' % (self.git_host, self.model_name)
+        return 'git@%s:%s.git' % (self.git_host, self.model_name)
 
-    def command_exec(self, command, inputdata=None):
+    def command_exec(self, command, inputdata=None, allowed_to_fail=False):
         self.logger.debug("[Debug] Git command: " + (' '.join(command)) + ', input=' + str(inputdata))
 
         p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -65,25 +84,22 @@ class Git:
 
         self.logger.debug("[Debug] Git command stdout: " + str(stdoutdata) + ', stderr: '+ str(stderrdata))
 
-        if p.returncode != 0:
+        if not allowed_to_fail and p.returncode != 0:
             raise Exception('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
         return stdoutdata
 
     def create_job_id(self):
 
-        if not os.path.exists(self.git_path + '/.git'):
-            self.command_exec(['git', 'clone', self.git_url, self.git_path])
-
-        self.job_id = self.command_exec(['git', '-C', self.git_path, 'commit-tree', '-m', "JOB_CREATED", self.get_empty_tree_id()]).strip().decode("utf-8")
+        self.job_id = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'commit-tree', '-m', "JOB_CREATED", self.get_empty_tree_id()]).strip().decode("utf-8")
         self.git_last_commit = self.job_id
 
-        os.environ['GIT_INDEX_FILE'] = '.temp/git_index_job_' + self.job_id
+        os.environ['GIT_INDEX_FILE'] = self.temp_path + '/git_index_job_' + self.job_id
         index_path = self.git_path + '/' + os.environ['GIT_INDEX_FILE']
         if os.path.exists(index_path + '.lock'):
             os.remove(index_path + '.lock')
 
-        self.command_exec(['git', '-C', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
+        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
 
         self.logger.info("Job git ref created " + self.ref_head)
 
@@ -94,7 +110,7 @@ class Git:
 
         with self.batch_commit('STREAM_END'):
             for path, handle in six.iteritems(self.streamed_files):
-                full_path = self.git_path + '/.temp/stream-blob/' + self.job_id + '/' + path
+                full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
                 handle.seek(0)
                 self.commit_file(path, path, handle.read())
                 handle.close()
@@ -103,7 +119,7 @@ class Git:
 
         with self.batch_commit('STORE_END'):
             for path, bar in six.iteritems(self.store_files):
-                full_path = self.git_path + '/.temp/store-blob/' + self.job_id + '/' + path
+                full_path = self.temp_path + '/store-blob/' + self.job_id + '/' + path
                 self.commit_file(path, path, open(full_path, 'r').read())
                 os.unlink(full_path)
             self.store_files = {}
@@ -154,7 +170,7 @@ class Git:
         return controlled_execution(self)
 
     def get_empty_tree_id(self):
-        return self.command_exec(['git', '-C', self.git_path, 'hash-object', '--stdin', '-ttree'], '').strip().decode('utf-8')
+        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '--stdin', '-ttree'], '').strip().decode('utf-8')
 
     def store_file(self, path, data):
         """
@@ -164,7 +180,7 @@ class Git:
         :return: 
         """
 
-        full_path = self.git_path + '/.temp/store-blob/' + self.job_id + '/' + path
+        full_path = self.temp_path + '/store-blob/' + self.job_id + '/' + path
         if not os.path.exists(os.path.dirname(full_path)):
             os.makedirs(os.path.dirname(full_path))
 
@@ -193,7 +209,7 @@ class Git:
 
         # return handler to write to this file
 
-        full_path = self.git_path + '/.temp/stream-blob/' + self.job_id + '/' + path
+        full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
         if not os.path.exists(os.path.dirname(full_path)):
             os.makedirs(os.path.dirname(full_path))
 
@@ -212,13 +228,13 @@ class Git:
         return Stream(handle, self.client)
 
     def write_blob(self, content):
-        return self.command_exec(['git', '-C', self.git_path, 'hash-object', '-w', "--stdin"], content).decode('utf-8').strip()
+        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '-w', "--stdin"], content).decode('utf-8').strip()
 
     def add_file(self, tree):
-        self.command_exec(['git', '-C', self.git_path, 'update-index', '--add', '--cacheinfo', tree])
+        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-index', '--add', '--cacheinfo', tree])
 
     def write_tree(self):
-        return self.command_exec(['git', '-C', self.git_path, 'write-tree']).decode("utf-8") .strip()
+        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'write-tree']).decode("utf-8") .strip()
 
     def commit_json_file(self, message, path, content):
         return self.commit_file(message, path + '.json', json.dumps(content, default=invalid_json_values))
@@ -238,15 +254,15 @@ class Git:
         if self.git_batch_push:
             return
 
-        self.command_exec(['git', '-C', self.git_path, 'push', 'origin', self.ref_head])
+        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', 'origin', self.ref_head])
 
     def commit_index(self, message):
         tree_id = self.write_tree()
 
-        self.git_last_commit = self.command_exec(['git', '-C', self.git_path, 'commit-tree', tree_id, '-p', self.git_last_commit], message).decode("utf-8") .strip()
+        self.git_last_commit = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'commit-tree', tree_id, '-p', self.git_last_commit], message).decode("utf-8") .strip()
 
         # update ref
-        self.command_exec(['git', '-C', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
+        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
 
         return self.git_last_commit
 
@@ -254,7 +270,7 @@ class Git:
         if not self.job_id:
             raise Exception('Can not fetch last commit sha, when no job_id is set.')
 
-        output = self.command_exec(['git', '-C', self.git_path, 'show-ref', self.ref_head]).decode('utf-8').strip()
+        output = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'show-ref', self.ref_head]).decode('utf-8').strip()
         if output:
             return output.split(' ')[0]
         else:
@@ -263,8 +279,8 @@ class Git:
     def git_read(self, path):
         last_commit = self.git_job_last_commit_sha()
 
-        output = self.command_exec(['git', '-C', self.git_path, 'ls-tree', last_commit, path]).decode("utf-8").strip()
+        output = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'ls-tree', last_commit, path]).decode("utf-8").strip()
         if output:
             blob_id = output.split(' ')[2].split('\t')[0]
 
-            return self.command_exec(['git', '-C', self.git_path, 'cat-file', blob_id])
+            return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'cat-file', blob_id])
