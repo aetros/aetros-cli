@@ -222,8 +222,11 @@ class Git:
                 self.client = client
 
             def write(self, data):
-                handle.write(data)
-                self.client.send({'type': 'stream-blob', 'path': path, 'data': data})
+                try:
+                    handle.write(data)
+                    self.client.send({'type': 'stream-blob', 'path': path, 'data': data})
+                except:
+                    pass
 
         return Stream(handle, self.client)
 

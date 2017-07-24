@@ -71,6 +71,7 @@ class KerasCallback(Callback):
 
         ensure_dir(os.path.dirname(self.filepath_best))
 
+        self.kpi_channel = None
         self.accuracy_channel = None
         self.all_losses = None
         self.loss_channel = None
@@ -166,7 +167,8 @@ class KerasCallback(Callback):
                 traces.append(output.name+'_validation')
                 traces.append(output.name+'_training')
 
-        self.accuracy_channel = self.job_backend.create_channel('accuracy', main=True, traces=traces, kpi=True, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
+        is_accuracy_kpi = True if self.job_backend.kpi_channel is None else False
+        self.accuracy_channel = self.job_backend.create_channel('accuracy', main=True, traces=traces, kpi=is_accuracy_kpi, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
         self.loss_channel = self.job_backend.create_loss_channel('loss', xaxis=xaxis)
         self.learning_rate_channel = self.job_backend.create_channel('learning rate', traces=['start', 'end'], xaxis=xaxis)
         self.job_backend.progress(0, self.params['epochs'])

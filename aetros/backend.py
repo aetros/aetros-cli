@@ -528,6 +528,9 @@ class JobChannel:
         self.name = name
         self.job_backend = job_backend
 
+        if kpi:
+            self.job_backend.kpi_channel = self
+
         if not (isinstance(traces, list) or traces is None):
             raise Exception(
                 'traces can only be None or a list of dicts: [{name: "name", option1: ...}, {name: "name2"}, ...]')
@@ -626,6 +629,8 @@ class JobBackend:
         self.in_request = False
         self.stop_requested = False
         self.online = False
+
+        self.kpi_channel = None
 
         self.event_listener.on('stop', self.external_stop)
         self.event_listener.on('aborted', self.external_aborted)
