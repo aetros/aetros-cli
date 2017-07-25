@@ -35,8 +35,7 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
         'host': os.getenv('API_HOST') or 'trainer.aetros.com'
     }
 
-    for k, v in six.iteritems(custom_config):
-        config[k] = v
+    config.update(custom_config)
 
     return config
 
@@ -48,9 +47,9 @@ def read_config(path = '.aetros.yml', logger=None):
     config = home_config
     if os.path.exists(path):
         f = open(path, 'r')
+
         custom_config = yaml.load(f)
-        for k, v in six.iteritems(custom_config):
-            config[k] = v
+        config.update(custom_config)
 
         logger and logger.info('Config loaded from ' + os.path.realpath(path))
 

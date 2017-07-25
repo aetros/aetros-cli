@@ -1,60 +1,53 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
-import json
 import os
-import pprint
-import socket
 import sys
-from threading import Lock, Thread
 import time
-
-import select
-
 import psutil
 import subprocess
 
-from aetros.backend import EventListener, parse_message, BackendClient
-from aetros.utils import invalid_json_values
+from aetros.backend import EventListener, BackendClient
+from aetros.utils import read_home_config
 
 
 class ServerClient(BackendClient):
-    def __init__(self, api_host, api_port, event_listener):
-        BackendClient.__init__(self, api_host, api_port, event_listener)
-        self.server_api_key = None
+    def __init__(self, host, event_listener, logger):
+        BackendClient.__init__(self, host, event_listener, logger)
+        self.server_name = None
 
-    def configure(self, server_api_key):
-        self.server_api_key = server_api_key
+    def configure(self, server_name):
+        self.server_name = server_name
 
     def on_connect(self):
-        self.send_message({'register_server': self.server_api_key})
-        messages = self.wait_for_at_least_one_message(self.s)
+        self.send_message({'type': 'register_server', 'server': self.server_name})
+        messages = self.wait_for_at_least_one_message()
 
         if not messages:
             return False
 
         message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:
-            if "ACCESS_DENIED" in message['a']:
-                print('Access denied. Try a different secure key.')
+            if "registration_failed" in message['a']:
+                self.logger.error('Access denied. Try a different secure key.')
                 self.close()
                 self.event_listener.fire('failed')
+                return False
 
-
-            if "SERVER_ALREADY_REGISTERED" in message['a']:
-                print("Registration failed. This server is already registered.")
+            if "already_registered" in message['a']:
+                self.logger.error("Registration failed. This server is already registered.")
                 self.close()
                 self.event_listener.fire('failed')
+                return False
 
-            if "SERVER_REGISTERED" in message['a']:
+            if "registered" in message['a']:
                 self.registered = True
-                server_id = message['id']
-                self.event_listener.fire('registration', server_id)
-                print("Connected to %s as server %s" % (self.api_host, server_id))
+                self.event_listener.fire('registration')
+                self.logger.info("Connected to %s as server %s" % (self.host, self.server_name))
                 self.handle_messages(messages)
                 return True
 
-        print("Registration failed due to protocol error.")
+        self.logger.error("Registration of server %s failed due to protocol error." % (self.server_name,))
         return False
 
     def handle_messages(self, messages):
@@ -78,7 +71,8 @@ class ServerCommand:
     model = None
     job_model = None
 
-    def __init__(self):
+    def __init__(self, logger):
+        self.logger = logger
         self.last_utilization = None
         self.last_net = {}
         self.nets = []
@@ -96,8 +90,7 @@ class ServerCommand:
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' server')
-        parser.add_argument('--secure-key', nargs='?',
-                            help="Secure key of the server.")
+        parser.add_argument('name', nargs='?', help="Server name")
         parser.add_argument('--max-jobs', help="How many jobs should be run at the same time.")
         parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
         parser.add_argument('--port', help="Default 8051. Read from environment variable API_PORT.")
@@ -105,9 +98,11 @@ class ServerCommand:
 
         parsed_args = parser.parse_args(args)
 
-        if not parsed_args.secure_key:
+        if not parsed_args.name:
             parser.print_help()
             sys.exit()
+
+        config = read_home_config()
 
         if parsed_args.max_jobs:
             self.max_parallel_jobs = int(parsed_args.max_jobs)
@@ -121,8 +116,8 @@ class ServerCommand:
         event_listener.on('start-jobs', self.start_jobs)
         event_listener.on('stop-job', self.stop_job)
 
-        self.server = ServerClient(parsed_args.host, parsed_args.port, event_listener)
-        self.server.configure(parsed_args.secure_key)
+        self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger)
+        self.server.configure(parsed_args.name)
         self.server.start()
 
         while self.active:
@@ -143,7 +138,7 @@ class ServerCommand:
     def stop_job(self, id):
         if id in self.queuedMap:
             job = self.queuedMap[id]
-            print("Queued job removed %s#%d (%s) " % (job['modelId'], job['index'], job['id']))
+            self.logger.info("Queued job removed %s#%d (%s) " % (job['modelId'], job['index'], job['id']))
 
             # removing from the queue is enough, since the job process itself terminates it when job is aborted.
             if job in self.queue:
@@ -157,7 +152,7 @@ class ServerCommand:
         if job['id'] in self.queuedMap:
             return
 
-        print("Queued job %s#%d (%s, prio:%d) by %s in %s ..." % (
+        self.logger.info("Queued job %s#%d (%s, prio:%d) by %s in %s ..." % (
             job['modelId'], job['index'], job['id'], job['priority'], job['username'], os.getcwd()
         ))
 
@@ -172,10 +167,10 @@ class ServerCommand:
             exit_code = process.poll()
             if exit_code is not None and exit_code > 0:
                 reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
-                print(reason)
+                self.logger.error(reason)
                 self.server.send_message({'type': 'job-failed', 'id': job['id'], 'error': reason})
             elif exit_code is not None and exit_code == 0:
-                print('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
+                self.logger.info('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
 
             if exit_code is not None and job['id'] in self.queuedMap:
                 del self.queuedMap[job['id']]
@@ -194,7 +189,7 @@ class ServerCommand:
             self.execute_job(self.queue.pop(0))
 
     def execute_job(self, job):
-        print("Execute job %s#%d (%s) by %s using job's API_KEY=%s in %s ..." % (
+        self.logger.info("Execute job %s#%d (%s) by %s using job's API_KEY=%s in %s ..." % (
             job['modelId'], job['index'], job['id'], job['username'], job['apiKey'], os.getcwd()))
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:

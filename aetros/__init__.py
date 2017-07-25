@@ -2,6 +2,11 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import sys
+
+import logging
+
+import coloredlogs
+
 import aetros.const
 
 __version__ = const.__version__
@@ -54,11 +59,14 @@ def main(args=None):
     }
     cmd_name, cmd_args = parseopts(args)
 
+    logger = logging.getLogger('aetros')
+    coloredlogs.install(level='INFO', logger=logger)
+
     if cmd_name not in commands_dict:
-        print(("Command %s not found" % (cmd_name,)))
+        logger.error(("Command %s not found" % (cmd_name,)))
         sys.exit(1)
 
-    command = commands_dict[cmd_name]()
+    command = commands_dict[cmd_name](logger)
 
     code = command.main(cmd_args)
     sys.exit(code)

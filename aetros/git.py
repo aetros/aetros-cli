@@ -103,6 +103,8 @@ class Git:
 
         self.logger.info("Job git ref created " + self.ref_head)
 
+        self.push()
+
         return self.job_id
 
     def stop(self):

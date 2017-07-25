@@ -187,11 +187,9 @@ class BackendClient:
         except Exception as error:
 
             if hasattr(error, 'message'):
-                self.logger.error("Connection error during connecting to %s: %s" % (self.host, error.message))
-            else:
-                self.logger.error("Connection error during connecting to %s." % (self.host,))
-            time.sleep(1)
-            return False
+                self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
+
+            raise
         finally:
             if self.lock.locked():
                 self.lock.release()
@@ -319,9 +317,9 @@ class BackendClient:
 
     def handle_messages(self, messages):
         for message in messages:
-            if not self.external_stopped and 'STOP' == message:
+            if not self.external_stopped and 'stop' == message['a']:
                 self.external_stopped = True
-                self.event_listener.fire('stop')
+                self.event_listener.fire('stop', message['force'])
 
     def wait_for_at_least_one_message(self):
         """
@@ -403,7 +401,7 @@ class JobClient(BackendClient):
         if isinstance(message, dict) and 'a' in message:
             if 'aborted' == message['a']:
                 self.logger.error("Job aborted meanwhile. Exiting")
-                self.event_listener.fire('stop')
+                self.event_listener.fire('stop', False)
                 self.active = False
                 return False
 
@@ -488,13 +486,13 @@ class JobLossChannel:
 
 
 class JobImage:
-    def __init__(self, id, image, title=None):
+    def __init__(self, id, image, label=None):
         self.id = id
         if not isinstance(image, PIL.Image.Image):
             raise Exception('JobImage requires a PIL.Image as image argument.')
 
         self.image = image
-        self.title = title or id
+        self.label = label
 
 
 class JobChannel:
@@ -659,8 +657,8 @@ class JobBackend:
         self.git.online = False
 
     def on_registration(self, params):
-        self.logger.info("Job %s#%s started. Open http://%s/job/%s to monitor the training." %
-              (self.model_name, self.job_id, self.host, self.job_id))
+        self.logger.info("Job %s#%s started." % (self.model_name, self.job_id))
+        self.logger.info("Open http://%s/job/%s to monitor the training." % (self.host, self.job_id))
         self.online = True
         self.git.online = True
 
@@ -952,7 +950,6 @@ class JobBackend:
 
         self.job['id'] = self.job_id
         self.job['name'] = self.model_name
-        self.job['insights'] = insights
         self.job['server'] = server
         self.job['config'] = self.config
         self.job['optimization'] = None
@@ -1146,35 +1143,49 @@ class JobBackend:
         else:
             self.git.commit_json_file('SYSTEM_INFO ' + key, 'aetros/job/system/' + key, value)
 
-    def commit_file(self, file_path, name=None):
-        if os.path.getsize(file_path) > 10 * 1024 * 1024 * 1024:
-            raise Exception('Can not upload file bigger than 10MB')
+    def commit_file(self, path, title=None):
+        path = os.path.expanduser(path).strip()
 
-        with open(file_path, 'rb') as f:
-            contents = f.read()
+        if './' == path[0: 2]:
+            path = path[2:]
 
-        self.git.commit_file('FILE ' + (name or file_path), os.path.expanduser(file_path), contents)
+        with self.git.batch_commit('FILE ' + (title or path)):
+            if os.path.isdir(path):
+                for file in os.listdir(path):
+                    self.commit_file(path + '/' + file)
+                return
+
+            if os.path.getsize(path) > 10 * 1024 * 1024 * 1024:
+                raise Exception('Can not upload file bigger than 10MB')
+
+            with open(path, 'rb') as f:
+                contents = f.read()
+
+            self.git.commit_file('FILE ' + (title or path), path, contents)
 
     def job_add_insight(self, x, images, confusion_matrix):
-
         converted_images = []
+        info = {}
         for image in images:
             if not isinstance(image, JobImage):
                 raise Exception('job_add_insight only accepts JobImage instances in images argument')
 
             converted_images.append({
                 'id': image.id,
-                'title': image.title,
                 'image': self.pil_image_to_jpeg(image.image)
             })
+            info[image.id] = {
+                'file': image.id+'.jpg',
+                'label': image.label
+            }
 
         with self.git.batch_commit('INSIGHT ' + str(x)):
 
             for image in converted_images:
-                self.git.commit_file('INSIGHT ' + str(image['title']), 'aetros/job/insight/'+str(x)+'/image/'+image['id'], image['image'])
+                self.git.commit_file('INSIGHT ' + str(image['id']), 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg', image['image'])
 
             self.git.commit_json_file('INSIGHT CONFUSION_MATRIX', 'aetros/job/insight/'+str(x)+'/confusion_matrix', confusion_matrix)
-            self.git.store_file('aetros/job/insight/'+str(x)+'/last.json', str(x))
+            self.git.commit_json_file('INSIGHT INFO', 'aetros/job/insight/' + str(x) + '/info', info)
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()
