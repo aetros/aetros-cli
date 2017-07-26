@@ -20,16 +20,18 @@ from .keras_model_utils import ensure_dir
 import six
 
 
-def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, api_key=None):
+def start(logger, full_id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, api_key=None):
     """
     Starts the training process with all logging of a job_id
     :type id: string : job id or model name
     """
 
-    job_backend = JobBackend(api_key=api_key)
-    job_backend.ensure_job(id, hyperparameter, dataset_id, server_id, insights)
+    owner, name, id = full_id.split('/')
+
+    job_backend = JobBackend(model_name=owner + '/' + name)
+    job_backend.load(id)
     job_backend.setup_std_output_logging()
-    job_backend.start()
+    job_backend.start_light()
 
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
@@ -38,12 +40,12 @@ def start(id, hyperparameter=None, dataset_id=None, server_id='local', insights=
         os.environ["API_KEY"] = api_key
 
     if job_backend.is_keras_model():
-        start_keras(job_backend)
+        start_keras(logger, job_backend)
     else:
-        start_custom(job_backend)
+        start_custom(logger, job_backend)
 
 
-def start_custom(job_backend):
+def start_custom(logger, job_backend):
     job_model = job_backend.get_job_model()
     job_config = job_model.config
     model_settings = job_model.model_settings
@@ -58,7 +60,6 @@ def start_custom(job_backend):
     git_branch = 'master'
     git_url = model_settings['git']
     git_commit = None
-
 
     if 'gitBranch' in job_config and job_config['gitBranch']:
         git_branch = job_config['gitBranch']
@@ -80,62 +81,68 @@ def start_custom(job_backend):
     my_env['PYTHONPATH'] += ':' + os.getcwd()
     my_env['AETROS_JOB_ID'] = job_model.id
 
-    os.chdir(root)
-
-    print("Setup git repository %s in %s" % (git_url, root + job_model.model_id))
+    logger.info("Setting up git repository %s in %s" % (git_url, root + job_model.model_id))
 
     try:
-        if not os.path.exists(job_model.model_id):
-            args = ['git', 'clone', git_url, job_model.model_id]
-            code = subprocess_call(args)
-            if code != 0:
-                raise Exception('Could not clone repository %s to %s' %(git_url, job_model.model_id))
-            os.chdir(job_model.model_id)
-        else:
-            # repository seems to exists already, make hard reset and git pull origin
-            # check if requested branch is loaded
-            os.chdir(job_model.model_id)
+        repo_path = root + '/' + job_model.model_id
 
-            # check if remote origin is current git_url. if not remove origin and re-add
-            # todo
+        if not os.path.exists(repo_path):
+            args = ['git', 'clone', git_url, repo_path]
+            code = git_execute(args)
+            if code != 0:
+                raise Exception('Could not clone repository %s to %s' %(git_url, repo_path))
+
+        # check if remote origin is current git_url. if not remove origin and re-add
+        # todo
 
         # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
-        subprocess_call(['git', 'fetch', 'origin', git_branch])
+        git_execute(repo_path, ['fetch', 'origin', git_branch])
 
         current_branch = git.get_current_branch()
         # make sure the requested branch is checked out
         if current_branch != git_branch:
-            subprocess_call(['git', 'checkout', git_branch])
+            git_execute(repo_path, ['checkout', git_branch])
 
 
         if git_commit and git_commit != git.get_current_commit_hash():
-            print("Checkout commit %s" % [git_commit])
-            subprocess_call(['git', 'reset', '--hard', git_commit]) #reset to requested commit of FETCH_HEAD, revert all changes to repo files
+            logger.info("Checkout commit %s" % [git_commit])
+            git_execute(repo_path, ['reset', '--hard', git_commit]) #reset to requested commit of FETCH_HEAD, revert all changes to repo files
         else:
-            print("Checkout newest commit")
+            logger.info("Checkout newest commit")
             # checkout newest commit of FETCH_HEAD, revert all changes to repo files
-            subprocess_call(['git', 'reset', '--hard', 'FETCH_HEAD'])
+            git_execute(repo_path, ['reset', '--hard', 'FETCH_HEAD'])
 
         # make this configurable, since cache should not always be cleared on the same server.
         # clean created files that do not belong to the repo
         # print("Delete all files that do not belong to the git repository.")
-        # subprocess_call(['git', 'clean', '-fd'])
+        # git_execute(repo_path, ['clean', '-fd'])
 
     except subprocess.CalledProcessError as e:
-        raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, job_model.model_id))
+        raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, repo_path))
 
     args = (sys.executable, git_python_script)
-    print("$ %s %s" % args)
-    job_backend.stop(True)
+    logger.info("Model source code checked out.")
+    job_backend.stop(True, True)
+    logger.info("-----------")
+    logger.info("-----------")
+    logger.info("Switch working directory to " + repo_path)
+    logger.info("$ %s %s" % args)
 
-    subprocess.Popen(args, close_fds=True, env=my_env).wait()
+    try:
+        subprocess.Popen(args, close_fds=True, env=my_env, cwd=repo_path).wait()
+    except KeyboardInterrupt:
+        logger.warning("Job aborted.")
+        sys.exit(0)
 
-def subprocess_call(args):
+
+def git_execute(repo_path, args):
+    args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
     print("$ %s" % (' '.join(args), ))
+
     return subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
 
 
-def start_keras(job_backend):
+def start_keras(logger, job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
 

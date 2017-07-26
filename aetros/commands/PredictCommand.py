@@ -6,6 +6,9 @@ import aetros.const
 
 class PredictCommand:
 
+    def __init__(self, logger):
+        self.logger = logger
+
     def main(self, args):
 
         from aetros.predict import predict

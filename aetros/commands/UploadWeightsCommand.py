@@ -6,6 +6,9 @@ import os
 
 class UploadWeightsCommand:
 
+    def __init__(self, logger):
+        self.logger = logger
+
     def main(self, args):
 
         from aetros import keras_model_utils

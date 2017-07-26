@@ -45,7 +45,8 @@ class RunClient(BackendClient):
 
 
 class RunCommand:
-    def __init__(self):
+    def __init__(self, logger):
+        self.logger = logger
         self.client = None
         self.registered = False
         self.active = True

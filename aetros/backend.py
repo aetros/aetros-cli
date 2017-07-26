@@ -11,6 +11,8 @@ from threading import Thread, Lock
 
 import coloredlogs
 import logging
+
+import copy
 import requests
 import signal
 import json
@@ -27,7 +29,7 @@ import zlib
 import yaml
 
 from aetros.const import JOB_STATUS
-from aetros.git import Git
+from aetros.git import Git, GitCommandException
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_home_config, read_config
 
@@ -639,7 +641,6 @@ class JobBackend:
         self.client = JobClient(self.host, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.host, self.git_path, self.model_name)
 
-
     @property
     def git_path(self):
         return self.config['git_path']
@@ -788,6 +789,21 @@ class JobBackend:
         """
         return JobChannel(self, name, traces, main, kpi, max_optimization, type, xaxis, yaxis, layout)
 
+    def start_light(self):
+        """
+        Starts only monitoring console output.
+        :return: 
+        """
+        if self.running:
+            raise Exception('Job already running.')
+
+        if not self.job_id:
+            raise Exception('No job id found. Use create() first.')
+
+        self.stream_log = self.git.stream_file('aetros/job/log.txt')
+        self.running = True
+        self.ended = False
+
     def start(self):
         if self.running:
             raise Exception('Job already running.')
@@ -799,10 +815,9 @@ class JobBackend:
         self.client.configure(self.model_name, self.job_id)
         self.client.start()
 
-        with self.git.batch_commit('JOB_STARTED'):
-            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
-            self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
+        self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
 
+        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
         self.git.store_file('aetros/job/times/elapsed', str(0))
 
         self.stream_log = self.git.stream_file('aetros/job/log.txt')
@@ -888,23 +903,24 @@ class JobBackend:
 
         self.stop(True)
 
-    def stop(self, wait_for_client=False):
+    def stop(self, wait_for_client=False, quite=False):
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-        self.logger.info("stopping ...")
+        quite or self.logger.info("stopping ...")
         self.ended = True
         self.running = False
 
-        self.logger.info("git stopping ...")
+        quite or self.logger.info("git stopping ...")
         self.git.stop()
 
-        self.logger.info("client stopping ...")
+        quite or self.logger.info("client stopping ...")
         if wait_for_client:
             self.client.end()
         else:
             self.client.close()
-        self.logger.info("Stopped.")
+
+        quite or self.logger.info("Stopped.")
 
     def abort(self):
         if not self.running:
@@ -946,12 +962,10 @@ class JobBackend:
         return self.git.job_id
 
     def create(self, hyperparameter=None, server='local', insights=None):
-        self.git.create_job_id()
 
-        self.job['id'] = self.job_id
         self.job['name'] = self.model_name
         self.job['server'] = server
-        self.job['config'] = self.config
+        self.job['config'] = copy.deepcopy(self.config)
         self.job['optimization'] = None
 
         if insights is not None:
@@ -964,19 +978,22 @@ class JobBackend:
             self.job['config']['parameters'] = {}
 
         # get model config from where?
-        with self.git.batch_commit('JOB_CONFIG'):
-            self.git.commit_json_file('JOB', 'aetros/job.json', self.job)
-            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CREATED)
-
+        self.git.create_job_id()
+        with self.git.batch_commit('JOB_CREATED'):
+            self.git.commit_json_file('JOB', 'aetros/job', self.job)
             self.git.commit_file('JOB', 'aetros/job/times/created', str(time.time()))
 
+        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CREATED)
         return self.job_id
 
     def is_keras_model(self):
         if not self.job:
             raise Exception('Job not loaded yet. Use load(id) first.')
 
-        return not self.job['config']['fromCode']
+        if 'modelSettings' in self.job and 'simple' in self.job['modelSettings']:
+            return self.job['modelSettings']['simple']
+
+        return False
 
     def read_config(self, model_name=None):
         self.config = read_config(logger=self.logger)
@@ -986,53 +1003,63 @@ class JobBackend:
 
         if 'models' in self.config:
             if model_name in self.config['models']:
+                self.logger.debug('Merged config values for ' + model_name)
                 self.config.update(self.config['models'][model_name])
+
+            del self.config['models']
 
         if 'git_path' not in self.config:
             self.config['git_path'] = '.aetros/' + model_name + '.git'
 
+        print('read_config', self.config)
+        # todo, read parameters from script arguments
+
         if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
 
-    def get_parameter(self, name, default=None):
+    def get_parameter(self, path, default=None):
+        """
+        Reads hyper parameter from job configuration. If nothing found, fallback to user config in .aetros.yml
+        :param path: str 
+        :param default: *
+        :return: *
+        """
         params = self.job['config']['parameters']
 
-        if name in params:
-            return params[name]
+        if path in params:
+            return params[path]
 
-        if '.' in name:
-            path = name.split('.')
-            current = params
+        try:
+            # try first parameters from job creator
+            return self.read_dict_by_path(params, path)
+        except:
+            # if not found in parameters from the creator (Trainer usually) then try user config
+            try:
+                print('get_parameter', self.config)
+                return self.read_dict_by_path(self.config['parameters'], path)
+            except:
+                if default is None:
+                    raise
+
+        # not found and default is not None
+        return default
+
+    def read_dict_by_path(self, dictionary, path):
+        if path in dictionary:
+            return dictionary[path]
+        elif '.' not in path:
+            raise Exception('Parameter ' + path + ' not found and no default value given.')
+
+        if '.' in path:
+            path = path.split('.')
+            current = dictionary
             for item in path:
                 if item not in current:
-                    if default is None:
-                        raise Exception('Parameter ' + name + ' not found and no default value given.')
-
-                    return default
+                    raise Exception('Parameter ' + path + ' not found and no default value given.')
 
                 current = current[item]
 
             return current
-
-        if default is None:
-            raise Exception('Parameter ' + name + ' not found and no default value given.')
-
-        return default
-
-    def restart(self, job_id):
-        """
-        Restarts job.
-        :param id: int
-        """
-        self.git.job_id = job_id
-
-        if not self.job_id:
-            raise Exception('No job id given.')
-
-        # response = self.post('job/restart', {'id': self.job_id})
-
-        # if response.status_code != 200:
-        #     raise Exception("Could not restart job: %s" % (response.content,))
 
     def load(self, job_id):
         """
@@ -1040,33 +1067,28 @@ class JobBackend:
         :param job_id: int
         """
 
-        self.git.job_id = job_id
+        # normally git would create a job_id, but we have already one
+        try:
+            self.git.fetch_job(job_id)
+        except:
+            self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
+            raise
 
-        self.job = self.git.git_read('aetros/job.json')
-        print('self.job', self.job)
+        try:
+            info_json = self.git.git_read('aetros/job.json')
+        except GitCommandException:
+            self.logger.error('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
+            raise
 
-        # todo, patch self.job['config'] from already existing
-        # this is necessary, when the Trainer created the job already and should now be started.
+        if not info_json:
+            raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
-        raise Exception('no implemented')
+        self.job = json.loads(info_json)
 
+        if not info_json:
+            raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
 
-        # if not self.job_id:
-        #     raise Exception('No job id given.')
-        #
-        # response = self.get('job', {'id': self.job_id})
-        #
-        # if response.status_code != 200:
-        #     raise Exception("Could not find job: %s" % (response.content,))
-        #
-        # job = response.json()
-        #
-        # if job is None or 'error' in job:
-        #     raise Exception('Job not found. Have you configured your token correctly? %s: %s' %
-        #                     (job['error'], job['message']))
-        #
-        # self.job = response.json()
-        # self.job_id = self.job['id']
+        print(self.job)
 
     def get_job_model(self):
         """

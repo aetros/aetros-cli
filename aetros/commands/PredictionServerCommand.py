@@ -13,6 +13,8 @@ class PredictionServerCommand:
 
     model = None
     job_model = None
+    def __init__(self, logger):
+        self.logger = logger
 
     def main(self, args):
         import aetros.const

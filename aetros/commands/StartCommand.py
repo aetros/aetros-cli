@@ -4,20 +4,22 @@ import sys
 import aetros.const
 import os
 
+
 class StartCommand:
+    def __init__(self, logger):
+        self.logger = logger
 
     def main(self, args):
-
         from aetros.starter import start
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' start')
-        parser.add_argument('name', nargs='?', help='the model name, e.g. aetros/mnist-network, or job id, e.g. 1WPXxQP0j.')
-        parser.add_argument('--insights', action='store_true', help="activates insights. Only for Keras models.")
-        parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for Keras models with placeholders as input/output.")
+        parser.add_argument('name', nargs='?', help='the model name, e.g. aetros/mnist-network, or job id, e.g. user/modelname/0db75a64acb74c27bd72c22e359de7a4c44a20e5.')
+        parser.add_argument('--insights', action='store_true', help="activates insights. Only for simple models.")
+        parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for simple models with placeholders as input/output.")
         parser.add_argument('--api-key', help="Secure key. Alternatively use API_KEY environment varibale.")
         parser.add_argument('--gpu', action='store_true', help="Activates GPU if available. Only for Theano models.")
         parser.add_argument('--device', help="Which device index should be used. Default 0 (which means with --gpu => 'gpu0'). Only for Theano models.")
-        parser.add_argument('--tf', action='store_true', help="Force TensorFlow as library. Only for Keras models.")
-        parser.add_argument('--th', action='store_true', help="Force Theano as library. Only for Keras models.")
+        parser.add_argument('--tf', action='store_true', help="Force TensorFlow as library. Only for simple models.")
+        parser.add_argument('--th', action='store_true', help="Force Theano as library. Only for simple models.")
         parser.add_argument('--mp', help="Activates multithreading if available with given thread count. Only when Theano is active.")
         parser.add_argument('--no-hardware-monitoring', action='store_true', help="Deactivates hardware monitoring")
         parser.add_argument('--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
@@ -56,7 +58,7 @@ class StartCommand:
                 name, value = param.split('=')
                 hyperparameter[name] = value
 
-        start(parsed_args.name,
+        start(self.logger, parsed_args.name,
             hyperparameter=hyperparameter,
             dataset_id=parsed_args.dataset,
             insights=parsed_args.insights,

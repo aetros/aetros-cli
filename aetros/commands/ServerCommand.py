@@ -256,7 +256,7 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
-        values['jobs'] = [self.max_parallel_jobs, len(self.queue), len(self.job_processes)]
+        values['jobs'] = {'parallel': self.max_parallel_jobs, 'enqueued': len(self.queue), 'running': len(self.job_processes)}
         values['nets'] = {}
         values['processes'] = []
 

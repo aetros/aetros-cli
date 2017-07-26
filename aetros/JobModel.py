@@ -71,7 +71,7 @@ class JobModel:
 
     @property
     def model_settings(self):
-        return self.config['settings']
+        return self.job['modelSettings']
 
     def get_model_node(self, name):
         if not isinstance(self.job['config']['layer'], list):
