@@ -40,6 +40,7 @@ class Git:
 
         self.debug = False
         self.active_push = False
+        self.index_path = None
 
         self.job_id = None
         self.online = True
@@ -51,6 +52,8 @@ class Git:
 
         self.streamed_files = {}
         self.store_files = {}
+
+        self.prepare_index_file()
 
         # check if its a git repo
         if os.path.exists(self.git_path):
@@ -66,7 +69,7 @@ class Git:
 
         # check if given repo_path is current folder.
         # check its origin remote and see if model_name matches
-        origin_url = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'], allowed_to_fail=True).strip().decode("utf-8")
+        origin_url = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'], allowed_to_fail=True).decode('utf-8').strip()
         if origin_url and ':' + model_name + '.git' not in origin_url:
             raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " % (self.git_path, origin_url, model_name))
 
@@ -75,22 +78,14 @@ class Git:
 
         self.logger.info("Started tracking of files in git %s for remote %s" % (os.path.abspath(self.git_path), origin_url))
 
-        self.active_thread = True
-        self.thread_push = Thread(target=self.thread_push)
-        self.thread_push.daemon = True
-        self.thread_push.start()
 
     @property
     def env(self):
         my_env = os.environ.copy()
-        if self.job_id:
+        if self.index_path:
             my_env['GIT_INDEX_FILE'] = self.index_path
 
         return my_env
-
-    @property
-    def index_path(self):
-        return self.temp_path + '/git_index_job_' + self.job_id
 
     def thread_push(self):
         while self.active_thread:
@@ -112,9 +107,11 @@ class Git:
         return 'git@%s:%s.git' % (self.git_host, self.model_name)
 
     def command_exec(self, command, inputdata=None, allowed_to_fail=False):
-        self.logger.debug("[Debug] Git command: " + (' '.join(command)) + ', input=' + str(inputdata))
 
         interrupted = False
+
+        if isinstance(inputdata, six.string_types):
+            inputdata = six.b(inputdata)
 
         try:
             p = subprocess.Popen(
@@ -126,7 +123,17 @@ class Git:
         except KeyboardInterrupt:
             interrupted = True
 
-        self.logger.debug("[Debug] Git command stdout: " + str(stdoutdata) + ', stderr: '+ str(stderrdata))
+        input = 'binary'
+        try:
+            input = inputdata.decode('utf-8')
+        except:
+            pass
+
+        message = "Git command: " + (' '.join(command)) + ', input=' + input
+        message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata.decode('utf-8'))
+        message += "\nindex: " + self.env['GIT_INDEX_FILE']
+
+        self.logger.debug(message)
 
         if not interrupted and not allowed_to_fail and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
@@ -139,11 +146,16 @@ class Git:
         is not locked and empty. Git.fetch_job uses `git read-tree` to updates this index. For new jobs, we start
         with an empty index - that's why we deleted it every time.
         """
-        if os.path.exists(self.index_path + '.lock'):
-            os.remove(self.index_path + '.lock')
+        import tempfile
+        h, path = tempfile.mkstemp('aetros-git')
 
-        if os.path.exists(self.index_path):
-            os.remove(self.index_path)
+        self.index_path = path
+
+        # we give git a unique file path for that index. However, git expect it to be non-existent for empty indexes.
+        # empty file would lead to "fatal: index file smaller than expected"
+        os.unlink(self.index_path)
+
+        self.logger.debug('GIT_INDEX_FILE created at ' + self.index_path)
 
     def fetch_job(self, job_id):
         """
@@ -152,8 +164,6 @@ class Git:
         :type job_id: str 
         """
         self.job_id = job_id
-
-        self.prepare_index_file()
 
         self.logger.info("Git fetch job reference %s" % (self.ref_head, ))
         ref = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'ls-remote', 'origin', self.ref_head])
@@ -167,23 +177,28 @@ class Git:
         except:
             self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
             raise
+
+        output = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'show-ref', self.ref_head]).decode('utf-8').strip()
+        if output:
+            self.git_last_commit = output.split(' ')[0]
+
+        if not self.git_last_commit:
+            raise Exception("Could not load resolve local ref " + self.ref_head + '. You need to be online to start pre-configured jobs.')
+
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'read-tree', self.ref_head])
-
-        with open(self.git_path + '/' + self.ref_head, 'r') as f:
-            self.git_last_commit = f.read().strip()
-
         self.active_push = True
 
-    def create_job_id(self):
+    def create_job_id(self, data):
         """
         Create a new job id and reference (refs/aetros/job/<id>/head) by creating a new commit with empty tree. That
         root commit is the actual job id. A reference is then created to the newest (head) commit of this commit history.
         The reference will always be updated once a new commit is added.
-        
         """
-        self.job_id = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'commit-tree', '-m', "JOB_CREATED", self.get_empty_tree_id()]).strip().decode("utf-8")
+        self.add_file('aetros/job.json', json.dumps(data))
+        tree_id = self.write_tree()
+
+        self.job_id = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'commit-tree', '-m', "JOB_CREATED", tree_id]).decode('utf-8').strip()
         self.git_last_commit = self.job_id
-        self.prepare_index_file()
 
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
 
@@ -194,6 +209,17 @@ class Git:
         self.active_push = True
 
         return self.job_id
+
+    def start(self):
+        """
+        Start the git push thread.
+        """
+
+        self.active_thread = True
+
+        self.thread_push = Thread(target=self.thread_push)
+        self.thread_push.daemon = True
+        self.thread_push.start()
 
     def stop(self):
         """
@@ -270,7 +296,7 @@ class Git:
 
         :rtype: str 
         """
-        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '--stdin', '-ttree'], '').strip().decode('utf-8')
+        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '--stdin', '-ttree'], '').decode('utf-8').strip()
 
     def store_file(self, path, data):
         """
@@ -370,7 +396,7 @@ class Git:
         Writes the current index into a new tree
         :return: the tree sha
         """
-        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'write-tree']).decode("utf-8") .strip()
+        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'write-tree']).decode('utf-8').strip()
 
     def commit_json_file(self, message, path, content):
         return self.commit_file(message, path + '.json', json.dumps(content, default=invalid_json_values))
@@ -416,16 +442,20 @@ class Git:
         """
         tree_id = self.write_tree()
 
-        self.git_last_commit = self.command_exec([
+        args = [
             'git',
             '--bare',
             '--git-dir',
             self.git_path,
             'commit-tree',
-            tree_id,
-            '-p',
-            self.git_last_commit
-        ], message).decode("utf-8") .strip()
+            tree_id
+        ]
+
+        if self.git_last_commit:
+            # if not define, it creates a new root commit
+            args += ['-p', self.git_last_commit]
+
+        self.git_last_commit = self.command_exec(args, message).decode('utf-8').strip()
 
         # update ref
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])

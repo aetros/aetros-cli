@@ -38,14 +38,12 @@ class ServerClient(BackendClient):
 
             if "already_registered" in message['a']:
                 self.logger.error("Registration failed. This server is already registered.")
-                self.close()
-                self.event_listener.fire('failed')
                 return False
 
             if "registered" in message['a']:
                 self.registered = True
                 self.event_listener.fire('registration')
-                self.logger.info("Connected to %s as server %s" % (self.host, self.server_name))
+                self.logger.info("As server %s registered." % (self.server_name, ))
                 self.handle_messages(messages)
                 return True
 
@@ -86,6 +84,9 @@ class ServerCommand:
         self.active = True
         self.queue = {}
         self.queuedMap = {}
+
+        self.general_logger_stdout = None
+        self.general_logger_stderr = None
 
         self.executed_jobs = 0
         self.max_parallel_jobs = 2
@@ -129,32 +130,37 @@ class ServerCommand:
         event_listener.on('queue-jobs', self.queue_jobs)
         event_listener.on('queue-ok', self.queue_ok)
         event_listener.on('stop-job', self.stop_job)
+        event_listener.on('close', self.on_client_close)
 
         self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger)
+
+        self.general_logger_stdout = GeneralLogger(job_backend=self)
+        self.general_logger_stderr = GeneralLogger(job_backend=self, error=True)
+
+        sys.stdout = sys.__stdout__ = self.general_logger_stdout
+        sys.stderr = sys.__stderr__ = self.general_logger_stderr
+
         self.server.configure(parsed_args.name)
         self.server.start()
-
-        general_logger_stdout = GeneralLogger(job_backend=self)
-        general_logger_error = GeneralLogger(job_backend=self, error=True)
-
-        sys.stdout = general_logger_stdout
-        sys.stderr = general_logger_error
+        self.write_log("\n")
 
         try:
             while self.active:
                 if self.registered:
                     self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
                     self.process_queue()
-                    self.logger.info('Was laeuft? ' + str(time.time()))
 
                 time.sleep(1)
         except KeyboardInterrupt:
-            self.stop()
             self.logger.warning('Aborted')
+            self.stop()
+
+    def on_client_close(self, params):
+        self.active = False
+        self.logger.warning('Closed')
 
     def write_log(self, message):
-        if self.active:
-            self.server.send_message({'type': 'log', 'message': message})
+        self.server.send_message({'type': 'log', 'message': message})
 
     def stop(self):
         self.active = False
@@ -162,6 +168,9 @@ class ServerCommand:
         for p in self.job_processes:
             p.kill()
 
+        self.general_logger_stdout.flush()
+        self.general_logger_stderr.flush()
+        self.server.end()
 
     def end(self):
         self.ending = True
@@ -188,7 +197,7 @@ class ServerCommand:
             del self.queuedMap[id]
 
     def queue_jobs(self, jobs):
-        self.logger.info('Got queue list with %d items ' % (len(jobs), ))
+        self.logger.debug('Got queue list with %d items.' % (len(jobs), ))
 
         for id in jobs.keys():
             self.check_finished_jobs()
@@ -196,17 +205,29 @@ class ServerCommand:
             job = jobs[id]
             job['id'] = id
 
-            if job['id'] in self.queuedMap:
+            if self.is_job_queued(id):
+                self.logger.debug("Requested job %s is already known. Exclude that one." % (id, ))
                 return
 
             self.logger.info("Queued job %s (priority:%d) in %s ..." % (
                job['id'], job['priority'],os.getcwd()
             ))
 
-            self.logger.debug("Request confirmation %s (priority: %s) " % (job['id'], job['priority']))
+            self.logger.debug("Request confirmation %s (priority: %s)." % (job['id'], job['priority']))
             self.server.send_message({'type': 'job-queued', 'id': job['id']})
 
             self.queuedMap[job['id']] = job
+
+    def is_job_queued(self, id):
+        return id in self.queuedMap
+
+    def is_job_running(self, id):
+        for process in self.job_processes:
+            job = getattr(process, 'job')
+            if job['id'] == id:
+                return True
+
+        return False
 
     def queue_ok(self, id):
         """
@@ -282,9 +303,12 @@ class ServerCommand:
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': job['id']})
 
-            process = subprocess.Popen(args,
-                stdin=DEVNULL, stdout=DEVNULL if not self.show_stdout else sys.stdout,
-                stderr=sys.stderr, close_fds=True, env=my_env)
+            process = subprocess.Popen(args, bufsize=1,
+                stdin=DEVNULL, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
+
+            self.general_logger_stdout.attach(process.stdout)
+            self.general_logger_stderr.attach(process.stderr)
+
             setattr(process, 'job', job)
             self.job_processes.append(process)
 

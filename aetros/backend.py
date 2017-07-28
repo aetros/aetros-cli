@@ -50,11 +50,13 @@ on_shutdown.started_jobs = []
 
 atexit.register(on_shutdown)
 
+
 def dict_factory(cursor, row):
     d = {}
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
 
 class EventListener:
     def __init__(self):
@@ -72,7 +74,7 @@ class EventListener:
                 callback(parameter)
 
 
-class ApiClient():
+class ApiClient:
     def __init__(self, api_host, api_key):
         self.host = api_host
         self.api_key = api_key
@@ -165,32 +167,53 @@ class BackendClient:
             return False
 
         self.lock.acquire()
-        self.initial_connection_tries += 1
 
-        if self.connected:
-            self.lock.release()
-            return True
+        def preexec_function():
+            # Ignore the SIGINT signal by setting the handler to the standard
+            # signal handler SIG_IGN.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         try:
-            self.logger.info("Connecting to " + self.host)
+            if self.connected:
+                return True
 
-            def preexec_function():
-                # Ignore the SIGINT signal by setting the handler to the standard
-                # signal handler SIG_IGN.
-                signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-            self.ssh_stream = subprocess.Popen(['ssh', 'git@' + self.host, 'stream'],
-                                               stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
-                                               preexec_fn=preexec_function)
-            self.connected = True
+            self.initial_connection_tries = 0
             self.lock.release()
 
-            return self.on_connect()
+            while not self.connected:
+                self.logger.info("Connecting to " + self.host + " ... ")
+
+                self.ssh_stream = subprocess.Popen(['ssh', 'git@' + self.host, 'stream'],
+                                                   stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                   preexec_fn=preexec_function)
+
+                self.connected = True
+                self.registered = self.on_connect()
+
+                if not self.registered:
+                    self.initial_connection_tries += 1
+
+                    ssh_err = self.ssh_stream.stderr.read().decode("utf-8").strip()
+                    if ssh_err:
+                        self.logger.error(ssh_err)
+
+                    if 'Permission denied' in ssh_err:
+                        self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
+                        self.close()
+                        sys.exit(1)
+
+                    if self.initial_connection_tries > 3:
+                        self.initial_connection_tries = 0
+                        self.logger.warning("Failed too often. Try again in 1 minute.")
+                        time.sleep(60)
+                    else:
+                        self.logger.warning("Failed. Try again in 5 seconds")
+                        time.sleep(5)
+                else:
+                    self.logger.info("Connected.")
+
         except Exception as error:
-
-            if hasattr(error, 'message'):
-                self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
-
+            self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
             raise
         finally:
             if self.lock.locked():
@@ -206,21 +229,20 @@ class BackendClient:
         if not self.connected:
             return
 
+        # needs to be set before logger.error, since they can call send_message again
+        self.connected = False
+        self.registered = False
+
         if socket is None:
             # python interpreter is already dying, so quit
             return
 
-        message = "Connection error to " + self.host + ": "
+        message = "Connection error"
 
-        if hasattr(error, 'errno') and hasattr(error, 'message'):
-            self.logger.error(message + "%d: %s" % (error.errno, error.message,))
-        elif error:
-            self.logger.error(message + str(error))
+        if error:
+            self.logger.error(message + ": " + str(error))
         else:
             self.logger.error(message)
-
-        self.connected = False
-        self.registered = False
 
         self.event_listener.fire('disconnect')
 
@@ -232,13 +254,17 @@ class BackendClient:
         self.connection_errors += 1
 
     def thread_write(self):
-
         while self.active:
             if self.connected and self.registered:
                 self.lock.acquire()
                 try:
                     sent_size = 0
                     for message in self.queue:
+
+                        if not self.connected or not self.registered:
+                            # additional check to make sure there's no race condition
+                            break
+
                         if not message['_sending'] and not message['_sent']:
                             size = self.send_message(message)
                             if size is not False:
@@ -248,7 +274,6 @@ class BackendClient:
                                     break
 
                             self.queue.remove(message)
-
                 finally:
                     self.lock.release()
 
@@ -287,10 +312,13 @@ class BackendClient:
             if i % 50 == 0:
                 self.logger.warning("[AETROS] we still sync job data. %d messages left." % (len(self.queue),))
 
+        self.close()
+
     def close(self):
         self.active = False
         self.connected = False
 
+        self.event_listener.fire('close')
         if self.ssh_stream:
             self.ssh_stream.kill()
 
@@ -304,6 +332,9 @@ class BackendClient:
         self.queue.append(message)
 
     def send_message(self, message):
+        if not self.connected:
+            return False
+
         if isinstance(message, dict):
             message['_sending'] = True
 
@@ -340,7 +371,7 @@ class BackendClient:
                 chunk = self.ssh_stream.stdout.read(1)
             except Exception as error:
                 self.connection_error(error)
-                raise error
+                raise
             finally:
                 self.lock.release()
 
@@ -366,7 +397,7 @@ class BackendClient:
             chunk = self.ssh_stream.stdout.read(1)
         except Exception as error:
             self.connection_error(error)
-            raise error
+            raise
 
         if chunk == '':
             # socket connection broken
@@ -392,7 +423,7 @@ class JobClient(BackendClient):
         self.logger.debug("Wait for one client registration")
         messages = self.wait_for_at_least_one_message()
 
-        self.handle_connect_messages(messages)
+        return self.handle_connect_messages(messages)
 
     def handle_connect_messages(self, messages):
         if not messages:
@@ -419,7 +450,6 @@ class JobClient(BackendClient):
 
             if 'registered' == message['a']:
                 self.registered = True
-                self.logger.info("Connected to %s " % (self.host,))
                 self.event_listener.fire('registration')
                 self.handle_messages(messages)
                 return True
@@ -624,8 +654,8 @@ class JobBackend:
         self.monitoring_thread = None
 
         if not self.logger:
-            self.logger = logging.getLogger('aetros')
-            coloredlogs.install(level='INFO', logger=self.logger)
+            self.logger = logging.getLogger('aetros-job')
+            coloredlogs.install(level=self.log_level, logger=self.logger)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_error = GeneralLogger(job_backend=self, error=True)
@@ -634,6 +664,7 @@ class JobBackend:
         self.job_ids = []
         self.in_request = False
         self.stop_requested = False
+        self.stop_requested_force = False
         self.online = False
 
         self.kpi_channel = None
@@ -646,6 +677,13 @@ class JobBackend:
         self.read_config(model_name)
         self.client = JobClient(self.host, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.host, self.git_path, self.model_name)
+
+    @property
+    def log_level(self):
+        if os.getenv('DEBUG') == '1':
+            return 'DEBUG'
+
+        return 'INFO'
 
     @property
     def git_path(self):
@@ -664,8 +702,8 @@ class JobBackend:
         self.git.online = False
 
     def on_registration(self, params):
-        self.logger.info("Job %s#%s started." % (self.model_name, self.job_id))
-        self.logger.info("Open http://%s/job/%s to monitor the training." % (self.host, self.job_id))
+        self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
+        self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
         self.online = True
         self.git.online = True
 
@@ -688,9 +726,12 @@ class JobBackend:
         sys.stderr = self.general_logger_error
 
     def external_stop(self, params):
-        self.logger.warning("Job stopped through AETROS Trainer.")
-        self.abort()
+        if self.stop_requested:
+            return
+
+        self.logger.warning("Sent SIGINT through AETROS Trainer.")
         self.stop_requested = True
+        self.stop_requested_force = params
         os.kill(os.getpid(), signal.SIGINT)
 
     def batch(self, batch, total, size=None):
@@ -808,6 +849,7 @@ class JobBackend:
         self.client.configure(self.model_name, self.job_id)
         self.client.start()
 
+        self.git.start()
         self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
         self.git.store_file('aetros/job/times/elapsed', str(0))
@@ -851,6 +893,12 @@ class JobBackend:
         :type validation_data_size: int|None: Defines the size of validation_data, if validation_data is a generator
         """
 
+        if insights and (insights_x is None or insights_x is False):
+            raise Exception('Can not build Keras callback with active insights but with invalid `insights_x` as input.')
+
+        if confusion_matrix and (validation_data is None or validation_data is False):
+            raise Exception('Can not build Keras callback with active confusion_matrix but with invalid `validation_data` as input.')
+
         from aetros.Trainer import Trainer
         self.trainer = Trainer(self)
 
@@ -874,6 +922,13 @@ class JobBackend:
             self.set_graph(graph)
 
     def on_shutdown(self):
+        if self.stop_requested:
+            if self.stop_requested_force:
+                self.crash('Force stopped.')
+            else:
+                self.abort()
+            return
+
         if not self.ended and hasattr(sys, 'last_value'):
             # sys.last_value contains a exception, when there was an uncaught one
             if isinstance(sys.last_value, KeyboardInterrupt):
@@ -901,7 +956,6 @@ class JobBackend:
         self.running = False
 
         quite or self.logger.debug("git stopping ...")
-        self.git.stop()
 
         quite or self.logger.debug("client stopping ...")
         if wait_for_client:
@@ -909,9 +963,12 @@ class JobBackend:
         else:
             self.client.close()
 
-        quite or self.logger.info("Stopped.")
+        self.logger.info("Send last git commits ...")
+        self.git.stop()
 
-    def abort(self):
+        quite or self.logger.info("Stopped %s with last commit %s." % (self.job_id, self.git.git_last_commit))
+
+    def abort(self, wait_for_client_messages=True):
         if not self.running:
             return
 
@@ -919,7 +976,7 @@ class JobBackend:
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_ABORTED)
             self.set_status('ABORTED')
 
-        self.stop()
+        self.stop(wait_for_client_messages)
 
     def crash(self, error=None):
         with self.git.batch_commit('CRASH'):
@@ -928,6 +985,7 @@ class JobBackend:
             self.git.commit_json_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
             self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', self.general_logger_error.last_messages)
 
+        self.logger.info('Crash report stored : ' + self.git.git_last_commit)
         self.stop()
 
     def write_log(self, message):
@@ -937,14 +995,6 @@ class JobBackend:
     def set_status(self, status):
         self.logger.info('Job status changed to %s ' % (status,))
         self.job_add_status('status', status)
-
-    @property
-    def git_host(self):
-        return 'dev.aetros.com'
-
-    @property
-    def ssh_url(self):
-        return 'git@%s' % (self.git_host,)
 
     @property
     def job_id(self):
@@ -966,9 +1016,7 @@ class JobBackend:
         if 'parameters' not in self.job['config']:
             self.job['config']['parameters'] = {}
 
-        self.git.prepare_index_file()
-        self.git.add_file('aetros/job.json', json.dumps(self.job))
-        self.git.create_job_id()
+        self.git.create_job_id(self.job)
         self.git.push()
         self.job['id'] = self.job_id
 
@@ -1059,7 +1107,7 @@ class JobBackend:
         self.git.fetch_job(job_id)
 
         try:
-            info_json = self.git.git_read('aetros/job.json')
+            info_json = self.git.git_read('aetros/job.json').decode('utf-8')
         except GitCommandException:
             self.logger.error('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
             raise
@@ -1074,8 +1122,19 @@ class JobBackend:
 
         self.job['id'] = job_id
 
+        try:
+            progress = float(self.git.git_read('aetros/job/status/progress.json').decode('utf-8'))
+        except:
+            progress = 0
+
+        if progress >= 2:
+            self.logger.error('You can not restart an existing job that was already running. You need to restart the job through AETROS Trainer.')
+            self.logger.error('You can alternatively reset the git reference to the root commit and force push that ref to reset the job.')
+            sys.exit(1)
+
+        self.logger.info("Progress " + str(progress))
         self.logger.info("Job loaded " + self.model_name + '/' + self.job_id)
-        print(self.job)
+        self.logger.debug(str(self.job))
 
     def get_job_model(self):
         """

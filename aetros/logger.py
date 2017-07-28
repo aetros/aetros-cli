@@ -1,9 +1,12 @@
 from __future__ import absolute_import
+
+import re
 import sys
 import time
 import datetime
 import six
-from threading import Timer
+from threading import Timer, Thread
+
 
 class GeneralLogger(object):
     def __init__(self, job_backend, logger=None, error=False):
@@ -27,10 +30,11 @@ class GeneralLogger(object):
         return line
 
     def fileno(self):
-        return sys.__stdout__.fileno() if self.error is False else sys.__stderr__.fileno()
+        return self.logger.fileno()
 
     def flush(self):
         self.logger.flush()
+        self.send_buffer()
 
     def send_buffer(self):
         self.last_timer = None
@@ -40,6 +44,21 @@ class GeneralLogger(object):
                 self.job_backend.write_log(self.buffer)
 
         self.buffer = ''
+
+    def attach(self, buffer):
+        def reader():
+            while True:
+
+                # read() needs to block
+                buf = buffer.read(1)
+                if buf == '':
+                    return
+
+                self.write(buf.decode("utf-8"))
+
+        thread = Thread(target=reader)
+        thread.daemon = True
+        thread.start()
 
     def write(self, message):
         message = six.text_type(message)
