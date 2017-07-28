@@ -252,7 +252,7 @@ class BackendClient:
                 finally:
                     self.lock.release()
 
-            time.sleep(0.1)
+            time.sleep(0.01)
 
     def thread_read(self):
         while self.active:
@@ -263,6 +263,8 @@ class BackendClient:
                     self.lock.acquire()
                     if messages is not None:
                         self.handle_messages(messages)
+
+                    continue
                 finally:
                     self.lock.release()
 
@@ -270,7 +272,7 @@ class BackendClient:
                 if not self.connect():
                     time.sleep(5)
 
-            time.sleep(0.1)
+        time.sleep(0.01)
 
     def end(self):
         # send all missing messages
@@ -283,13 +285,14 @@ class BackendClient:
             i += 1
             time.sleep(0.1)
             if i % 50 == 0:
-                print("[AETROS] we still sync job data. %d messages left." % (len(self.queue),))
+                self.logger.warning("[AETROS] we still sync job data. %d messages left." % (len(self.queue),))
 
     def close(self):
         self.active = False
         self.connected = False
 
-        self.ssh_stream.kill()
+        if self.ssh_stream:
+            self.ssh_stream.kill()
 
     def send(self, message):
         if not self.active: return
@@ -386,9 +389,12 @@ class JobClient(BackendClient):
 
     def on_connect(self):
         self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id})
-        self.logger.info("Wait for one client registration")
+        self.logger.debug("Wait for one client registration")
         messages = self.wait_for_at_least_one_message()
 
+        self.handle_connect_messages(messages)
+
+    def handle_connect_messages(self, messages):
         if not messages:
             reason = self.ssh_stream.stderr.read()
             if 'Permission denied' in reason:
@@ -399,7 +405,7 @@ class JobClient(BackendClient):
             return False
 
         message = messages.pop(0)
-        self.logger.info("handle message: " + str(message))
+        self.logger.debug("handle message: " + str(message))
         if isinstance(message, dict) and 'a' in message:
             if 'aborted' == message['a']:
                 self.logger.error("Job aborted meanwhile. Exiting")
@@ -586,10 +592,8 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None):
+    def __init__(self, model_name=None, logger=None):
         self.event_listener = EventListener()
-
-        on_shutdown.started_jobs.append(self)
 
         self.log_file_handle = None
         self.config = {}
@@ -599,6 +603,7 @@ class JobBackend:
 
         self.ssh_stream = None
         self.model_name = model_name
+        self.logger = logger
 
         self.client = None
         self.stream_log = None
@@ -618,8 +623,9 @@ class JobBackend:
         self.running = False
         self.monitoring_thread = None
 
-        self.logger = logging.getLogger('aetros')
-        coloredlogs.install(level='INFO', logger=self.logger)
+        if not self.logger:
+            self.logger = logging.getLogger('aetros')
+            coloredlogs.install(level='INFO', logger=self.logger)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_error = GeneralLogger(job_backend=self, error=True)
@@ -789,21 +795,6 @@ class JobBackend:
         """
         return JobChannel(self, name, traces, main, kpi, max_optimization, type, xaxis, yaxis, layout)
 
-    def start_light(self):
-        """
-        Starts only monitoring console output.
-        :return: 
-        """
-        if self.running:
-            raise Exception('Job already running.')
-
-        if not self.job_id:
-            raise Exception('No job id found. Use create() first.')
-
-        self.stream_log = self.git.stream_file('aetros/job/log.txt')
-        self.running = True
-        self.ended = False
-
     def start(self):
         if self.running:
             raise Exception('Job already running.')
@@ -811,12 +802,13 @@ class JobBackend:
         if not self.job_id:
             raise Exception('No job id found. Use create() first.')
 
-        self.logger.info('Job backend start')
+        on_shutdown.started_jobs.append(self)
+
+        self.logger.debug('Job backend start')
         self.client.configure(self.model_name, self.job_id)
         self.client.start()
 
         self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
-
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
         self.git.store_file('aetros/job/times/elapsed', str(0))
 
@@ -898,23 +890,20 @@ class JobBackend:
 
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_DONE)
 
-        if self.total_epochs:
-            self.progress(self.total_epochs, self.total_epochs)
-
         self.stop(True)
 
     def stop(self, wait_for_client=False, quite=False):
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-        quite or self.logger.info("stopping ...")
+        quite or self.logger.debug("stopping ...")
         self.ended = True
         self.running = False
 
-        quite or self.logger.info("git stopping ...")
+        quite or self.logger.debug("git stopping ...")
         self.git.stop()
 
-        quite or self.logger.info("client stopping ...")
+        quite or self.logger.debug("client stopping ...")
         if wait_for_client:
             self.client.end()
         else:
@@ -942,7 +931,7 @@ class JobBackend:
         self.stop()
 
     def write_log(self, message):
-        if self.stream_log:
+        if self.stream_log and self.running:
             self.stream_log.write(message)
 
     def set_status(self, status):
@@ -977,16 +966,16 @@ class JobBackend:
         if 'parameters' not in self.job['config']:
             self.job['config']['parameters'] = {}
 
-        # get model config from where?
+        self.git.prepare_index_file()
+        self.git.add_file('aetros/job.json', json.dumps(self.job))
         self.git.create_job_id()
-        with self.git.batch_commit('JOB_CREATED'):
-            self.git.commit_json_file('JOB', 'aetros/job', self.job)
-            self.git.commit_file('JOB', 'aetros/job/times/created', str(time.time()))
+        self.git.push()
+        self.job['id'] = self.job_id
 
-        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CREATED)
+        self.logger.info("Job created " + self.model_name + '/' + self.job_id)
         return self.job_id
 
-    def is_keras_model(self):
+    def is_simple_model(self):
         if not self.job:
             raise Exception('Job not loaded yet. Use load(id) first.')
 
@@ -1011,7 +1000,7 @@ class JobBackend:
         if 'git_path' not in self.config:
             self.config['git_path'] = '.aetros/' + model_name + '.git'
 
-        print('read_config', self.config)
+        self.logger.debug('config: ' + str(self.config))
         # todo, read parameters from script arguments
 
         if not self.model_name and ('model' in self.job or not self.job['model']):
@@ -1035,7 +1024,6 @@ class JobBackend:
         except:
             # if not found in parameters from the creator (Trainer usually) then try user config
             try:
-                print('get_parameter', self.config)
                 return self.read_dict_by_path(self.config['parameters'], path)
             except:
                 if default is None:
@@ -1068,11 +1056,7 @@ class JobBackend:
         """
 
         # normally git would create a job_id, but we have already one
-        try:
-            self.git.fetch_job(job_id)
-        except:
-            self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
-            raise
+        self.git.fetch_job(job_id)
 
         try:
             info_json = self.git.git_read('aetros/job.json')
@@ -1088,6 +1072,9 @@ class JobBackend:
         if not info_json:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
 
+        self.job['id'] = job_id
+
+        self.logger.info("Job loaded " + self.model_name + '/' + self.job_id)
         print(self.job)
 
     def get_job_model(self):

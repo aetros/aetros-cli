@@ -26,7 +26,7 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
     if os.path.exists(path):
         f = open(path, 'r')
         try:
-            logger and logger.info('Home config loaded from ' + os.path.realpath(path))
+            logger and logger.debug('Home config loaded from ' + os.path.realpath(path))
             custom_config = yaml.load(f)
         except:
             raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
@@ -51,7 +51,7 @@ def read_config(path = '.aetros.yml', logger=None):
         custom_config = yaml.load(f)
         config.update(custom_config)
 
-        logger and logger.info('Config loaded from ' + os.path.realpath(path))
+        logger and logger.debug('Config loaded from ' + os.path.realpath(path))
 
     return config
 

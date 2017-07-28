@@ -36,7 +36,7 @@ class GeneralLogger(object):
         self.last_timer = None
 
         if self.buffer:
-            if self.job_backend and self.job_backend.running:
+            if self.job_backend:
                 self.job_backend.write_log(self.buffer)
 
         self.buffer = ''

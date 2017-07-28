@@ -20,26 +20,24 @@ from .keras_model_utils import ensure_dir
 import six
 
 
-def start(logger, full_id, hyperparameter=None, dataset_id=None, server_id='local', insights=False, api_key=None):
+def start(logger, full_id, hyperparameter=None, dataset_id=None, server_id='local', insights=False):
     """
     Starts the training process with all logging of a job_id
     :type id: string : job id or model name
     """
-
     owner, name, id = full_id.split('/')
 
     job_backend = JobBackend(model_name=owner + '/' + name)
-    job_backend.load(id)
-    job_backend.setup_std_output_logging()
-    job_backend.start_light()
+    if id:
+        job_backend.load(id)
+    else:
+        # todo, handle dataset_id?
+        job_backend.create(hyperparameter, server_id, insights)
 
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
 
-    if api_key:
-        os.environ["API_KEY"] = api_key
-
-    if job_backend.is_keras_model():
+    if job_backend.is_simple_model():
         start_keras(logger, job_backend)
     else:
         start_custom(logger, job_backend)
@@ -81,18 +79,18 @@ def start_custom(logger, job_backend):
     my_env['PYTHONPATH'] += ':' + os.getcwd()
     my_env['AETROS_JOB_ID'] = job_model.id
 
-    logger.info("Setting up git repository %s in %s" % (git_url, root + job_model.model_id))
+    repo_path = root + '/' + job_model.model_id
+
+    logger.info("Setting up git repository %s in %s" % (git_url, os.path.abspath(repo_path)))
 
     try:
-        repo_path = root + '/' + job_model.model_id
-
         if not os.path.exists(repo_path):
             args = ['git', 'clone', git_url, repo_path]
-            code = git_execute(args)
+            code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
             if code != 0:
                 raise Exception('Could not clone repository %s to %s' %(git_url, repo_path))
 
-        # check if remote origin is current git_url. if not remove origin and re-add
+        # check if remote origin is current git_url. if not throw exception and tell user to remove that folder
         # todo
 
         # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
@@ -102,7 +100,6 @@ def start_custom(logger, job_backend):
         # make sure the requested branch is checked out
         if current_branch != git_branch:
             git_execute(repo_path, ['checkout', git_branch])
-
 
         if git_commit and git_commit != git.get_current_commit_hash():
             logger.info("Checkout commit %s" % [git_commit])
@@ -122,11 +119,10 @@ def start_custom(logger, job_backend):
 
     args = (sys.executable, git_python_script)
     logger.info("Model source code checked out.")
-    job_backend.stop(True, True)
     logger.info("-----------")
     logger.info("-----------")
     logger.info("Switch working directory to " + repo_path)
-    logger.info("$ %s %s" % args)
+    logger.warning("$ %s %s" % args)
 
     try:
         subprocess.Popen(args, close_fds=True, env=my_env, cwd=repo_path).wait()
@@ -145,6 +141,8 @@ def git_execute(repo_path, args):
 def start_keras(logger, job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
+
+    job_backend.start()
 
     # all our shapes are Tensorflow schema. (height, width, channels)
     if hasattr(K, 'set_image_dim_ordering'):
@@ -166,42 +164,42 @@ def start_keras(logger, job_backend):
     keras_logger = KerasCallback(job_backend, job_backend.general_logger_stdout)
 
     def ctrlc(sig, frame):
-        print("signal %s received\n" % str(sig))
+        logger.warning(("signal %s received\n" % str(sig)))
         raise KeyboardInterrupt("CTRL-C!")
 
     signal.signal(signal.SIGINT, ctrlc)
 
     try:
-        print("Setup job")
+        logger.info("Setup simple job")
         keras_model_utils.job_prepare(job_model)
         job_backend.progress(0, job_backend.job['config']['settings']['epochs'])
 
-        print("Start job")
+        logger.info("Start job")
         keras_model_utils.job_start(job_backend, trainer, keras_logger)
 
         job_backend.sync_weights()
         job_backend.done()
 
-        print("Done.")
+        logger.info("Done.")
         sys.exit(0)
     except KeyboardInterrupt:
         if job_backend.running:
             job_backend.set_status('ABORTED')
-            print('Early stopping ...')
+            logger.warning('Early stopping ...')
 
             if job_backend.stop_requested:
-                print(' ... stop requested through trainer.')
+                logger.warning(' ... stop requested through trainer.')
 
             if trainer.model:
                 trainer.model.stop_training = True
 
             job_backend.sync_weights()
             job_backend.abort()
-            print("Aborted.")
+            logger.warning("Aborted.")
         sys.exit(1)
 
     except Exception as e:
-        print("Crashed ...")
+        logger.error("Crashed ...")
 
         if trainer.model:
             trainer.model.stop_training = True
@@ -210,5 +208,5 @@ def start_keras(logger, job_backend):
         logging.error(traceback.format_exc())
 
         job_backend.crash(e)
-        print("Crashed.")
+        logger.error("Exited.")
         raise e

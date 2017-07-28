@@ -6,12 +6,31 @@ from threading import Thread, Lock
 
 import time
 
+import sys
+
 from aetros.utils import invalid_json_values
+
 
 class GitCommandException(Exception):
     pass
 
+
 class Git:
+    """
+    This class is used to store and sync all job data to local git or (if online) stream files directly to AETROS Trainer server.
+    
+    Git.stream_file and Git.store_file both stream new data directly to the server. At the end (Git.end) we commit
+    the files locally and (if online) store the blob on the server's git. On a `git push` git detects that the content
+    is already on our server which eliminates useless content transmissions.
+    
+    In either way (online or offline) all job information is stored in the local git repository and can be pushed any
+    time to the AETROS git server. If the training happened in offline modus, one can push the job's ref (e.g. git push origin refs/aetros/job/<id>/head)
+    to make the job available in AETROS Trainer later on.
+    
+    Job id is created always in the local git, except the job has been created through the AETROS Trainer interface.
+    If created in AETROS Trainer, we retrieve the initial configuration of the job using `git pull origin refs/aetros/job/<id>/head` and read
+    its `aetros/job.json` blob of the head tree.
+    """
     def __init__(self, logger, client, git_host, git_path, model_name):
         self.logger = logger
         self.client = client
@@ -20,11 +39,11 @@ class Git:
         self.model_name = model_name
 
         self.debug = False
+        self.active_push = False
 
         self.job_id = None
         self.online = True
 
-        self.git_batch_push = False
         self.git_batch_commit = False
 
         self.git_batch_commit_messages = []
@@ -33,8 +52,8 @@ class Git:
         self.streamed_files = {}
         self.store_files = {}
 
+        # check if its a git repo
         if os.path.exists(self.git_path):
-            # check if its a git repo
             p = subprocess.Popen(
                 ['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -54,7 +73,7 @@ class Git:
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
 
-        self.logger.info("Started tracking of files in git %s for remote %s" % (self.git_path, origin_url))
+        self.logger.info("Started tracking of files in git %s for remote %s" % (os.path.abspath(self.git_path), origin_url))
 
         self.active_thread = True
         self.thread_push = Thread(target=self.thread_push)
@@ -75,7 +94,7 @@ class Git:
 
     def thread_push(self):
         while self.active_thread:
-            if self.job_id and self.online:
+            if self.job_id and self.online and self.active_push:
                 self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', '-f', 'origin', self.ref_head])
 
             time.sleep(1)
@@ -95,42 +114,73 @@ class Git:
     def command_exec(self, command, inputdata=None, allowed_to_fail=False):
         self.logger.debug("[Debug] Git command: " + (' '.join(command)) + ', input=' + str(inputdata))
 
-        p = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
-        )
+        interrupted = False
 
-        stdoutdata, stderrdata = p.communicate(inputdata)
+        try:
+            p = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
+            )
+
+            stdoutdata, stderrdata = p.communicate(inputdata)
+        except KeyboardInterrupt:
+            interrupted = True
 
         self.logger.debug("[Debug] Git command stdout: " + str(stdoutdata) + ', stderr: '+ str(stderrdata))
 
-        if not allowed_to_fail and p.returncode != 0:
+        if not interrupted and not allowed_to_fail and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
         return stdoutdata
 
     def prepare_index_file(self):
+        """
+        Makes sure that GIT index file we use per job (by modifying environment variable GIT_INDEX_FILE)
+        is not locked and empty. Git.fetch_job uses `git read-tree` to updates this index. For new jobs, we start
+        with an empty index - that's why we deleted it every time.
+        """
         if os.path.exists(self.index_path + '.lock'):
             os.remove(self.index_path + '.lock')
 
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
 
-
     def fetch_job(self, job_id):
+        """
+        Fetch the current job reference (refs/aetros/job/<id>/head) from origin and read its tree to the current git index.
+        
+        :type job_id: str 
+        """
         self.job_id = job_id
 
         self.prepare_index_file()
 
         self.logger.info("Git fetch job reference %s" % (self.ref_head, ))
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'fetch', '-f', '-n', 'origin', self.ref_head+':'+self.ref_head])
+        ref = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'ls-remote', 'origin', self.ref_head])
+
+        if not ref:
+            self.logger.error('Could not find the job ' + job_id + ' on the server. Are you online and does the job exist?')
+            sys.exit(1)
+
+        try:
+            self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'fetch', '-f', '-n', 'origin', self.ref_head+':'+self.ref_head])
+        except:
+            self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
+            raise
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'read-tree', self.ref_head])
 
         with open(self.git_path + '/' + self.ref_head, 'r') as f:
             self.git_last_commit = f.read().strip()
 
-    def create_job_id(self):
+        self.active_push = True
 
+    def create_job_id(self):
+        """
+        Create a new job id and reference (refs/aetros/job/<id>/head) by creating a new commit with empty tree. That
+        root commit is the actual job id. A reference is then created to the newest (head) commit of this commit history.
+        The reference will always be updated once a new commit is added.
+        
+        """
         self.job_id = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'commit-tree', '-m', "JOB_CREATED", self.get_empty_tree_id()]).strip().decode("utf-8")
         self.git_last_commit = self.job_id
         self.prepare_index_file()
@@ -141,9 +191,17 @@ class Git:
 
         self.push()
 
+        self.active_push = True
+
         return self.job_id
 
     def stop(self):
+        """
+        Stops the `git push` thread and commits all streamed files (Git.store_file and Git.stream_file), followed
+        by a final git push.
+        
+        This removes also the current git index file. You can not start the process again.
+        """
         self.active_thread = False
 
         with self.batch_commit('STREAM_END'):
@@ -168,6 +226,21 @@ class Git:
             os.remove(self.index_path)
 
     def batch_commit(self, message):
+        """
+        Instead of committing a lot of small commits you can batch it together using this controller.
+        
+        Example:
+        
+        with git.batch_commit('BATCHED'):
+            git.commit_file('my commit 1', 'path/to/file', 'content from file')
+            git.commit_json_file('[1, 2, 3]', 'path/to/file2', 'json array') 
+            
+        Withing the `with` block you can use group the method calls of `commit_file` and `commit_json_file`, and every other
+        method calling this two methods.
+        
+        :type message: str 
+        :return: with controller to be used with Python's `with git.batch_commit():`
+        """
         class controlled_execution:
             def __init__(self, job, message):
                 self.job = job
@@ -191,26 +264,27 @@ class Git:
 
         return controlled_execution(self, message)
 
-    def batch_push(self):
-        class controlled_execution:
-            def __init__(self, job):
-                self.job = job
-
-            def __enter__(self):
-                self.job.git_batch_push = True
-
-            def __exit__(self, type, value, traceback):
-                self.job.git_batch_push = False
-                self.job.push()
-
-        return controlled_execution(self)
-
     def get_empty_tree_id(self):
+        """
+        Returns the famous empty tree id. To be used in creating a new empty root commit without any files.
+
+        :rtype: str 
+        """
         return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '--stdin', '-ttree'], '').strip().decode('utf-8')
 
     def store_file(self, path, data):
         """
-        Stores the file in temp folder and uploads to server if online. At the end of the job, it is committed in Git.
+        Store the file in temp folder and stream it to server if online. 
+        
+        This makes sure that we have all newest data of this file on the server directly. 
+        
+        This method always overwrites the content of path. If you want to append always the content, 
+        use Git.stream_file() instead.
+        
+        At the end of the job, the content the server received is stored as git blob on the server. It is then committed 
+        locally and pushed. Git detects that the server already has the version (through the continuous streaming)
+        and won't push it again.
+        
         :param path: 
         :param content: 
         :return: 
@@ -227,9 +301,23 @@ class Git:
 
     def stream_file(self, path):
         """
-        Creates a temp stream and streams to the server if online. At the end of the job, it is committed in Git.
+        Create a temp file, stream it to the server if online and append its content using the write() method. 
+        This makes sure that we have all newest data of this file on the server directly.
+        
+        At the end of the job, the content the server received is stored as git blob on the server. It is then committed 
+        locally and pushed. Git detects that the server already has the version (through the continuous streaming)
+        and won't push it again. Very handy for rather large files that will append over time (like channel data, logs)
+        
+        Example:
+        
+        self.log_stream = git.stream_file('log.txt')
+        
+        self.log_stream.write("new line\n");
+        self.log_stream.write("another line\n");
+        
         :param path: 
-        :return: 
+        :rtype: Stream class
+        :return Returns a instance with a `write(data)` method.
         """
 
         # create temp file
@@ -318,9 +406,6 @@ class Git:
         """
         Push all changes to origin
         """
-        if self.git_batch_push:
-            return
-
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', 'origin', self.ref_head])
 
     def commit_index(self, message):

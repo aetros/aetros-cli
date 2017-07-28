@@ -59,13 +59,19 @@ def main(args=None):
     }
     cmd_name, cmd_args = parseopts(args)
 
-    logger = logging.getLogger('aetros')
+    logger = logging.getLogger('aetros-'+cmd_name)
     coloredlogs.install(level='INFO', logger=logger)
 
     if cmd_name not in commands_dict:
-        logger.error(("Command %s not found" % (cmd_name,)))
+        print(("Command %s not found" % (cmd_name,)))
         sys.exit(1)
 
+    level = 'INFO'
+    if '-v' in args:
+        level = 'DEBUG'
+
+    logger = logging.getLogger('aetros-'+cmd_name)
+    coloredlogs.install(level=level, logger=logger)
     command = commands_dict[cmd_name](logger)
 
     code = command.main(cmd_args)

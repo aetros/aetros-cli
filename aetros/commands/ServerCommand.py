@@ -7,6 +7,8 @@ import time
 import psutil
 import subprocess
 
+from aetros.logger import GeneralLogger
+
 from aetros.backend import EventListener, BackendClient
 from aetros.utils import read_home_config
 
@@ -60,8 +62,11 @@ class ServerClient(BackendClient):
                 self.event_listener.fire('stop')
 
             if 'type' in message:
-                if message['type'] == 'start-jobs':
-                    self.event_listener.fire('start-jobs', message['jobs'])
+                if message['type'] == 'queue-jobs':
+                    self.event_listener.fire('queue-jobs', message['jobs'])
+
+                if message['type'] == 'queue-ok':
+                    self.event_listener.fire('queue-ok', message['job'])
 
                 if message['type'] == 'stop-job':
                     self.event_listener.fire('stop-job', message['id'])
@@ -77,11 +82,16 @@ class ServerCommand:
         self.last_net = {}
         self.nets = []
         self.server = None
+        self.ending = False
         self.active = True
-        self.queue = []
+        self.queue = {}
         self.queuedMap = {}
-        self.job_processes = []
+
+        self.executed_jobs = 0
         self.max_parallel_jobs = 2
+        self.max_jobs = 0
+
+        self.job_processes = []
         self.registered = False
         self.show_stdout = False
 
@@ -91,7 +101,8 @@ class ServerCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' server')
         parser.add_argument('name', nargs='?', help="Server name")
-        parser.add_argument('--max-jobs', help="How many jobs should be run at the same time.")
+        parser.add_argument('--max-parallel', help="How many jobs should be run at the same time.")
+        parser.add_argument('--max-jobs', help="How many jobs are allowed to run in total.")
         parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
         parser.add_argument('--port', help="Default 8051. Read from environment variable API_PORT.")
         parser.add_argument('--show-stdout', action='store_true', help="Show all stdout of all jobs")
@@ -104,8 +115,10 @@ class ServerCommand:
 
         config = read_home_config()
 
+        if parsed_args.max_parallel:
+            self.max_parallel_jobs = int(parsed_args.max_parallel)
         if parsed_args.max_jobs:
-            self.max_parallel_jobs = int(parsed_args.max_jobs)
+            self.max_jobs = int(parsed_args.max_jobs)
         if parsed_args.show_stdout:
             self.show_stdout = True
 
@@ -113,53 +126,105 @@ class ServerCommand:
 
         event_listener.on('registration', self.registration_complete)
         event_listener.on('failed', self.connection_failed)
-        event_listener.on('start-jobs', self.start_jobs)
+        event_listener.on('queue-jobs', self.queue_jobs)
+        event_listener.on('queue-ok', self.queue_ok)
         event_listener.on('stop-job', self.stop_job)
 
         self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger)
         self.server.configure(parsed_args.name)
         self.server.start()
 
-        while self.active:
-            if self.registered:
-                self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
-                self.process_queue()
+        general_logger_stdout = GeneralLogger(job_backend=self)
+        general_logger_error = GeneralLogger(job_backend=self, error=True)
 
-            time.sleep(1)
+        sys.stdout = general_logger_stdout
+        sys.stderr = general_logger_error
+
+        try:
+            while self.active:
+                if self.registered:
+                    self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
+                    self.process_queue()
+                    self.logger.info('Was laeuft? ' + str(time.time()))
+
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.stop()
+            self.logger.warning('Aborted')
+
+    def write_log(self, message):
+        if self.active:
+            self.server.send_message({'type': 'log', 'message': message})
+
+    def stop(self):
+        self.active = False
+
+        for p in self.job_processes:
+            p.kill()
+
+
+    def end(self):
+        self.ending = True
+
+        for p in self.job_processes:
+            p.wait()
+
+        self.check_finished_jobs()
+        self.stop()
 
     def connection_failed(self, params):
         self.active = False
         sys.exit(1)
 
-    def start_jobs(self, jobs):
-        for job in jobs:
-            self.start_job(job)
-
     def stop_job(self, id):
         if id in self.queuedMap:
             job = self.queuedMap[id]
-            self.logger.info("Queued job removed %s#%d (%s) " % (job['modelId'], job['index'], job['id']))
+            self.logger.info("Queued job removed %s (priority: %s) " % (job['id'], job['priority']))
 
             # removing from the queue is enough, since the job process itself terminates it when job is aborted.
             if job in self.queue:
-                self.queue.remove(job)
+                self.queue[job['priority']].remove(job)
 
             del self.queuedMap[id]
 
-    def start_job(self, job):
-        self.check_finished_jobs()
+    def queue_jobs(self, jobs):
+        self.logger.info('Got queue list with %d items ' % (len(jobs), ))
 
-        if job['id'] in self.queuedMap:
-            return
+        for id in jobs.keys():
+            self.check_finished_jobs()
 
-        self.logger.info("Queued job %s#%d (%s, prio:%d) by %s in %s ..." % (
-            job['modelId'], job['index'], job['id'], job['priority'], job['username'], os.getcwd()
-        ))
+            job = jobs[id]
+            job['id'] = id
 
-        self.server.send_message({'type': 'job-queued', 'id': job['id']})
+            if job['id'] in self.queuedMap:
+                return
 
-        self.queuedMap[job['id']] = job
-        self.queue.append(job)
+            self.logger.info("Queued job %s (priority:%d) in %s ..." % (
+               job['id'], job['priority'],os.getcwd()
+            ))
+
+            self.logger.debug("Request confirmation %s (priority: %s) " % (job['id'], job['priority']))
+            self.server.send_message({'type': 'job-queued', 'id': job['id']})
+
+            self.queuedMap[job['id']] = job
+
+    def queue_ok(self, id):
+        """
+        We queued the job, told the server so and server said we're ok to start the job now.
+
+        :param id: 
+        :return: 
+        """
+        job = self.queuedMap[id]
+        priority = job['priority']
+
+        self.logger.debug("Queued job confirmed %s (priority: %s) " % (job['id'], priority))
+
+        # add the job into the wait list
+        if job['priority'] not in self.queue:
+            self.queue[priority] = []
+
+        self.queue[priority].append(job)
 
     def check_finished_jobs(self):
         for process in self.job_processes:
@@ -181,16 +246,30 @@ class ServerCommand:
     def process_queue(self):
         self.check_finished_jobs()
 
+        if self.ending:
+            return
+
         if len(self.job_processes) >= self.max_parallel_jobs:
             return
 
-        if len(self.queue) > 0:
-            # registered and free space for new jobs, so execute another one
-            self.execute_job(self.queue.pop(0))
+        if self.max_jobs and self.executed_jobs >= self.max_jobs:
+            self.logger.warning('Limit of max jobs %d/%d reached. Waiting for active jobs to finish ...' % (self.executed_jobs, self.max_jobs))
+            self.end()
+            return
+
+        # sort by priority: The higher the sooner the job starts
+        for priority in sorted(self.queue, reverse=True):
+            q = self.queue[priority]
+
+            if len(q) > 0:
+                # registered and free space for new jobs, so execute another one
+                self.execute_job(q.pop(0))
+                break
 
     def execute_job(self, job):
-        self.logger.info("Execute job %s#%d (%s) by %s using job's API_KEY=%s in %s ..." % (
-            job['modelId'], job['index'], job['id'], job['username'], job['apiKey'], os.getcwd()))
+        self.logger.info("Execute job %s (priority=%s) in %s ..." % (job['id'], job['priority'], os.getcwd()))
+
+        self.executed_jobs += 1
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
@@ -199,9 +278,13 @@ class ServerCommand:
                 my_env['PYTHONPATH'] = ''
 
             my_env['PYTHONPATH'] += ':' + os.getcwd()
-            args = [sys.executable, '-m', 'aetros', 'start', job['id'], '--api-key=' + job['apiKey']]
-            process = subprocess.Popen(args, stdin=DEVNULL, stdout=DEVNULL if not self.show_stdout else sys.stdout, stderr=sys.stderr, close_fds=True,
-                                       env=my_env)
+            args = [sys.executable, '-m', 'aetros', 'start', job['id']]
+            self.logger.info('$ ' + ' '.join(args))
+            self.server.send_message({'type': 'job-executed', 'id': job['id']})
+
+            process = subprocess.Popen(args,
+                stdin=DEVNULL, stdout=DEVNULL if not self.show_stdout else sys.stdout,
+                stderr=sys.stderr, close_fds=True, env=my_env)
             setattr(process, 'job', job)
             self.job_processes.append(process)
 
@@ -210,7 +293,7 @@ class ServerCommand:
 
         # upon registration, we need to clear the queue, since the server sends us immediately
         # all to be enqueued jobs after registration/re-connection
-        self.queue = []
+        self.queue = {}
         self.queueMap = {}
 
         self.server.send_message({'type': 'system', 'values': self.collect_system_information()})

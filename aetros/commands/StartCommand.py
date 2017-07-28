@@ -4,7 +4,6 @@ import sys
 import aetros.const
 import os
 
-
 class StartCommand:
     def __init__(self, logger):
         self.logger = logger
@@ -15,7 +14,6 @@ class StartCommand:
         parser.add_argument('name', nargs='?', help='the model name, e.g. aetros/mnist-network, or job id, e.g. user/modelname/0db75a64acb74c27bd72c22e359de7a4c44a20e5.')
         parser.add_argument('--insights', action='store_true', help="activates insights. Only for simple models.")
         parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for simple models with placeholders as input/output.")
-        parser.add_argument('--api-key', help="Secure key. Alternatively use API_KEY environment varibale.")
         parser.add_argument('--gpu', action='store_true', help="Activates GPU if available. Only for Theano models.")
         parser.add_argument('--device', help="Which device index should be used. Default 0 (which means with --gpu => 'gpu0'). Only for Theano models.")
         parser.add_argument('--tf', action='store_true', help="Force TensorFlow as library. Only for simple models.")
@@ -61,6 +59,5 @@ class StartCommand:
         start(self.logger, parsed_args.name,
             hyperparameter=hyperparameter,
             dataset_id=parsed_args.dataset,
-            insights=parsed_args.insights,
-            api_key=parsed_args.api_key,
+            insights=parsed_args.insights
         )
