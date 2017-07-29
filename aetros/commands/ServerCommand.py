@@ -170,7 +170,7 @@ class ServerCommand:
 
         self.general_logger_stdout.flush()
         self.general_logger_stderr.flush()
-        self.server.end()
+        self.server.close()
 
     def end(self):
         self.ending = True

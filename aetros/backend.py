@@ -140,6 +140,7 @@ class BackendClient:
         self.initial_connection_tries = 0
 
         self.active = False
+        self.expect_close = False
         self.external_stopped = False
         self.registered = False
         self.connected = False
@@ -178,7 +179,6 @@ class BackendClient:
                 return True
 
             self.initial_connection_tries = 0
-            self.lock.release()
 
             while not self.connected:
                 self.logger.info("Connecting to " + self.host + " ... ")
@@ -225,7 +225,19 @@ class BackendClient:
         open = len(filter(lambda x: not x['_sending'], self.queue))
         self.logger.debug("%d sent, %d in sending, %d open " % (sent, sending, open))
 
+    def end(self):
+        self.expect_close = True
+        self.send({'type': 'end'})
+        self.wait_sending_last_messages()
+        self.wait_for_close()
+
     def connection_error(self, error=None):
+        if not self.active:
+            return
+
+        if self.expect_close:
+            return
+
         if not self.connected:
             return
 
@@ -245,22 +257,25 @@ class BackendClient:
             self.logger.error(message)
 
         self.event_listener.fire('disconnect')
-
-        # set all messages that are in sending to sending=false
-        for message in self.queue:
-            if message['_sending'] and not message['_sent']:
-                message['_sending'] = False
-
         self.connection_errors += 1
 
     def thread_write(self):
         while self.active:
             if self.connected and self.registered:
+
                 self.lock.acquire()
+                queue_copy = self.queue[:]
+                self.lock.release()
+
                 try:
                     sent_size = 0
-                    for message in self.queue:
+                    sent = []
 
+                    for message in queue_copy:
+                        if message['_sending'] and not message['_sent']:
+                            message['_sending'] = False
+
+                    for message in queue_copy:
                         if not self.connected or not self.registered:
                             # additional check to make sure there's no race condition
                             break
@@ -268,14 +283,23 @@ class BackendClient:
                         if not message['_sending'] and not message['_sent']:
                             size = self.send_message(message)
                             if size is not False:
+                                sent.append(message)
+
                                 sent_size += size
                                 if sent_size > 1024 * 1024:
                                     # not too much at once (max 1MB), so we have time to listen for incoming messages
                                     break
 
+
+                    self.lock.acquire()
+                    for message in sent:
+                        if message in self.queue:
                             self.queue.remove(message)
-                finally:
                     self.lock.release()
+
+                finally:
+                    if self.lock.locked():
+                        self.lock.release()
 
             time.sleep(0.01)
 
@@ -285,23 +309,21 @@ class BackendClient:
                 try:
                     messages = self.read() # this blocks, so no lock before
 
-                    self.lock.acquire()
                     if messages is not None:
                         self.handle_messages(messages)
 
                     continue
-                finally:
-                    self.lock.release()
+                except:
+                    pass
 
-            elif not self.connected and self.active:
+            if self.active and not self.connected and not self.expect_close:
                 if not self.connect():
                     time.sleep(5)
 
-        time.sleep(0.01)
+            time.sleep(0.01)
 
-    def end(self):
+    def wait_sending_last_messages(self):
         # send all missing messages
-
         i = 0
         while True:
             if len(self.queue) == 0:
@@ -310,9 +332,13 @@ class BackendClient:
             i += 1
             time.sleep(0.1)
             if i % 50 == 0:
-                self.logger.warning("[AETROS] we still sync job data. %d messages left." % (len(self.queue),))
+                self.logger.warning("[AETROS] we still sync job data. %d messages left. " % (len(self.queue),) + json.dumps(self.queue))
 
-        self.close()
+    def wait_for_close(self):
+        self.active = False
+
+        while self.ssh_stream.poll() is None:
+            time.sleep(0.1)
 
     def close(self):
         self.active = False
@@ -329,14 +355,16 @@ class BackendClient:
         message['_id'] = self.message_id
         message['_sending'] = False
         message['_sent'] = False
+
+        self.lock.acquire()
         self.queue.append(message)
+        self.lock.release()
 
     def send_message(self, message):
         if not self.connected:
             return False
 
-        if isinstance(message, dict):
-            message['_sending'] = True
+        message['_sending'] = True
 
         import msgpack
         msg = msgpack.packb(message, default=invalid_json_values)
@@ -367,13 +395,10 @@ class BackendClient:
         while True:
             chunk = ''
             try:
-                self.lock.acquire()
                 chunk = self.ssh_stream.stdout.read(1)
             except Exception as error:
                 self.connection_error(error)
                 raise
-            finally:
-                self.lock.release()
 
             if chunk == '':
                 # happens only when connection broke. If nothing is to be received, it hangs instead.
@@ -563,8 +588,9 @@ class JobChannel:
         """
         self.name = name
         self.job_backend = job_backend
+        self.kpi = kpi
 
-        if kpi:
+        if self.kpi:
             self.job_backend.kpi_channel = self
 
         if not (isinstance(traces, list) or traces is None):
@@ -592,8 +618,8 @@ class JobChannel:
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
         self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data.csv')
 
-        if kpi:
-            self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpi/name.json', name)
+        if self.kpi:
+            self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpi/name', name)
 
         line = json.dumps(['x'] + [str(x['name']) for x in traces])[1:-1]
         self.stream.write(line + "\n")
@@ -610,7 +636,9 @@ class JobChannel:
         line = json.dumps([x] + y)[1:-1]
         self.stream.write(line + "\n")
         self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
-        self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[0]))
+
+        if self.kpi:
+            self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[0]))
 
 
 class JobBackend:
@@ -943,50 +971,68 @@ class JobBackend:
         if not self.running:
             return
 
-        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_DONE)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_DONE, True)
 
-        self.stop(True)
-
-    def stop(self, wait_for_client=False, quite=False):
+    def stop(self, progress, wait_for_client=False):
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-        quite or self.logger.debug("stopping ...")
+        self.logger.debug("stopping ...")
         self.ended = True
         self.running = False
 
-        quite or self.logger.debug("git stopping ...")
-
-        quite or self.logger.debug("client stopping ...")
-        if wait_for_client:
-            self.client.end()
-        else:
-            self.client.close()
-
         self.logger.info("Send last git commits ...")
+
+        if wait_for_client:
+            self.logger.debug("client send last messages ...")
+            self.client.wait_sending_last_messages()
+
+        # store all store_file and stream_file as blob
+        self.logger.debug("git stop ...")
         self.git.stop()
 
-        quite or self.logger.info("Stopped %s with last commit %s." % (self.job_id, self.git.git_last_commit))
+        # last push to make sure server got all our commits
+        self.git.push()
+
+        # server stores now all store_file and stream_file as blob as well,
+        # wait for connection close to make sure server stored their files in server's git
+        self.logger.debug("client stopping ...")
+        self.client.end()
+
+        # everything stopped. Server has all blobs, so we add the last progress
+        # and do last git push.
+        self.git.commit_file('STOP', 'aetros/job/status/progress.json', json.dumps(progress, default=invalid_json_values))
+
+        # both sides should have same blobs, so we do now our final push
+        self.logger.debug("git last push ...")
+        self.git.push()
+
+        # remove the index file
+        self.git.clean_up()
+
+        self.logger.info("Stopped %s with last commit %s." % (self.job_id, self.git.git_last_commit))
 
     def abort(self, wait_for_client_messages=True):
         if not self.running:
             return
 
-        with self.git.batch_commit('ABORTED'):
-            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_ABORTED)
-            self.set_status('ABORTED')
+        self.set_status('ABORTED')
 
-        self.stop(wait_for_client_messages)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages)
 
     def crash(self, error=None):
         with self.git.batch_commit('CRASH'):
-            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
             self.set_status('CRASHED')
             self.git.commit_json_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
             self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', self.general_logger_error.last_messages)
 
+        # we need to make sure that the server got the git crash before we report the crash progress
+        self.git.push()
+
+        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
+
         self.logger.info('Crash report stored : ' + self.git.git_last_commit)
-        self.stop()
+        self.stop(JOB_STATUS.PROGRESS_STATUS_CRASHED)
 
     def write_log(self, message):
         if self.stream_log and self.running:

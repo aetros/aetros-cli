@@ -53,6 +53,9 @@ def read_config(path = '.aetros.yml', logger=None):
 
         logger and logger.debug('Config loaded from ' + os.path.realpath(path))
 
+    if 'parameters' not in config:
+        config['parameters'] = {}
+
     return config
 
 def invalid_json_values(obj):

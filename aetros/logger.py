@@ -46,6 +46,11 @@ class GeneralLogger(object):
         self.buffer = ''
 
     def attach(self, buffer):
+        """
+        Read buffer until end (read() returns '') and sends it to self.logger and self.job_backend.
+
+        :param buffer: a buffer instance with block read() method
+        """
         def reader():
             while True:
 
@@ -67,8 +72,8 @@ class GeneralLogger(object):
             self.logger.write(message)
 
             self.last_messages += message
-            if len(self.last_messages) > 500 * 1024:
-                self.last_messages = self.last_messages[-500 * 1024:]
+            if len(self.last_messages) > 20 * 1024:
+                self.last_messages = self.last_messages[-20 * 1024:]
 
             for char in message:
                 if '\b' == char or '\r' == char:

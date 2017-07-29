@@ -246,8 +246,7 @@ class Git:
                 os.unlink(full_path)
             self.store_files = {}
 
-        self.push()
-
+    def clean_up(self):
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
 
