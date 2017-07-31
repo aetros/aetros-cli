@@ -673,6 +673,10 @@ class JobBackend:
         self.made_batches = 0
         self.batches_per_second = 0
 
+        # indicates whether early_stop() has been called. Is called by reaching maxTimes or maxEpochs limitation.
+        # This flag stops exiting with > 0, since the reach of a limitation is a valid exit.
+        self.in_early_stop = False
+
         # done means: done, abort or crash method has been called.
         self.ended = False
 
@@ -804,9 +808,9 @@ class JobBackend:
         epoch_limit = False
 
         with self.git.batch_commit('PROGRESS ' + str(epoch)):
-            if 'maxEpochs' in self.job_settings and self.job_settings['maxEpochs'] > 0:
+            if 'maxEpochs' in self.job['config'] and self.job['config']['maxEpochs'] > 0:
                 epoch_limit = True
-                self.total_epochs = self.job['config']['settings']['maxEpochs']
+                self.total_epochs = self.job['config']['maxEpochs']
 
             if epoch is not 0 and self.last_progress_call:
                 # how long took it since the last call?
@@ -822,9 +826,8 @@ class JobBackend:
 
             if epoch_limit and self.total_epochs > 0:
                 if epoch >= self.total_epochs:
-                    self.logger.info("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
-                    self.done()
-                    os.kill(os.getpid(), signal.SIGINT)
+                    self.logger.warning("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
+                    self.early_stop()
                     return
 
     def create_loss_channel(self, name, xaxis=None, yaxis=None, layout=None):
@@ -864,6 +867,9 @@ class JobBackend:
         if not self.job_id:
             raise Exception('No job id found. Use create() first.')
 
+        if not self.job:
+            raise Exception('Job not loaded')
+
         on_shutdown.started_jobs.append(self)
 
         self.logger.debug('Job backend start')
@@ -898,6 +904,11 @@ class JobBackend:
                 self.set_system_info('git_branch', current_branch)
         except:
             pass
+
+    def early_stop(self):
+        self.in_early_stop = True
+        self.done()
+        os.kill(os.getpid(), signal.SIGINT)
 
     def start_monitoring(self):
         if not self.monitoring_thread:
@@ -961,6 +972,9 @@ class JobBackend:
 
         elif self.running:
             self.done()
+
+        if self.in_early_stop:
+            sys.exit(0)
 
     def done(self):
         if not self.running:
@@ -1206,7 +1220,7 @@ class JobBackend:
 
         from aetros.JobModel import JobModel
 
-        return JobModel(self.job)
+        return JobModel(self.job_id, self.job)
 
     def sync_weights(self):
         self.job_add_status('status', 'SYNC WEIGHTS')
@@ -1216,42 +1230,6 @@ class JobBackend:
         except:
             pass
         print("Weights synced.")
-
-    def load_light_job(self, id=None):
-        """
-        Loads job with less information and sets as current.
-        :param id: int
-        """
-
-        raise Exception('not implemeneted')
-        if id:
-            self.job_id = id
-
-        if not self.job_id:
-            raise Exception('No job id given.')
-
-        response = self.get('job', {'id': self.job_id, 'light': 1})
-        if response.status_code != 200:
-            raise Exception("Could not find version (%s): %s" % (self.job_id, response.content,))
-
-        job = response.json()
-
-        if job is None or job == 'Job not found':
-            raise Exception('Version not found. Have you configured your token correctly?')
-
-        if 'error' in job:
-            raise Exception('Version not found. Have you configured your token correctly? %s: %s' % (
-                job['error'], job['message']))
-
-        if not isinstance(job, dict):
-            raise Exception(
-                'Version does not exist. Make sure you created the job via AETROS TRAINER')
-
-        if not len(job['config']):
-            raise Exception(
-                'Version does not have a configuration. Make sure you created the job via AETROS TRAINER')
-
-        self.job = job
 
     def job_add_status(self, key, value):
         self.git.store_file('aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))

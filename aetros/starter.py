@@ -13,13 +13,15 @@ import sys
 import traceback
 
 from aetros import api
-from aetros.utils import git
+from aetros.utils import git, read_home_config
 from . import keras_model_utils
 from .backend import JobBackend
 from .Trainer import Trainer
 from .keras_model_utils import ensure_dir
 import six
 
+class GitCommandException(Exception):
+    cmd = None
 
 def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local', insights=False):
     """
@@ -67,20 +69,28 @@ def start_custom(logger, job_backend):
     job_model = job_backend.get_job_model()
     config = job_model.config
 
-    print('job_config',)
+    custom_git = False
 
-    if 'serverGitUrl' not in config or not config['serverGitUrl']:
+    if 'gitCustom' in config and config['gitCustom']:
+        custom_git = config['gitCustom']
+
+    if custom_git and 'sourceGitUrl' not in config or not config['sourceGitUrl']:
         raise Exception('Server git url is not configured. Aborted')
 
-    if 'serverPythonScript' not in config or not config['serverPythonScript']:
+    if 'sourcePythonScript' not in config or not config['sourcePythonScript']:
         raise Exception('Server python script is not configured. Aborted')
 
-    python_script = config['serverPythonScript']
+    python_script = config['sourcePythonScript']
     git_tree = 'master'
-    git_url = config['serverGitUrl']
 
-    if 'serverGitTree' in config and config['serverGitTree']:
-        git_tree = config['serverGitTree']
+    if custom_git:
+        git_url = config['sourceGitUrl']
+    else:
+        user_config = read_home_config()
+        git_url = 'git@' + user_config['host'] + ':' + job_model.model_id + '.git'
+
+    if 'sourceGitTree' in config and config['sourceGitTree']:
+        git_tree = config['sourceGitTree']
 
     root = './aetros-job/'
     if not os.path.exists(root):
@@ -112,7 +122,7 @@ def start_custom(logger, job_backend):
         git_execute(logger, repo_path, ['fetch', 'origin', git_tree])
         git_execute(logger, repo_path, ['checkout', git_tree])
 
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, repo_path))
 
     args = (sys.executable, python_script)
@@ -133,7 +143,13 @@ def git_execute(logger, repo_path, args):
     args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
     logger.info("$ %s" % (' '.join(args), ))
 
-    return subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
+    p = subprocess.Popen(args, stderr=sys.stderr, stdout=sys.stdout)
+    p.wait()
+
+    if p.returncode != 0:
+        exception = GitCommandException("Git command returned not 0. " + (' '.join(args)))
+        exception.cmd = (' '.join(args))
+        raise exception
 
 
 def start_keras(logger, job_backend):

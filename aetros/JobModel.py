@@ -54,16 +54,13 @@ class JobModel:
     """
     :type job : dict
     """
-    def __init__(self, job):
+    def __init__(self, id, job):
+        self.id = id
         self.job = job
 
     @property
     def model_id(self):
         return self.job['name']
-
-    @property
-    def id(self):
-        return self.job['id']
 
     @property
     def config(self):
