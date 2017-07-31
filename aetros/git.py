@@ -135,10 +135,24 @@ class Git:
 
         self.logger.debug(message)
 
+        if 'Connection refused' in stderrdata or 'Permission denied' in stderrdata:
+            if 'Permission denied' in stderrdata:
+                self.logger.warning("You have no permission to push to that model.")
+
+            self.go_offline()
+            return
+
         if not interrupted and not allowed_to_fail and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
         return stdoutdata
+
+    def go_offline(self):
+        self.logger.warning("You seem to be offline. We stopped automatic syncing.")
+        self.logger.warning("You can publish later your jobs to AETROS Trainer using following command in this folder.")
+        self.logger.warning("$ aetros publish-job " + self.model_name + " " + self.ref_head)
+        self.online = False
+        self.client.go_offline()
 
     def prepare_index_file(self):
         """
@@ -201,8 +215,6 @@ class Git:
         self.git_last_commit = self.job_id
 
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
-
-        self.logger.info("Job git ref created " + self.ref_head)
 
         self.push()
 
@@ -431,6 +443,9 @@ class Git:
         """
         Push all changes to origin
         """
+        if not self.online:
+            return
+
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', 'origin', self.ref_head])
 
     def commit_index(self, message):

@@ -63,8 +63,8 @@ class ServerClient(BackendClient):
                 if message['type'] == 'queue-jobs':
                     self.event_listener.fire('queue-jobs', message['jobs'])
 
-                if message['type'] == 'queue-ok':
-                    self.event_listener.fire('queue-ok', message['job'])
+                if message['type'] == 'unqueue-jobs':
+                    self.event_listener.fire('unqueue-jobs', message['jobs'])
 
                 if message['type'] == 'stop-job':
                     self.event_listener.fire('stop-job', message['id'])
@@ -128,6 +128,7 @@ class ServerCommand:
         event_listener.on('registration', self.registration_complete)
         event_listener.on('failed', self.connection_failed)
         event_listener.on('queue-jobs', self.queue_jobs)
+        event_listener.on('unqueue-jobs', self.unqueue_jobs)
         event_listener.on('queue-ok', self.queue_ok)
         event_listener.on('stop-job', self.stop_job)
         event_listener.on('close', self.on_client_close)
@@ -196,6 +197,18 @@ class ServerCommand:
 
             del self.queuedMap[id]
 
+    def unqueue_jobs(self, jobs):
+        for id in jobs:
+            if id in self.queuedMap:
+                self.logger.info('Removed job %s from queue.' % (id, ))
+
+                for priority in self.queue:
+                    if self.queuedMap[id] in self.queue[priority]:
+                        self.queue[priority].remove(self.queuedMap[id])
+
+                del self.queuedMap[id]
+
+
     def queue_jobs(self, jobs):
         self.logger.debug('Got queue list with %d items.' % (len(jobs), ))
 
@@ -203,6 +216,7 @@ class ServerCommand:
             self.check_finished_jobs()
 
             job = jobs[id]
+            priority = job['priority']
             job['id'] = id
 
             if self.is_job_queued(id):
@@ -213,10 +227,13 @@ class ServerCommand:
                job['id'], job['priority'],os.getcwd()
             ))
 
-            self.logger.debug("Request confirmation %s (priority: %s)." % (job['id'], job['priority']))
-            self.server.send_message({'type': 'job-queued', 'id': job['id']})
-
             self.queuedMap[job['id']] = job
+
+            # add the job into the wait list
+            if job['priority'] not in self.queue:
+                self.queue[priority] = []
+
+            self.queue[priority].append(job)
 
     def is_job_queued(self, id):
         return id in self.queuedMap

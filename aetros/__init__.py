@@ -9,6 +9,8 @@ import coloredlogs
 import os
 
 import aetros.const
+from aetros.commands.ApiCommand import ApiCommand
+from aetros.commands.PublishJobCommand import PublishJobCommand
 
 __version__ = const.__version__
 
@@ -19,6 +21,8 @@ command_summaries = [
     ['prediction-server', 'Spawns a http server that handles incoming data as input and predicts output.'],
     ['server', 'Spawns a job server that handles jobs managed through AETROS Trainer.'],
     ['run', 'Executes a command on an AETROS server.'],
+    ['api', 'Executes a API call through SSH connection.'],
+    ['publish-job', 'Pushes a local job to AETROS Trainer.'],
 ]
 
 def parseopts(args):
@@ -57,9 +61,10 @@ def main(args=None):
         'prediction-server': PredictionServerCommand,
         'server': ServerCommand,
         'run': RunCommand,
+        'api': ApiCommand,
+        'publish-job': PublishJobCommand,
     }
     cmd_name, cmd_args = parseopts(args)
-
 
     log_level = 'INFO'
     if os.getenv('DEBUG') == '1':

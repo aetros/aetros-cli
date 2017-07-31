@@ -12,6 +12,7 @@ import subprocess
 import sys
 import traceback
 
+from aetros import api
 from aetros.utils import git
 from . import keras_model_utils
 from .backend import JobBackend
@@ -20,22 +21,41 @@ from .keras_model_utils import ensure_dir
 import six
 
 
-def start(logger, full_id, hyperparameter=None, dataset_id=None, server_id='local', insights=False):
+def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local', insights=False):
     """
     Starts the training process with all logging of a job_id
     :type id: string : job id or model name
     """
-    owner, name, id = full_id.split('/')
+    id = None
+
+    if full_id.count('/') == 1:
+        owner, name = full_id.split('/')
+    elif full_id.count('/') == 2:
+        owner, name, id = full_id.split('/')
+    else:
+        logger.error("Invalid id %s given. Supported formats: owner/modelName or owner/modelName/jobId." % (full_id, ))
+        sys.exit(1)
 
     job_backend = JobBackend(model_name=owner + '/' + name)
     if id:
         job_backend.load(id)
     else:
-        # todo, handle dataset_id?
-        job_backend.create(hyperparameter, server_id, insights)
+        try:
+            create_info = api.create_job_info(full_id, hyperparameter, dataset_id)
+        except api.ApiError as e:
+            if 'Connection refused' in e.reason:
+                logger.error("You are offline")
+            logger.error("Can not start new job without knowing what mode type it is. "
+                         "Use your script directly if its a Python model.")
+            raise
+
+        if not create_info or not create_info['id']:
+            raise Exception('Could not fetch model information. Are you online and have access to the given model?')
+
+        job_backend.create(create_info=create_info, hyperparameter=hyperparameter, server=server, insights=insights)
 
     if not len(job_backend.get_job_model().config):
-        raise Exception('Job does not have a configuration. Make sure you created the job via AETROS TRAINER')
+        raise Exception('Job does not have a configuration. Make sure you created the job via AETROS Trainer.')
 
     if job_backend.is_simple_model():
         start_keras(logger, job_backend)
@@ -45,29 +65,22 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server_id='loca
 
 def start_custom(logger, job_backend):
     job_model = job_backend.get_job_model()
-    job_config = job_model.config
-    model_settings = job_model.model_settings
+    config = job_model.config
 
-    if 'git' not in model_settings or not model_settings['git']:
-        raise Exception('Git url is not configured. Aborted')
+    print('job_config',)
 
-    if 'gitPythonScript' not in model_settings or not model_settings['gitPythonScript']:
-        raise Exception('Git python script is not configured. Aborted')
+    if 'serverGitUrl' not in config or not config['serverGitUrl']:
+        raise Exception('Server git url is not configured. Aborted')
 
-    git_python_script = model_settings['gitPythonScript']
-    git_branch = 'master'
-    git_url = model_settings['git']
-    git_commit = None
+    if 'serverPythonScript' not in config or not config['serverPythonScript']:
+        raise Exception('Server python script is not configured. Aborted')
 
-    if 'gitBranch' in job_config and job_config['gitBranch']:
-        git_branch = job_config['gitBranch']
-    elif 'gitBranch' in model_settings and model_settings['gitBranch']:
-        git_branch = model_settings['gitBranch']
+    python_script = config['serverPythonScript']
+    git_tree = 'master'
+    git_url = config['serverGitUrl']
 
-    if 'gitCommit' in job_config and job_config['gitCommit']:
-        git_commit = job_config['gitCommit']
-    elif 'gitCommit' in model_settings and model_settings['gitCommit']:
-        git_commit = model_settings['gitCommit']
+    if 'serverGitTree' in config and config['serverGitTree']:
+        git_tree = config['serverGitTree']
 
     root = './aetros-job/'
     if not os.path.exists(root):
@@ -77,47 +90,32 @@ def start_custom(logger, job_backend):
     if 'PYTHONPATH' not in my_env:
         my_env['PYTHONPATH'] = ''
     my_env['PYTHONPATH'] += ':' + os.getcwd()
+    my_env['AETROS_MODEL_NAME'] = job_model.model_id
     my_env['AETROS_JOB_ID'] = job_model.id
 
-    repo_path = root + '/' + job_model.model_id
+    repo_path = root + job_model.model_id + '/' + job_model.id
 
     logger.info("Setting up git repository %s in %s" % (git_url, os.path.abspath(repo_path)))
+    logger.info("Using git tree of %s " % (git_tree, ))
 
     try:
-        if not os.path.exists(repo_path):
-            args = ['git', 'clone', git_url, repo_path]
-            code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
-            if code != 0:
-                raise Exception('Could not clone repository %s to %s' %(git_url, repo_path))
+        if os.path.exists(repo_path):
+            logger.warning("Path already exists. We delete it.")
+            shutil.rmtree(repo_path)
 
-        # check if remote origin is current git_url. if not throw exception and tell user to remove that folder
-        # todo
+        args = ['git', 'clone', git_url, repo_path]
+        code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
+        if code != 0:
+            raise Exception('Could not clone repository %s to %s' %(git_url, repo_path))
 
         # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
-        git_execute(repo_path, ['fetch', 'origin', git_branch])
-
-        current_branch = git.get_current_branch()
-        # make sure the requested branch is checked out
-        if current_branch != git_branch:
-            git_execute(repo_path, ['checkout', git_branch])
-
-        if git_commit and git_commit != git.get_current_commit_hash():
-            logger.info("Checkout commit %s" % [git_commit])
-            git_execute(repo_path, ['reset', '--hard', git_commit]) #reset to requested commit of FETCH_HEAD, revert all changes to repo files
-        else:
-            logger.info("Checkout newest commit")
-            # checkout newest commit of FETCH_HEAD, revert all changes to repo files
-            git_execute(repo_path, ['reset', '--hard', 'FETCH_HEAD'])
-
-        # make this configurable, since cache should not always be cleared on the same server.
-        # clean created files that do not belong to the repo
-        # print("Delete all files that do not belong to the git repository.")
-        # git_execute(repo_path, ['clean', '-fd'])
+        git_execute(logger, repo_path, ['fetch', 'origin', git_tree])
+        git_execute(logger, repo_path, ['checkout', git_tree])
 
     except subprocess.CalledProcessError as e:
         raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, repo_path))
 
-    args = (sys.executable, git_python_script)
+    args = (sys.executable, python_script)
     logger.info("Model source code checked out.")
     logger.info("-----------")
     logger.info("-----------")
@@ -128,12 +126,12 @@ def start_custom(logger, job_backend):
         subprocess.Popen(args, close_fds=True, env=my_env, cwd=repo_path).wait()
     except KeyboardInterrupt:
         logger.warning("Job aborted.")
-        sys.exit(0)
+        sys.exit(1)
 
 
-def git_execute(repo_path, args):
+def git_execute(logger, repo_path, args):
     args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
-    print("$ %s" % (' '.join(args), ))
+    logger.info("$ %s" % (' '.join(args), ))
 
     return subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
 
@@ -150,13 +148,13 @@ def start_keras(logger, job_backend):
 
     job_model = job_backend.get_job_model()
 
-    directory = 'aetros-job/%s/%s' % (job_model.model_id, job_model.index)
+    directory = 'aetros-job/%s/%s' % (job_model.model_id, job_model.id)
     if os.path.exists(directory):
         shutil.rmtree(directory)
 
     ensure_dir(directory)
 
-    log = io.open('aetros-job/%s/%s/output.log' % (job_model.model_id, job_model.index), 'w', encoding='utf8')
+    log = io.open('aetros-job/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
     log.truncate()
 
     from .KerasCallback import KerasCallback
@@ -172,7 +170,7 @@ def start_keras(logger, job_backend):
     try:
         logger.info("Setup simple job")
         keras_model_utils.job_prepare(job_model)
-        job_backend.progress(0, job_backend.job['config']['settings']['epochs'])
+        job_backend.progress(0, job_backend.job['config']['epochs'])
 
         logger.info("Start job")
         keras_model_utils.job_start(job_backend, trainer, keras_logger)
@@ -209,4 +207,4 @@ def start_keras(logger, job_backend):
 
         job_backend.crash(e)
         logger.error("Exited.")
-        raise e
+        raise

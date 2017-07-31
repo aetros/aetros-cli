@@ -73,6 +73,10 @@ class JobModel:
     def model_settings(self):
         return self.job['modelSettings']
 
+    @property
+    def insights_enabled(self):
+        return self.config['insights']
+
     def get_model_node(self, name):
         if not isinstance(self.job['config']['layer'], list):
             return None

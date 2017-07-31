@@ -139,6 +139,11 @@ class BackendClient:
         self.queue = []
         self.initial_connection_tries = 0
 
+        # indicates whether we are offline or not, means not connection to the internet and
+        # should not establish a connection to Aetros.
+        self.online = True
+
+        # Whether the client is active and should do things.
         self.active = False
         self.expect_close = False
         self.external_stopped = False
@@ -162,6 +167,9 @@ class BackendClient:
     def on_connect(self):
         pass
 
+    def go_offline(self):
+        self.online = False
+
     def connect(self):
         if self.initial_connection_tries > 3:
             # We only try in 5 minutes again
@@ -169,49 +177,36 @@ class BackendClient:
 
         self.lock.acquire()
 
-        def preexec_function():
-            # Ignore the SIGINT signal by setting the handler to the standard
-            # signal handler SIG_IGN.
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-
         try:
-            if self.connected:
+            if self.connected or not self.online:
                 return True
 
             self.initial_connection_tries = 0
 
-            while not self.connected:
-                self.logger.info("Connecting to " + self.host + " ... ")
+            self.logger.info("Connecting to " + self.host + " ... ")
 
-                self.ssh_stream = subprocess.Popen(['ssh', 'git@' + self.host, 'stream'],
-                                                   stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                   preexec_fn=preexec_function)
+            self.ssh_stream = subprocess.Popen(['ssh', 'git@' + self.host, 'stream'],
+                                               stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
-                self.connected = True
-                self.registered = self.on_connect()
+            self.connected = True
+            self.registered = self.on_connect()
 
-                if not self.registered:
-                    self.initial_connection_tries += 1
+            if not self.registered:
+                self.initial_connection_tries += 1
 
-                    ssh_err = self.ssh_stream.stderr.read().decode("utf-8").strip()
-                    if ssh_err:
-                        self.logger.error(ssh_err)
+                ssh_err = self.ssh_stream.stderr.read().decode("utf-8").strip()
+                if ssh_err:
+                    self.logger.error(ssh_err)
 
-                    if 'Permission denied' in ssh_err:
-                        self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
-                        self.close()
-                        sys.exit(1)
+                if 'Permission denied' in ssh_err:
+                    self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
+                    self.close()
+                    sys.exit(1)
+            else:
+                self.logger.info("Connected.")
 
-                    if self.initial_connection_tries > 3:
-                        self.initial_connection_tries = 0
-                        self.logger.warning("Failed too often. Try again in 1 minute.")
-                        time.sleep(60)
-                    else:
-                        self.logger.warning("Failed. Try again in 5 seconds")
-                        time.sleep(5)
-                else:
-                    self.logger.info("Connected.")
-
+        except KeyboardInterrupt:
+            pass
         except Exception as error:
             self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
             raise
@@ -261,7 +256,7 @@ class BackendClient:
 
     def thread_write(self):
         while self.active:
-            if self.connected and self.registered:
+            if self.online and self.connected and self.registered:
 
                 self.lock.acquire()
                 queue_copy = self.queue[:]
@@ -305,20 +300,21 @@ class BackendClient:
 
     def thread_read(self):
         while self.active:
-            if self.connected and self.registered:
-                try:
-                    messages = self.read() # this blocks, so no lock before
+            if self.online:
+                if self.connected:
+                    try:
+                        messages = self.read() # this blocks, so no lock before
 
-                    if messages is not None:
-                        self.handle_messages(messages)
+                        if messages is not None:
+                            self.handle_messages(messages)
 
-                    continue
-                except:
-                    pass
+                        continue
+                    except:
+                        pass
 
-            if self.active and not self.connected and not self.expect_close:
-                if not self.connect():
-                    time.sleep(5)
+                if not self.connected and not self.expect_close:
+                    if not self.connect():
+                        time.sleep(5)
 
             time.sleep(0.01)
 
@@ -336,6 +332,9 @@ class BackendClient:
 
     def wait_for_close(self):
         self.active = False
+
+        if not self.ssh_stream:
+            return
 
         while self.ssh_stream.poll() is None:
             time.sleep(0.1)
@@ -693,7 +692,6 @@ class JobBackend:
         self.in_request = False
         self.stop_requested = False
         self.stop_requested_force = False
-        self.online = False
 
         self.kpi_channel = None
 
@@ -725,15 +723,10 @@ class JobBackend:
         self.logger.warning("Connecting to AETROS Trainer at %s failed. Reasons: %s" % (self.host, params['reason'],))
         if 'Permission denied' in params['reason']:
             self.logger.warning("Make sure you have saved your ssh pub key in your AETROS Trainer user account.")
-        self.logger.warning("Live streaming disabled. Job continues to local git only. Use 'aetros push-job %s' to publish your job when done." % (self.job_id, ))
-        self.online = False
-        self.git.online = False
 
     def on_registration(self, params):
         self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
         self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
-        self.online = True
-        self.git.online = True
 
     def external_aborted(self, params):
         self.ended = True
@@ -875,9 +868,11 @@ class JobBackend:
 
         self.logger.debug('Job backend start')
         self.client.configure(self.model_name, self.job_id)
-        self.client.start()
 
-        self.git.start()
+        if self.git.online:
+            self.client.start()
+            self.git.start()
+
         self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
         self.git.store_file('aetros/job/times/elapsed', str(0))
@@ -1046,35 +1041,55 @@ class JobBackend:
     def job_id(self):
         return self.git.job_id
 
-    def create(self, hyperparameter=None, server='local', insights=None):
+    def create(self, create_info=None, hyperparameter=None, server='local', insights=None):
+        """
+        Creates a new job in git and pushes it.
 
+        :param create_info: from the api.create_job_info(id). Contains e.g. code, layer information for simple models
+        :param hyperparameter: simple nested dict with key->value.
+        :param server:
+        :param insights: whether you want to activate insights
+        """
         self.job['name'] = self.model_name
         self.job['server'] = server
         self.job['config'] = copy.deepcopy(self.config)
         self.job['optimization'] = None
+        self.job['type'] = 'python'
+
+        if 'parameters' not in self.job['config']:
+            self.job['config']['parameters'] = {}
+
+        if create_info is not None:
+            if 'config' not in create_info:
+                print(create_info)
+                raise Exception('Given create_info is not valid.')
+
+            self.job['type'] = create_info['type']
+            self.job['config'].update(create_info['config'])
 
         if insights is not None:
             self.job['config']['insights'] = insights
 
         if hyperparameter is not None:
-            self.job['config']['parameters'] = hyperparameter
+            self.job['config']['parameters'].update(hyperparameter)
 
-        if 'parameters' not in self.job['config']:
-            self.job['config']['parameters'] = {}
+        if 'insights' not in self.job['config']:
+            self.job['config']['insights'] = False
 
         self.git.create_job_id(self.job)
         self.git.push()
         self.job['id'] = self.job_id
 
-        self.logger.info("Job created " + self.model_name + '/' + self.job_id)
+        self.logger.info("Job created " + self.model_name + '/' + self.job_id + " with git ref " + self.git.ref_head)
         return self.job_id
+
 
     def is_simple_model(self):
         if not self.job:
             raise Exception('Job not loaded yet. Use load(id) first.')
 
-        if 'modelSettings' in self.job and 'simple' in self.job['modelSettings']:
-            return self.job['modelSettings']['simple']
+        if 'type' in self.job:
+            return self.job['type'] == 'simple'
 
         return False
 
@@ -1091,8 +1106,7 @@ class JobBackend:
 
             del self.config['models']
 
-        if 'git_path' not in self.config:
-            self.config['git_path'] = '.aetros/' + model_name + '.git'
+        self.config['git_path'] = '.aetros/' + model_name + '.git'
 
         self.logger.debug('config: ' + str(self.config))
         # todo, read parameters from script arguments

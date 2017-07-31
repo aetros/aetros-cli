@@ -99,7 +99,7 @@ def job_prepare(job_model):
     :type job_model: JobModel
     """
 
-    path = 'aetros-job/%s/%s' % (job_model.model_id, job_model.index)
+    path = 'aetros-job/%s/%s' % (job_model.model_id, job_model.id)
     datasets_path = path + '/datasets'
     config = job_model.config
 

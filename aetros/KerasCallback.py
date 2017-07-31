@@ -180,7 +180,7 @@ class KerasCallback(Callback):
 
             self.all_losses = self.job_backend.create_channel('All loss', main=True, xaxis=xaxis, traces=loss_traces)
 
-        if self.force_insights or self.job_model.job['insights']:
+        if self.force_insights or self.job_model.insights_enabled:
             images = self.build_insight_images()
             self.job_backend.job_add_insight(0, images, None)
 
@@ -275,7 +275,7 @@ class KerasCallback(Callback):
                 log['epoch'], log['loss'], log.get('acc', 0), log.get('val_loss', 0), total_accuracy_validation, )
             self.general_logger.write(line)
 
-        if self.force_insights or self.job_model.job['insights']:
+        if self.force_insights or self.job_model.config['insights']:
             # Todo, support multiple inputs
             first_input_layer = self.model.input_layers[0]
 
