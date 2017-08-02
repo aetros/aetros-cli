@@ -6,6 +6,7 @@ from aetros.backend import start_job
 from aetros.KerasCallback import KerasCallback
 from aetros.Trainer import Trainer
 
+
 def optimizer_factory(settings):
     import keras.optimizers
 
@@ -29,6 +30,7 @@ def optimizer_factory(settings):
 
     if 'adamax' == optimizer:
         return keras.optimizers.Adamax(lr=optimizer_settings['learning_rate'] or 0.002, beta_1=optimizer_settings['beta_1'] or 0.9, beta_2=optimizer_settings['beta_2'] or 0.999, epsilon=optimizer_settings['epsilon'] or 1e-08, decay=optimizer_settings['decay'] or 0.0)
+
 
 def load_weights(model, weights_path):
     from keras import backend as K

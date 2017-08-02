@@ -1,5 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
+
+import json
 import os
 import sys
 import tempfile
@@ -9,45 +11,8 @@ from PIL import Image
 
 import numpy as np
 from aetros.Trainer import Trainer
-from aetros.logger import GeneralLogger
 from aetros.keras_model_utils import ensure_dir
 from aetros.backend import JobBackend
-
-
-def create_simple(id, last_weights=False):
-    job_backend = JobBackend()
-    job_backend.load(id)
-    job_model = job_backend.get_job_model()
-
-    if last_weights:
-        weights_path = job_model.get_weights_filepath_latest()
-    else:
-        weights_path = job_model.get_weights_filepath_best()
-
-    if not os.path.exists(weights_path) or os.path.getsize(weights_path) == 0:
-        weight_url = job_backend.get_best_weight_url(id)
-        if not weight_url:
-            raise Exception("No weights available for this job.")
-
-        print(("Download weights %s to %s .." % (weight_url, weights_path)))
-        ensure_dir(os.path.dirname(weights_path))
-
-        f = open(weights_path, 'wb')
-        f.write(urllib.urlopen(weight_url).read())
-        f.close()
-
-    model.job_prepare(job_model)
-
-    trainer = Trainer(job_backend)
-
-    job_model.set_input_shape(trainer)
-
-    model = job_model.get_built_model(trainer)
-
-    from aetros.keras import load_weights
-    load_weights(model, weights_path)
-
-    return job_model, model
 
 
 class JobModel:
@@ -57,6 +22,8 @@ class JobModel:
     def __init__(self, id, job):
         self.id = id
         self.job = job
+        self._layers = None
+        self._datasets = None
 
     @property
     def model_id(self):
@@ -94,8 +61,11 @@ class JobModel:
     def get_model_h5_path(self):
         return os.getcwd() + '/aetros-job/%s/%s/model.h5' % (self.model_id, self.id)
 
+    def get_layers_path(self):
+        return os.getcwd() + '/aetros/layers.json'
+
     def get_dataset_dir(self):
-        return os.getcwd() + '/aetros-job/%s/%s/datasets' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros/datasets'
 
     def get_base_dir(self):
         return os.getcwd() + '/aetros-job/%s/%s' % (self.model_id, self.id)
@@ -250,13 +220,35 @@ class JobModel:
 
     def get_model_provider(self):
 
-        sys.path.append(self.get_base_dir())
+        sys.path.append('./')
 
-        import model_provider
-        print("Imported model_provider in %s " % (self.get_base_dir() + '/model_provider.py',))
+        model = __import__('model', '')
+        print("Imported model script from %s " % (os.path.abspath('./model.py'),))
         sys.path.pop()
 
-        return model_provider
+        return model
+    
+    @property
+    def layers(self):
+        if self._layers is None:
+            with open(self.get_layers_path(), 'r') as f:
+                self._layers = json.loads(f.read())
+
+        return self._layers
+
+    @property
+    def datasets(self):
+        if self._datasets is None:
+            self._datasets = {}
+
+            for owner in os.listdir(self.get_dataset_dir()):
+                path = self.get_dataset_dir() + '/' + owner + '/dataset/'
+                for name in os.listdir(path):
+                    id = owner + '/dataset/' + name
+                    with open(path + name + '.json', 'r') as f:
+                        self._datasets[id] = json.loads(f.read())
+
+        return self._datasets
 
     def get_datasets(self, trainer):
         datasets_dir = self.get_dataset_dir()
@@ -268,7 +260,7 @@ class JobModel:
 
         # load placeholder, auto data
         config = self.job['config']
-        for layer in config['layer'][0]:
+        for layer in self.layers[0]:
             if 'datasetId' in layer and layer['datasetId']:
 
                 dataset = config['datasets'][layer['datasetId']]
@@ -278,7 +270,7 @@ class JobModel:
 
                 if dataset['type'] == 'images_upload' or dataset['type'] == 'images_search':
 
-                    connected_to_layer = self.get_connected_layer(config['layer'], layer)
+                    connected_to_layer = self.get_connected_layer(self.layers, layer)
                     if connected_to_layer is None:
                         # this input is not in use, so we dont need to calculate its dataset
                         continue
@@ -295,11 +287,11 @@ class JobModel:
                         datasets[layer['datasetId']] = read_images_keras_generator(self, dataset, layer, trainer)
 
                 elif dataset['type'] == 'python':
-                    name = dataset['id'].replace('/', '__')
+                    name = dataset['id']
 
-                    sys.path.append(datasets_dir)
+                    sys.path.append(sys.path.abspath('./aetros/'))
                     data_provider = __import__(name, '')
-                    print("Imported dataset provider in %s " % (datasets_dir + '/' + name + '.py',))
+                    print("Imported dataset provider from %s " % (os.path.abspath('./aetros/' + name + '.py'),))
                     sys.path.pop()
                     import inspect
                     argSpec = inspect.getargspec(data_provider.get_data)
@@ -341,18 +333,18 @@ class JobModel:
 
     def get_first_input_layer(self):
         config = self.job['config']
-        return config['layer'][0][0]
+        return self.layers[0][0]
 
     def get_input_node(self, idx):
         config = self.job['config']
-        return config['layer'][0][idx]
+        return self.layers[0][idx]
 
     def get_first_output_layer(self):
         config = self.job['config']
-        return config['layer'][-1][0]
+        return self.layers[-1][0]
 
     def get_dataset(self, dataset_id):
-        return self.job['config']['datasets'][dataset_id]
+        return self.datasets[dataset_id]
 
     def get_connected_layer(self, layers, to_net):
         connected_to_net = None

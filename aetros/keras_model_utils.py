@@ -105,27 +105,3 @@ def job_prepare(job_model):
 
     ensure_dir(path)
     ensure_dir(datasets_path)
-
-    if not os.path.isfile(path + '/model_provider.py'):
-        with open(path + '/model_provider.py', 'w+') as f:
-            f.write(config['code'])
-            f.close()
-
-    inputOutputNodes = config['layer'][0] + config['layer'][-1]
-
-    for net in inputOutputNodes:
-        if net['datasetId']:
-            if net['datasetId'] not in config['datasets']:
-                raise Exception('Could not find dataset %s. You probably have no access. Available %s' % (
-                    net['datasetId'], ','.join(list(config['datasets'].keys()))))
-
-            dataset = config['datasets'][net['datasetId']]
-            if dataset['type'] == 'python':
-
-                name = dataset['id'].replace('/', '__')
-                dataset_path = datasets_path + '/' + name + '.py'
-
-                if not os.path.isfile(dataset_path):
-                    with open(dataset_path, 'w+') as f:
-                        f.write(dataset['config']['code'])
-                        f.close()

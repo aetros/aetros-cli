@@ -160,17 +160,23 @@ class KerasCallback(Callback):
             'dtick': 10
         }
 
-        traces = ['validation', 'training']
+        traces = ['training', 'validation']
         if len(self.model.output_layers) > 1:
             traces = []
             for output in self.model.output_layers:
-                traces.append(output.name+'_validation')
                 traces.append(output.name+'_training')
+                traces.append(output.name+'_validation')
 
         is_accuracy_kpi = True if self.job_backend.kpi_channel is None else False
-        self.accuracy_channel = self.job_backend.create_channel('accuracy', main=True, traces=traces, kpi=is_accuracy_kpi, max_optimization=True, xaxis=xaxis, yaxis=yaxis)
+
+        self.accuracy_channel = self.job_backend.create_channel(
+            'accuracy',
+            main=True, traces=traces, kpi=is_accuracy_kpi, kpiTrace=1,
+            max_optimization=True, xaxis=xaxis, yaxis=yaxis
+        )
         self.loss_channel = self.job_backend.create_loss_channel('loss', xaxis=xaxis)
         self.learning_rate_channel = self.job_backend.create_channel('learning rate', traces=['start', 'end'], xaxis=xaxis)
+
         self.job_backend.progress(0, self.params['epochs'])
         if len(self.model.output_layers) > 1:
             loss_traces = []

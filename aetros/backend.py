@@ -566,7 +566,7 @@ class JobChannel:
     """
 
     def __init__(self, job_backend, name, traces=None,
-                 main=False, kpi=False, max_optimization=True,
+                 main=False, kpi=False, kpiTrace=0, max_optimization=True,
                  type=None, xaxis=None, yaxis=None, layout=None):
         """
         :param job_backend: JobBakend
@@ -576,6 +576,7 @@ class JobChannel:
 
         :param kpi: bool : whether this channel is the KPI (key performance indicator).
                            Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
+        :param kpiTrace: bool : if you have multiple traces, define which is the KPI. 0 based index.
 
         :param max_optimization: bool : whether the optimization maximizes or minmizes the kpi . Use max_optimization=False to
                                         tell the optimization algorithm that his channel minimizes a kpi, for instance the loss of a model.
@@ -588,6 +589,7 @@ class JobChannel:
         self.name = name
         self.job_backend = job_backend
         self.kpi = kpi
+        self.kpiTrace = kpiTrace
 
         if self.kpi:
             self.job_backend.kpi_channel = self
@@ -608,6 +610,7 @@ class JobChannel:
             'type': type or JobChannel.NUMBER,
             'main': main,
             'kpi': kpi,
+            'kpiTrace': kpiTrace,
             'maxOptimization': max_optimization,
             'xaxis': xaxis,
             'yaxis': yaxis,
@@ -637,7 +640,7 @@ class JobChannel:
         self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
 
         if self.kpi:
-            self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[0]))
+            self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[self.kpiTrace]))
 
 
 class JobBackend:
@@ -782,6 +785,8 @@ class JobBackend:
                 elapsed = time.time() - self.start_time
                 self.set_system_info('elapsed', elapsed, True)
 
+                self.git.store_file('aetros/job/times/elapsed.json', json.dumps(elapsed))
+
                 if self.total_epochs:
                     eta = 0
                     if batch < total:
@@ -839,7 +844,7 @@ class JobBackend:
         return JobLossChannel(self, name, xaxis, yaxis, layout)
 
     def create_channel(self, name, traces=None,
-                       main=False, kpi=False, max_optimization=True,
+                       main=False, kpi=False, kpiTrace=0, max_optimization=True,
                        type=JobChannel.NUMBER,
                        xaxis=None, yaxis=None, layout=None):
         """
@@ -849,6 +854,7 @@ class JobBackend:
 
         :param kpi: bool : whether this channel is the KPI (key performance indicator).
                            Used for hyperparameter optimization. Only one channel can be a kpi. Only first trace used.
+        :param kpiTrace: bool : if you have multiple traces, define which is the KPI. 0 based index.
 
         :param max_optimization: bool : whether the optimization maximizes or minmizes the kpi. Use max_optimization=False to
                                         tell the optimization algorithm that his channel minimizes a kpi, for instance the loss of a model.
@@ -858,7 +864,7 @@ class JobBackend:
         :param yaxis: dict
         :param layout: dict
         """
-        return JobChannel(self, name, traces, main, kpi, max_optimization, type, xaxis, yaxis, layout)
+        return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
     def start(self):
         if self.running:
@@ -879,9 +885,9 @@ class JobBackend:
             self.client.start()
             self.git.start()
 
-        self.git.commit_file('JOB', 'aetros/job/times/started', str(time.time()))
+        self.git.commit_file('JOB', 'aetros/job/times/started.json', str(time.time()))
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
-        self.git.store_file('aetros/job/times/elapsed', str(0))
+        self.git.store_file('aetros/job/times/elapsed.json', str(0))
 
         self.stream_log = self.git.stream_file('aetros/job/log.txt')
 
@@ -1081,6 +1087,17 @@ class JobBackend:
             self.job['type'] = create_info['type']
             self.job['config'].update(create_info['config'])
 
+            if 'simple' == self.job['type']:
+                for k, v in six.iteritems(create_info['datasets']):
+                    if 'python' == v['type']:
+                        self.git.add_file('aetros/dataset/' + k + '.py', v['code'])
+                        del v['code']
+
+                    self.git.add_file('aetros/dataset/' + k + '.json', json.dumps(v))
+
+                self.git.add_file('aetros/model.py', json.dumps(create_info['code']))
+                self.git.add_file('aetros/layers.json', json.dumps(create_info['layers']))
+
         if insights is not None:
             self.job['config']['insights'] = insights
 
@@ -1178,20 +1195,16 @@ class JobBackend:
         """
 
         # normally git would create a job_id, but we have already one
+        # so download the ref and check it out.
         self.git.fetch_job(job_id)
 
-        try:
-            info_json = self.git.git_read('aetros/job.json').decode('utf-8')
-        except GitCommandException:
-            self.logger.error('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
-            raise
-
-        if not info_json:
+        if not os.path.exists('aetros/job.json'):
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
-        self.job = json.loads(info_json)
+        with open('aetros/job.json') as f:
+            self.job = json.loads(f.read())
 
-        if not info_json:
+        if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
 
         self.job['id'] = job_id

@@ -200,6 +200,11 @@ class Git:
             raise Exception("Could not load resolve local ref " + self.ref_head + '. You need to be online to start pre-configured jobs.')
 
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'read-tree', self.ref_head])
+
+        # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
+        # actual model.py and dataset scripts.
+        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'checkout', self.ref_head])
+
         self.active_push = True
 
     def create_job_id(self, data):
@@ -215,6 +220,10 @@ class Git:
         self.git_last_commit = self.job_id
 
         self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
+
+        # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
+        # actual model.py and dataset scripts.
+        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'checkout', self.ref_head])
 
         self.push()
 
