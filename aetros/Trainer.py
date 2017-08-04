@@ -31,10 +31,13 @@ class Trainer():
         self.model = None
 
         self.job_model = job_backend.get_job_model()
-        self.settings = {
-            'batchSize': self.job_backend.job['config']['batchSize'],
-            'epochs': self.job_backend.job['config']['epochs'],
-        }
+        self.settings = {}
+
+        if 'batchSize' in self.job_backend.job['config']:
+            self.settings['batchSize'] = self.job_backend.job['config']['batchSize']
+
+        if 'epochs' in self.job_backend.job['config']:
+            self.settings['batchSize'] = self.job_backend.job['config']['epochs']
 
         self.lock = Lock()
 

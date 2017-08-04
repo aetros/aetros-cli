@@ -137,7 +137,8 @@ class BackendClient:
         self.lock = Lock()
         self.connection_errors = 0
         self.queue = []
-        self.initial_connection_tries = 0
+        self.connection_tries = 0
+        self.in_connecting = False
 
         # indicates whether we are offline or not, means not connection to the internet and
         # should not establish a connection to Aetros.
@@ -171,48 +172,70 @@ class BackendClient:
         self.online = False
 
     def connect(self):
-        if self.initial_connection_tries > 3:
+        """
+        In the write-thread we detect that no connection is living anymore and try always again.
+        Up to the 3 connection try, we report to user. We keep trying but in silence.
+        Also, when more than 10 connection tries are detected, we delay extra 60 seconds.
+        """
+        if self.connection_tries > 10:
             # We only try in 5 minutes again
+            time.sleep(60)
+
+        if self.in_connecting:
             return False
 
-        self.lock.acquire()
+        self.in_connecting = True
+
+        self.logger.debug('Wanna connect ...')
 
         try:
             if self.connected or not self.online:
                 return True
 
-            self.initial_connection_tries = 0
+            if self.connection_tries < 3:
+                self.logger.info("Connecting to " + self.host + " ... ")
 
-            self.logger.info("Connecting to " + self.host + " ... ")
+            def preexec_fn():
+                # Ignore the SIGINT signal by setting the handler to the standard
+                # signal handler SIG_IGN.
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-            self.ssh_stream = subprocess.Popen(['ssh', 'git@' + self.host, 'stream'],
+            args = ['ssh', 'git@' + self.host, 'stream']
+            self.logger.debug('Open ssh: ' + (' '.join(args)))
+            self.ssh_stream = subprocess.Popen(args, preexec_fn=preexec_fn,
                                                stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.logger.debug('Done: pid=' + str(self.ssh_stream.pid))
 
             self.connected = True
+            self.logger.debug('Call on_connect()')
             self.registered = self.on_connect()
+            self.logger.debug('Got ' + str(self.registered))
 
             if not self.registered:
-                self.initial_connection_tries += 1
+                self.connected = False
+                self.ssh_stream.kill()
+                self.connection_tries += 1
 
                 ssh_err = self.ssh_stream.stderr.read().decode("utf-8").strip()
                 if ssh_err:
                     self.logger.error(ssh_err)
 
                 if 'Permission denied' in ssh_err:
-                    self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
+                    if self.connection_tries < 3:
+                        self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
                     self.close()
                     sys.exit(1)
             else:
-                self.logger.info("Connected.")
-
-        except KeyboardInterrupt:
-            pass
+                if self.connection_tries < 3:
+                    self.logger.info("Connected.")
         except Exception as error:
-            self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
+            self.connected = False
+            self.registered = False
+            if self.connection_tries < 3:
+                self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
             raise
         finally:
-            if self.lock.locked():
-                self.lock.release()
+            self.in_connecting = False
 
     def debug(self):
         sent = len(filter(lambda x: x['_sent'], self.queue))
@@ -222,8 +245,7 @@ class BackendClient:
 
     def end(self):
         self.expect_close = True
-        self.send({'type': 'end'})
-        self.wait_sending_last_messages()
+        self.send_message({'type': 'end'})
         self.wait_for_close()
 
     def connection_error(self, error=None):
@@ -251,50 +273,55 @@ class BackendClient:
         else:
             self.logger.error(message)
 
+        import traceback
+        traceback.print_exc()
+
         self.event_listener.fire('disconnect')
         self.connection_errors += 1
 
     def thread_write(self):
         while self.active:
-            if self.online and self.connected and self.registered:
+            if self.online:
 
-                self.lock.acquire()
-                queue_copy = self.queue[:]
-                self.lock.release()
+                if self.connected and self.registered:
+                    queue_copy = self.queue[:]
 
-                try:
-                    sent_size = 0
-                    sent = []
+                    try:
+                        sent_size = 0
+                        sent = []
 
-                    for message in queue_copy:
-                        if message['_sending'] and not message['_sent']:
-                            message['_sending'] = False
+                        for message in queue_copy:
+                            if message['_sending'] and not message['_sent']:
+                                message['_sending'] = False
 
-                    for message in queue_copy:
-                        if not self.connected or not self.registered:
-                            # additional check to make sure there's no race condition
-                            break
+                        for message in queue_copy:
+                            if not self.connected or not self.registered:
+                                # additional check to make sure there's no race condition
+                                break
 
-                        if not message['_sending'] and not message['_sent']:
-                            size = self.send_message(message)
-                            if size is not False:
-                                sent.append(message)
+                            if not message['_sending'] and not message['_sent']:
+                                size = self.send_message(message)
+                                if size is not False:
+                                    sent.append(message)
 
-                                sent_size += size
-                                if sent_size > 1024 * 1024:
-                                    # not too much at once (max 1MB), so we have time to listen for incoming messages
-                                    break
+                                    sent_size += size
+                                    if sent_size > 1024 * 1024:
+                                        # not too much at once (max 1MB), so we have time to listen for incoming messages
+                                        break
 
-
-                    self.lock.acquire()
-                    for message in sent:
-                        if message in self.queue:
-                            self.queue.remove(message)
-                    self.lock.release()
-
-                finally:
-                    if self.lock.locked():
+                        self.lock.acquire()
+                        for message in sent:
+                            if message in self.queue:
+                                self.queue.remove(message)
                         self.lock.release()
+
+                    finally:
+                        if self.lock.locked():
+                            self.lock.release()
+
+                if not self.connected and not self.expect_close:
+                    if not self.connect():
+                        time.sleep(5)
 
             time.sleep(0.01)
 
@@ -303,7 +330,7 @@ class BackendClient:
             if self.online:
                 if self.connected:
                     try:
-                        messages = self.read() # this blocks, so no lock before
+                        messages = self.read() # this blocks
 
                         if messages is not None:
                             self.handle_messages(messages)
@@ -312,13 +339,13 @@ class BackendClient:
                     except:
                         pass
 
-                if not self.connected and not self.expect_close:
-                    if not self.connect():
-                        time.sleep(5)
-
             time.sleep(0.01)
 
     def wait_sending_last_messages(self):
+        if not self.online or not self.active:
+            self.logger.warning('Requested to wait for all queued messages, but client is inactive or not online.')
+            return
+
         # send all missing messages
         i = 0
         while True:
@@ -328,10 +355,13 @@ class BackendClient:
             i += 1
             time.sleep(0.1)
             if i % 50 == 0:
-                self.logger.warning("[AETROS] we still sync job data. %d messages left. " % (len(self.queue),) + json.dumps(self.queue))
+                self.logger.warning("We still sync job data. %d messages left. " % (len(self.queue),))
 
     def wait_for_close(self):
         self.active = False
+
+        if not self.online:
+            return
 
         if not self.ssh_stream:
             return
@@ -339,25 +369,29 @@ class BackendClient:
         while self.ssh_stream.poll() is None:
             time.sleep(0.1)
 
+        self.online = False
+
     def close(self):
         self.active = False
         self.connected = False
 
         self.event_listener.fire('close')
+
         if self.ssh_stream:
             self.ssh_stream.kill()
 
+        self.online = False
+
     def send(self, message):
-        if not self.active: return
+        if not self.active:
+            raise Exception("Requested to send messages, but client is inactive.")
 
         self.message_id += 1
         message['_id'] = self.message_id
         message['_sending'] = False
         message['_sent'] = False
 
-        self.lock.acquire()
         self.queue.append(message)
-        self.lock.release()
 
     def send_message(self, message):
         if not self.connected:
@@ -370,10 +404,16 @@ class BackendClient:
 
         try:
             self.ssh_stream.stdin.write(msg)
-            self.ssh_stream.stdin.flush()
             message['sent'] = True
+            self.ssh_stream.stdin.flush()
 
             return len(msg)
+        except KeyboardInterrupt:
+            if message['sent']:
+                return len(msg)
+
+            return False
+
         except Exception as error:
             self.connection_error(error)
             return False
@@ -683,6 +723,9 @@ class JobBackend:
         # done means: done, abort or crash method has been called.
         self.ended = False
 
+        # when stop(wait_for_client=True) is called, we sync last messages.
+        # this flag indicates that we are not yet ended completely but in the progress
+        self.stopping = False
         # running means: the syncer client is running.
         self.running = False
         self.monitoring_thread = None
@@ -706,6 +749,9 @@ class JobBackend:
         self.event_listener.on('aborted', self.external_aborted)
         self.event_listener.on('registration', self.on_registration)
         self.event_listener.on('registration_failed', self.on_registration_failed)
+
+        signal.signal(signal.SIGINT, self.on_signint)
+        signal.signal(signal.SIGUSR1, self.on_signusr1)
 
         self.read_config(model_name)
         self.client = JobClient(self.host, self.event_listener, self.logger)
@@ -734,6 +780,26 @@ class JobBackend:
     def on_registration(self, params):
         self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
         self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
+
+    def on_signusr1(self, signal, frame):
+        self.logger.warning("USR1: client (online=%s, active=%s, registered=%s, connected=%s, queue=%d), git (online=%s, active_thread=%s)." % (
+          str(self.client.online),
+          str(self.client.active),
+          str(self.client.registered),
+          str(self.client.connected),
+          len(self.client.queue),
+          str(self.git.online),
+          str(self.git.active_thread),
+        ))
+
+    def on_signint(self, signal, frame):
+        if self.stopping:
+            self.logger.warning('Force stopped')
+            sys.exit(1)
+
+        self.logger.warning('Received SIGINT signal. Press CTRL+C again to force stop. Stopping ...')
+        self.abort(True)
+        sys.exit(1)
 
     def external_aborted(self, params):
         self.ended = True
@@ -962,6 +1028,9 @@ class JobBackend:
             self.set_graph(graph)
 
     def on_shutdown(self):
+        if self.stopping:
+            return
+
         if self.stop_requested:
             if self.stop_requested_force:
                 self.crash('Force stopped.')
@@ -992,27 +1061,27 @@ class JobBackend:
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
+        self.stopping = True
         self.logger.debug("stopping ...")
         self.ended = True
         self.running = False
 
-        self.logger.info("Send last git commits ...")
+        if self.git.online:
+            self.logger.info("Send last git commits ...")
 
-        if wait_for_client:
-            self.logger.debug("client send last messages ...")
-            self.client.wait_sending_last_messages()
+            if wait_for_client:
+                self.logger.debug("client send last %d messages ..." % (len(self.client.queue),))
+                self.client.wait_sending_last_messages()
 
         # store all store_file and stream_file as blob
-        self.logger.debug("git stop ...")
+        self.logger.debug("Git stopping ...")
         self.git.stop()
 
-        # last push to make sure server got all our commits
-        self.git.push()
-
-        # server stores now all store_file and stream_file as blob as well,
-        # wait for connection close to make sure server stored their files in server's git
-        self.logger.debug("client stopping ...")
-        self.client.end()
+        if self.client.online:
+            # server stores now all store_file and stream_file as blob as well,
+            # wait for connection close to make sure server stored their files in server's git
+            self.logger.debug("client stopping ...")
+            self.client.end()
 
         # everything stopped. Server has all blobs, so we add the last progress
         # and do last git push.
@@ -1025,7 +1094,8 @@ class JobBackend:
         # remove the index file
         self.git.clean_up()
 
-        self.logger.info("Stopped %s with last commit %s." % (self.job_id, self.git.git_last_commit))
+        self.stopping = False
+        self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
     def abort(self, wait_for_client_messages=True):
         if not self.running:
@@ -1264,6 +1334,10 @@ class JobBackend:
 
     def commit_file(self, path, title=None):
         path = os.path.expanduser(path).strip()
+
+        path = os.path.relpath(path, os.getcwd())
+        if path.startswith('..'):
+            raise Exception('Can not commit files that are out of the current working directory.')
 
         if './' == path[0: 2]:
             path = path[2:]

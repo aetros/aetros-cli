@@ -82,6 +82,9 @@ class KerasCallback(Callback):
         self.insights_x = None
         self.best_total_accuracy = 0
 
+    def add_insight_layer(self, layer):
+        self.insight_layer.append(layer)
+
     def set_validation_data(self, validation_data, validation_data_size=None):
 
         self.data_validation = validation_data

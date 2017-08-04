@@ -44,6 +44,8 @@ class Git:
 
         self.job_id = None
         self.online = True
+        self.active_thread = False
+        self.thread_push = None
 
         self.git_batch_commit = False
 
@@ -57,19 +59,18 @@ class Git:
 
         # check if its a git repo
         if os.path.exists(self.git_path):
-            p = subprocess.Popen(
-                ['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            p.wait()
-            if p.returncode != 0:
+            out, code, err = self.command_exec(['remote', 'get-url', 'origin'])
+            if code != 0:
                 raise Exception('Given git_path (%s) already exists and does not seem to be a git repository. Error: %s' % (self.git_path, p.stderr.read()))
         else:
-            self.command_exec(['git', 'clone', '--bare', self.git_url, self.git_path])
+            os.makedirs(self.git_path)
+            self.command_exec(['init'])
+            self.command_exec(['remote', 'add', 'origin', self.git_url])
 
         # check if given repo_path is current folder.
         # check its origin remote and see if model_name matches
-        origin_url = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'remote', 'get-url', 'origin'], allowed_to_fail=True).decode('utf-8').strip()
+        origin_url = self.command_exec(['remote', 'get-url', 'origin'], allowed_to_fail=True)[0].decode('utf-8').strip()
+
         if origin_url and ':' + model_name + '.git' not in origin_url:
             raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " % (self.git_path, origin_url, model_name))
 
@@ -90,7 +91,7 @@ class Git:
     def thread_push(self):
         while self.active_thread:
             if self.job_id and self.online and self.active_push:
-                self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', '-f', 'origin', self.ref_head])
+                self.command_exec(['push', '-f', 'origin', self.ref_head])
 
             time.sleep(1)
 
@@ -113,6 +114,9 @@ class Git:
         if isinstance(inputdata, six.string_types):
             inputdata = six.b(inputdata)
 
+        if command[0] != 'git':
+            command = ['git', '--bare', '--git-dir', self.git_path] + command
+
         try:
             p = subprocess.Popen(
                 command,
@@ -129,8 +133,10 @@ class Git:
         except:
             pass
 
+        stderrdata = stderrdata.decode('utf-8')
+
         message = "Git command: " + (' '.join(command)) + ', input=' + input
-        message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata.decode('utf-8'))
+        message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata)
         message += "\nindex: " + self.env['GIT_INDEX_FILE']
 
         self.logger.debug(message)
@@ -139,13 +145,15 @@ class Git:
             if 'Permission denied' in stderrdata:
                 self.logger.warning("You have no permission to push to that model.")
 
+            self.logger.warning(stderrdata)
+
             self.go_offline()
-            return
+            return '', 1, ''
 
         if not interrupted and not allowed_to_fail and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
-        return stdoutdata
+        return stdoutdata, p.returncode, stderrdata
 
     def go_offline(self):
         self.logger.warning("You seem to be offline. We stopped automatic syncing.")
@@ -180,30 +188,30 @@ class Git:
         self.job_id = job_id
 
         self.logger.info("Git fetch job reference %s" % (self.ref_head, ))
-        ref = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'ls-remote', 'origin', self.ref_head])
+        out, code = self.command_exec(['ls-remote', 'origin', self.ref_head])
 
-        if not ref:
+        if code:
             self.logger.error('Could not find the job ' + job_id + ' on the server. Are you online and does the job exist?')
             sys.exit(1)
 
         try:
-            self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'fetch', '-f', '-n', 'origin', self.ref_head+':'+self.ref_head])
+            self.command_exec(['fetch', '-f', '-n', 'origin', self.ref_head+':'+self.ref_head])
         except:
             self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
             raise
 
-        output = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'show-ref', self.ref_head]).decode('utf-8').strip()
+        output = self.command_exec(['show-ref', self.ref_head])[0].decode('utf-8').strip()
         if output:
             self.git_last_commit = output.split(' ')[0]
 
         if not self.git_last_commit:
             raise Exception("Could not load resolve local ref " + self.ref_head + '. You need to be online to start pre-configured jobs.')
 
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'read-tree', self.ref_head])
+        self.command_exec(['read-tree', self.ref_head])
 
         # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
         # actual model.py and dataset scripts.
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'checkout', self.ref_head])
+        self.command_exec(['--work-tree', os.getcwd(), 'checkout', self.ref_head])
 
         self.active_push = True
 
@@ -216,14 +224,18 @@ class Git:
         self.add_file('aetros/job.json', json.dumps(data))
         tree_id = self.write_tree()
 
-        self.job_id = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'commit-tree', '-m', "JOB_CREATED", tree_id]).decode('utf-8').strip()
+        self.job_id = self.command_exec(['commit-tree', '-m', "JOB_CREATED", tree_id])[0].decode('utf-8').strip()
         self.git_last_commit = self.job_id
 
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
+        out, code, err = self.command_exec(['show-ref', self.ref_head], allowed_to_fail=True)
+        if not code:
+            self.logger.warning("Generated job id already exists, because exact same experiment values given. Ref " + self.ref_head)
+
+        self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
 
         # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
         # actual model.py and dataset scripts.
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'checkout', self.ref_head])
+        self.command_exec(['--work-tree', os.getcwd(), 'checkout', self.ref_head])
 
         self.push()
 
@@ -235,7 +247,6 @@ class Git:
         """
         Start the git push thread.
         """
-
         self.active_thread = True
 
         self.thread_push = Thread(target=self.thread_push)
@@ -316,7 +327,7 @@ class Git:
 
         :rtype: str 
         """
-        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '--stdin', '-ttree'], '').decode('utf-8').strip()
+        return self.command_exec(['hash-object', '--stdin', '-ttree'], '')[0].decode('utf-8').strip()
 
     def store_file(self, path, data):
         """
@@ -401,7 +412,7 @@ class Git:
         return Stream(handle, self.client)
 
     def write_blob(self, content):
-        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'hash-object', '-w', "--stdin"], content).decode('utf-8').strip()
+        return self.command_exec(['hash-object', '-w', "--stdin"], content)[0].decode('utf-8').strip()
 
     def add_index(self, tree):
         """
@@ -409,14 +420,14 @@ class Git:
         :param tree: 
         :return: 
         """
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-index', '--add', '--cacheinfo', tree])
+        self.command_exec(['update-index', '--add', '--cacheinfo', tree])
 
     def write_tree(self):
         """
         Writes the current index into a new tree
         :return: the tree sha
         """
-        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'write-tree']).decode('utf-8').strip()
+        return self.command_exec(['write-tree'])[0].decode('utf-8').strip()
 
     def commit_json_file(self, message, path, content):
         return self.commit_file(message, path + '.json', json.dumps(content, default=invalid_json_values))
@@ -455,7 +466,7 @@ class Git:
         if not self.online:
             return
 
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'push', 'origin', self.ref_head])
+        self.command_exec(['push', 'origin', self.ref_head])
 
     def commit_index(self, message):
         """
@@ -465,23 +476,16 @@ class Git:
         """
         tree_id = self.write_tree()
 
-        args = [
-            'git',
-            '--bare',
-            '--git-dir',
-            self.git_path,
-            'commit-tree',
-            tree_id
-        ]
+        args = ['commit-tree', tree_id]
 
         if self.git_last_commit:
             # if not define, it creates a new root commit
             args += ['-p', self.git_last_commit]
 
-        self.git_last_commit = self.command_exec(args, message).decode('utf-8').strip()
+        self.git_last_commit = self.command_exec(args, message)[0].decode('utf-8').strip()
 
         # update ref
-        self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'update-ref', self.ref_head, self.git_last_commit])
+        self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
 
         return self.git_last_commit
 
@@ -489,11 +493,11 @@ class Git:
         if not self.job_id:
             raise Exception('Can not fetch last commit sha, when no job_id is set.')
 
-        output = self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'show-ref', self.ref_head]).decode('utf-8').strip()
-        if output:
-            return output.split(' ')[0]
+        out, code = self.command_exec(['show-ref', self.ref_head])
+        if not code:
+            return out.decode('utf-8').strip().split(' ')[0]
         else:
             raise Exception('Job ref not created yet. ' + self.ref_head)
 
     def git_read(self, path):
-        return self.command_exec(['git', '--bare', '--git-dir', self.git_path, 'cat-file', '-p', self.ref_head+':'+path])
+        return self.command_exec(['cat-file', '-p', self.ref_head+':'+path])

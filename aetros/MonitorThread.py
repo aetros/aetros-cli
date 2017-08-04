@@ -49,6 +49,9 @@ class MonitoringThread(Thread):
 
         minutes_run = (time.time() - self.started) / 60
 
+        if not self.running:
+            return
+
         if self.max_minutes > 0:
             if minutes_run > self.max_minutes:
                 self.job_backend.logger.warning("\nMaxTime of %d/%d reached" % (minutes_run, self.max_minutes))
