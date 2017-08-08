@@ -18,7 +18,7 @@ class RunClient(BackendClient):
         self.model_id = model_id
         self.api_key = api_key
 
-    def on_connect(self):
+    def on_connect(self, reconnect=False):
         self.send_message({'register_run': self.api_key, 'model': self.model_id})
         messages = self.wait_for_at_least_one_message(self.s)
 

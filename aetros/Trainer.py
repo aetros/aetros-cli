@@ -37,7 +37,7 @@ class Trainer():
             self.settings['batchSize'] = self.job_backend.job['config']['batchSize']
 
         if 'epochs' in self.job_backend.job['config']:
-            self.settings['batchSize'] = self.job_backend.job['config']['epochs']
+            self.settings['epochs'] = self.job_backend.job['config']['epochs']
 
         self.lock = Lock()
 

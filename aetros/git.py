@@ -31,21 +31,24 @@ class Git:
     If created in AETROS Trainer, we retrieve the initial configuration of the job using `git pull origin refs/aetros/job/<id>/head` and read
     its `aetros/job.json` blob of the head tree.
     """
-    def __init__(self, logger, client, git_host, git_path, model_name):
+    def __init__(self, logger, client, git_host, storage_dir, model_name):
         self.logger = logger
         self.client = client
         self.git_host = git_host
-        self.git_path = git_path
+        self.storage_dir = storage_dir
         self.model_name = model_name
 
+        self.git_path = os.path.abspath(self.storage_dir + '/' + model_name + '.git')
+
         self.debug = False
+        self.last_push_time = 0
         self.active_push = False
         self.index_path = None
 
         self.job_id = None
         self.online = True
         self.active_thread = False
-        self.thread_push = None
+        self.thread_push_instance = None
 
         self.git_batch_commit = False
 
@@ -71,7 +74,7 @@ class Git:
         # check its origin remote and see if model_name matches
         origin_url = self.command_exec(['remote', 'get-url', 'origin'], allowed_to_fail=True)[0].decode('utf-8').strip()
 
-        if origin_url and ':' + model_name + '.git' not in origin_url:
+        if origin_url and ':' + self.model_name + '.git' not in origin_url:
             raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " % (self.git_path, origin_url, model_name))
 
         if not os.path.exists(self.temp_path):
@@ -79,6 +82,9 @@ class Git:
 
         self.logger.info("Started tracking of files in git %s for remote %s" % (os.path.abspath(self.git_path), origin_url))
 
+    @property
+    def work_tree(self):
+        return os.path.abspath(self.storage_dir + '/' + self.model_name + '/' + self.job_id)
 
     @property
     def env(self):
@@ -91,7 +97,9 @@ class Git:
     def thread_push(self):
         while self.active_thread:
             if self.job_id and self.online and self.active_push:
+                start = time.time()
                 self.command_exec(['push', '-f', 'origin', self.ref_head])
+                self.last_push_time = time.time() - start
 
             time.sleep(1)
 
@@ -108,7 +116,6 @@ class Git:
         return 'git@%s:%s.git' % (self.git_host, self.model_name)
 
     def command_exec(self, command, inputdata=None, allowed_to_fail=False):
-
         interrupted = False
 
         if isinstance(inputdata, six.string_types):
@@ -116,6 +123,10 @@ class Git:
 
         if command[0] != 'git':
             command = ['git', '--bare', '--git-dir', self.git_path] + command
+
+        p = None
+        stdoutdata = ''
+        stderrdata = ''
 
         try:
             p = subprocess.Popen(
@@ -139,7 +150,7 @@ class Git:
         message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata)
         message += "\nindex: " + self.env['GIT_INDEX_FILE']
 
-        self.logger.debug(message)
+        # self.logger.debug(message)
 
         if 'Connection refused' in stderrdata or 'Permission denied' in stderrdata:
             if 'Permission denied' in stderrdata:
@@ -150,7 +161,7 @@ class Git:
             self.go_offline()
             return '', 1, ''
 
-        if not interrupted and not allowed_to_fail and p.returncode != 0:
+        if not interrupted and not allowed_to_fail and p is not None and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
         return stdoutdata, p.returncode, stderrdata
@@ -166,7 +177,7 @@ class Git:
         """
         Makes sure that GIT index file we use per job (by modifying environment variable GIT_INDEX_FILE)
         is not locked and empty. Git.fetch_job uses `git read-tree` to updates this index. For new jobs, we start
-        with an empty index - that's why we deleted it every time.
+        with an empty index - that's why we delete it every time.
         """
         import tempfile
         h, path = tempfile.mkstemp('aetros-git')
@@ -188,7 +199,7 @@ class Git:
         self.job_id = job_id
 
         self.logger.info("Git fetch job reference %s" % (self.ref_head, ))
-        out, code = self.command_exec(['ls-remote', 'origin', self.ref_head])
+        out, code, err = self.command_exec(['ls-remote', 'origin', self.ref_head])
 
         if code:
             self.logger.error('Could not find the job ' + job_id + ' on the server. Are you online and does the job exist?')
@@ -200,20 +211,21 @@ class Git:
             self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
             raise
 
-        output = self.command_exec(['show-ref', self.ref_head])[0].decode('utf-8').strip()
-        if output:
-            self.git_last_commit = output.split(' ')[0]
-
-        if not self.git_last_commit:
-            raise Exception("Could not load resolve local ref " + self.ref_head + '. You need to be online to start pre-configured jobs.')
-
+        self.git_last_commit = job_id
+        self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
         self.command_exec(['read-tree', self.ref_head])
 
-        # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
+        # make sure we have checked out all files we have added until now. Important for simple models, so we have the
         # actual model.py and dataset scripts.
-        self.command_exec(['--work-tree', os.getcwd(), 'checkout', self.ref_head])
+        if not os.path.exists(self.work_tree):
+            os.makedirs(self.work_tree)
+
+        self.logger.info('Git working tree in ' + self.work_tree)
+        self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '.'])
 
         self.active_push = True
+
+        self.push()
 
     def create_job_id(self, data):
         """
@@ -235,7 +247,11 @@ class Git:
 
         # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
         # actual model.py and dataset scripts.
-        self.command_exec(['--work-tree', os.getcwd(), 'checkout', self.ref_head])
+        if not os.path.exists(self.work_tree):
+            os.makedirs(self.work_tree)
+
+        self.logger.info('Git working tree in ' + self.work_tree)
+        self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head])
 
         self.push()
 
@@ -245,13 +261,13 @@ class Git:
 
     def start(self):
         """
-        Start the git push thread.
+        Start the git push thread
         """
         self.active_thread = True
 
-        self.thread_push = Thread(target=self.thread_push)
-        self.thread_push.daemon = True
-        self.thread_push.start()
+        self.thread_push_instance = Thread(target=self.thread_push)
+        self.thread_push_instance.daemon = True
+        self.thread_push_instance.start()
 
     def stop(self):
         """
@@ -354,7 +370,8 @@ class Git:
         open(full_path, 'w+').write(data)
         self.store_files[path] = True
 
-        self.client.send({'type': 'store-blob', 'path': path, 'data': data})
+        if self.online:
+            self.client.send({'type': 'store-blob', 'path': path, 'data': data})
 
     def stream_file(self, path):
         """
@@ -398,18 +415,19 @@ class Git:
         self.streamed_files[path] = handle
 
         class Stream():
-            def __init__(self, handle, client):
+            def __init__(self, handle, git):
                 self.handle = handle
-                self.client = client
+                self.git = git
 
             def write(self, data):
                 try:
                     handle.write(data)
-                    self.client.send({'type': 'stream-blob', 'path': path, 'data': data})
+                    if self.git.online:
+                        self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})
                 except:
                     pass
 
-        return Stream(handle, self.client)
+        return Stream(handle, self)
 
     def write_blob(self, content):
         return self.command_exec(['hash-object', '-w', "--stdin"], content)[0].decode('utf-8').strip()
@@ -463,10 +481,7 @@ class Git:
         """
         Push all changes to origin
         """
-        if not self.online:
-            return
-
-        self.command_exec(['push', 'origin', self.ref_head])
+        self.command_exec(['push', 'origin', '-f', self.ref_head])
 
     def commit_index(self, message):
         """

@@ -66,7 +66,10 @@ class GeneralLogger(object):
         thread.start()
 
     def write(self, message):
-        message = six.text_type(message)
+        try:
+            message = six.text_type(message)
+        except:
+            pass
 
         try:
             self.logger.write(message)

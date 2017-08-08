@@ -42,10 +42,10 @@ class JobModel:
         return self.config['insights']
 
     def get_model_node(self, name):
-        if not isinstance(self.job['config']['layer'], list):
+        if not isinstance(self.layers, list):
             return None
 
-        for nodes in self.job['config']['layer']:
+        for nodes in self.layers:
             if isinstance(nodes, list):
                 for node in nodes:
                     if 'varName' in node and node['varName'] == name:
@@ -56,39 +56,36 @@ class JobModel:
         return None
 
     def get_batch_size(self):
-        return self.job['config']['settings']['batchSize']
+        return self.job['config']['batchSize']
 
     def get_model_h5_path(self):
-        return os.getcwd() + '/aetros-job/%s/%s/model.h5' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros-/model.h5'
 
     def get_layers_path(self):
         return os.getcwd() + '/aetros/layers.json'
 
     def get_dataset_dir(self):
-        return os.getcwd() + '/aetros/datasets'
-
-    def get_base_dir(self):
-        return os.getcwd() + '/aetros-job/%s/%s' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros/dataset'
 
     def get_dataset_downloads_dir(self, dataset):
-        return os.getcwd() + '/aetros-job/datasets/%s/datasets_downloads' % (dataset['id'],)
+        return os.getcwd() + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],)
 
     def get_weights_filepath_latest(self):
-        return os.getcwd() + '/aetros-job/%s/%s/weights_latest.hdf5' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros/weights_latest.hdf5'
 
     def get_weights_filepath_best(self):
-        return os.getcwd() + '/aetros-job/%s/%s/weights_best.hdf5' % (self.model_id, self.id)
+        return os.getcwd() + '/aetros/weights_best.hdf5'
 
     def get_input_names(self):
         names = []
-        for node in self.job['config']['layer'][0]:
+        for node in self.layer[0]:
             names.append(node['varName'])
 
         return names
 
     def get_input_dataset_names(self):
         names = []
-        for node in self.job['config']['layer'][0]:
+        for node in self.layers[0]:
             names.append(node['datasetId'])
 
         return names
@@ -97,7 +94,7 @@ class JobModel:
 
         trainer.input_shape = {}
 
-        for node in self.job['config']['layer'][0]:
+        for node in self.layers[0]:
             size = (int(node['width']), (node['height']))
             if node['inputType'] == 'image':
                 shape = (size[0], size[1], 1)
@@ -244,15 +241,14 @@ class JobModel:
             for owner in os.listdir(self.get_dataset_dir()):
                 path = self.get_dataset_dir() + '/' + owner + '/dataset/'
                 for name in os.listdir(path):
-                    id = owner + '/dataset/' + name
-                    with open(path + name + '.json', 'r') as f:
-                        self._datasets[id] = json.loads(f.read())
+                    if name.endswith('.json'):
+                        id = owner + '/dataset/' + name[:-len('.json')]
+                        with open(path + name, 'r') as f:
+                            self._datasets[id] = json.loads(f.read())
 
         return self._datasets
 
     def get_datasets(self, trainer):
-        datasets_dir = self.get_dataset_dir()
-
         datasets = {}
 
         from aetros.utils import get_option
@@ -263,10 +259,10 @@ class JobModel:
         for layer in self.layers[0]:
             if 'datasetId' in layer and layer['datasetId']:
 
-                dataset = config['datasets'][layer['datasetId']]
+                dataset = self.datasets[layer['datasetId']]
                 if not dataset:
                     raise Exception('Dataset of id %s does not exists. Available %s' % (
-                    layer['datasetId'], ','.join(list(config['datasets'].keys()))))
+                    layer['datasetId'], ','.join(list(self.datasets.keys()))))
 
                 if dataset['type'] == 'images_upload' or dataset['type'] == 'images_search':
 
@@ -304,13 +300,11 @@ class JobModel:
         return datasets
 
     def get_dataset_class_label(self, output_layer, prediction):
-        config = self.job['config']
-
         dataset_id = output_layer['datasetId']
-        dataset = config['datasets'][dataset_id]
+        dataset = self.datasets[dataset_id]
         if not dataset:
             raise Exception('Dataset of id %s does not exists. Available %s' % (
-            dataset_id, ','.join(list(config['datasets'].keys()))))
+            dataset_id, ','.join(list(self.datasets.keys()))))
 
         if 'classes' in self.job['info']:
             return self.job['info']['classes'][prediction]

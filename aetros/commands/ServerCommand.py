@@ -1,11 +1,14 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
+import json
 import os
 import sys
 import time
 import psutil
 import subprocess
+
+import signal
 
 from aetros.logger import GeneralLogger
 
@@ -21,7 +24,7 @@ class ServerClient(BackendClient):
     def configure(self, server_name):
         self.server_name = server_name
 
-    def on_connect(self):
+    def on_connect(self, reconnect=False):
         self.send_message({'type': 'register_server', 'server': self.server_name})
         messages = self.wait_for_at_least_one_message()
 
@@ -31,7 +34,7 @@ class ServerClient(BackendClient):
         message = messages.pop(0)
         if isinstance(message, dict) and 'a' in message:
             if "registration_failed" in message['a']:
-                self.logger.error('Access denied. Try a different secure key.')
+                self.logger.error('Failed. ' + message['reason'])
                 self.close()
                 self.event_listener.fire('failed')
                 return False
@@ -48,6 +51,9 @@ class ServerClient(BackendClient):
                 return True
 
         self.logger.error("Registration of server %s failed due to protocol error." % (self.server_name,))
+        if message:
+            self.logger.error("Got server response: " + json.dumps(message))
+
         return False
 
     def handle_messages(self, messages):
@@ -133,6 +139,8 @@ class ServerCommand:
         event_listener.on('stop-job', self.stop_job)
         event_listener.on('close', self.on_client_close)
 
+        signal.signal(signal.SIGUSR1, self.on_signusr1)
+
         self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
@@ -155,6 +163,9 @@ class ServerCommand:
         except KeyboardInterrupt:
             self.logger.warning('Aborted')
             self.stop()
+
+    def on_signusr1(self):
+        self.logger.info("%d queued, %d running, %d max" % (len(self.queue), len(self.job_processes), self.max_parallel_jobs))
 
     def on_client_close(self, params):
         self.active = False

@@ -104,7 +104,7 @@ class ImageDownloaderWorker(Thread):
 
                         local_image_path = os.path.splitext(local_image_path)[0] + '.jpg'
                         img.save(local_image_path, 'JPEG', quality=quality, optimize=True)
-                except IOError as e:
+                except Exception as e:
                     print(("No valid image found %s" % (local_image_path,)))
                     if os.path.exists(local_image_path):
                         os.remove(local_image_path)
@@ -275,11 +275,9 @@ def read_images_in_memory(job_model, dataset, node, trainer):
         if augmentation:
             train_datagen = get_image_data_augmentor_from_dataset(dataset)
 
-        train = InMemoryDataGenerator(train_datagen, train_images, classes_count, job_model.job[
-                                      'config']['settings']['batchSize'])
+        train = InMemoryDataGenerator(train_datagen, train_images, classes_count, job_model.job['config']['batchSize'])
 
-        test = InMemoryDataGenerator(None, test_images, classes_count, job_model.job[
-                                     'config']['settings']['batchSize'])
+        test = InMemoryDataGenerator(None, test_images, classes_count, job_model.job['config']['batchSize'])
 
         nb_sample = len(train_images)
         trainer.set_info('Dataset size', {'training': nb_sample, 'validation': len(test_images)})
@@ -356,7 +354,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
     train_generator = train_datagen.flow_from_directory(
         directory=os.path.join(dataset_config['path'], 'training'),
         target_size=size,
-        batch_size=job_model.job['config']['settings']['batchSize'],
+        batch_size=job_model.job['config']['batchSize'],
         color_mode='grayscale' if grayscale is True else 'rgb',
         class_mode='categorical')
 

@@ -25,5 +25,5 @@ setup(name='aetros',
                         'Pillow>=4.0.0',
                         'py-cpuinfo==0.2.3',
                         'py-cpuinfo==0.2.3',
-                        'msgpack-python>=0.4'),
+                        'msgpack-python>=0.4.8'),
       packages=find_packages())

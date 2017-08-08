@@ -20,8 +20,10 @@ from .Trainer import Trainer
 from .keras_model_utils import ensure_dir
 import six
 
+
 class GitCommandException(Exception):
     cmd = None
+
 
 def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local', insights=False):
     """
@@ -92,9 +94,7 @@ def start_custom(logger, job_backend):
     if 'sourceGitTree' in config and config['sourceGitTree']:
         git_tree = config['sourceGitTree']
 
-    root = './aetros-job/'
-    if not os.path.exists(root):
-        os.mkdir(root)
+    work_tree = job_backend.git.work_tree
 
     my_env = os.environ.copy()
     if 'PYTHONPATH' not in my_env:
@@ -103,37 +103,35 @@ def start_custom(logger, job_backend):
     my_env['AETROS_MODEL_NAME'] = job_model.model_id
     my_env['AETROS_JOB_ID'] = job_model.id
 
-    repo_path = root + job_model.model_id + '/' + job_model.id
-
-    logger.info("Setting up git repository %s in %s" % (git_url, os.path.abspath(repo_path)))
+    logger.info("Setting up git repository %s in %s" % (git_url, os.path.abspath(work_tree)))
     logger.info("Using git tree of %s " % (git_tree, ))
 
     try:
-        if os.path.exists(repo_path):
+        if os.path.exists(work_tree):
             logger.warning("Path already exists. We delete it.")
-            shutil.rmtree(repo_path)
+            shutil.rmtree(work_tree)
 
-        args = ['git', 'clone', git_url, repo_path]
+        args = ['git', 'clone', git_url, work_tree]
         code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
         if code != 0:
-            raise Exception('Could not clone repository %s to %s' %(git_url, repo_path))
+            raise Exception('Could not clone repository %s to %s' %(git_url, work_tree))
 
         # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
-        git_execute(logger, repo_path, ['fetch', 'origin', git_tree])
-        git_execute(logger, repo_path, ['checkout', git_tree])
+        git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
+        git_execute(logger, work_tree, ['checkout', git_tree])
 
-    except Exception as e:
-        raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, repo_path))
+    except GitCommandException as e:
+        raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
 
     args = (sys.executable, python_script)
     logger.info("Model source code checked out.")
     logger.info("-----------")
     logger.info("-----------")
-    logger.info("Switch working directory to " + repo_path)
+    logger.info("Switch working directory to " + work_tree)
     logger.warning("$ %s %s" % args)
 
     try:
-        subprocess.Popen(args, close_fds=True, env=my_env, cwd=repo_path).wait()
+        subprocess.Popen(args, close_fds=True, env=my_env, cwd=work_tree).wait()
     except KeyboardInterrupt:
         logger.warning("Job aborted.")
         sys.exit(1)
@@ -156,6 +154,8 @@ def start_keras(logger, job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     from keras import backend as K
 
+    os.chdir(job_backend.git.work_tree)
+
     job_backend.start()
 
     # all our shapes are Tensorflow schema. (height, width, channels)
@@ -163,15 +163,6 @@ def start_keras(logger, job_backend):
         K.set_image_dim_ordering('tf')
 
     job_model = job_backend.get_job_model()
-
-    directory = 'aetros-job/%s/%s' % (job_model.model_id, job_model.id)
-    if os.path.exists(directory):
-        shutil.rmtree(directory)
-
-    ensure_dir(directory)
-
-    log = io.open('aetros-job/%s/%s/output.log' % (job_model.model_id, job_model.id), 'w', encoding='utf8')
-    log.truncate()
 
     from .KerasCallback import KerasCallback
     trainer = Trainer(job_backend)
@@ -218,7 +209,6 @@ def start_keras(logger, job_backend):
         if trainer.model:
             trainer.model.stop_training = True
 
-        log.write(six.text_type(traceback.format_exc()))
         logging.error(traceback.format_exc())
 
         job_backend.crash(e)

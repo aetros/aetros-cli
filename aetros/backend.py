@@ -150,6 +150,7 @@ class BackendClient:
         self.external_stopped = False
         self.registered = False
         self.connected = False
+        self.was_connected_once = False
         self.read_unpacker = msgpack.Unpacker(encoding='utf8')
 
     def start(self):
@@ -165,7 +166,7 @@ class BackendClient:
             self.thread_write_instance.daemon = True
             self.thread_write_instance.start()
 
-    def on_connect(self):
+    def on_connect(self, reconnect=False):
         pass
 
     def go_offline(self):
@@ -202,13 +203,15 @@ class BackendClient:
 
             args = ['ssh', 'git@' + self.host, 'stream']
             self.logger.debug('Open ssh: ' + (' '.join(args)))
-            self.ssh_stream = subprocess.Popen(args, preexec_fn=preexec_fn,
+
+            self.ssh_stream = subprocess.Popen(args, preexec_fn=preexec_fn, bufsize=0,
                                                stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
             self.logger.debug('Done: pid=' + str(self.ssh_stream.pid))
 
             self.connected = True
             self.logger.debug('Call on_connect()')
-            self.registered = self.on_connect()
+            self.registered = self.on_connect(self.was_connected_once)
             self.logger.debug('Got ' + str(self.registered))
 
             if not self.registered:
@@ -226,8 +229,10 @@ class BackendClient:
                     self.close()
                     sys.exit(1)
             else:
+                self.was_connected_once = True
                 if self.connection_tries < 3:
                     self.logger.info("Connected.")
+
         except Exception as error:
             self.connected = False
             self.registered = False
@@ -328,7 +333,7 @@ class BackendClient:
     def thread_read(self):
         while self.active:
             if self.online:
-                if self.connected:
+                if self.connected and self.registered:
                     try:
                         messages = self.read() # this blocks
 
@@ -482,19 +487,14 @@ class JobClient(BackendClient):
         self.model_name = model_name
         self.job_id = job_id
 
-    def on_connect(self):
-        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id})
+    def on_connect(self, reconnect=False):
+        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id, 'reconnect': reconnect})
         self.logger.debug("Wait for one client registration")
         messages = self.wait_for_at_least_one_message()
+        self.logger.debug("Got " + str(messages))
 
-        return self.handle_connect_messages(messages)
-
-    def handle_connect_messages(self, messages):
         if not messages:
             reason = self.ssh_stream.stderr.read()
-            if 'Permission denied' in reason:
-                # disable client, as this error can not be fixed during runtime
-                self.active = False
 
             self.event_listener.fire('registration_failed', {'reason': reason})
             return False
@@ -568,7 +568,7 @@ class JobLossChannel:
         self.job_backend = job_backend
         message = {
             'name': self.name,
-            'traces': ['training', 'validation'],
+            'traces': [{'name': 'training'}, {'name': 'validation'}],
             'type': JobChannel.NUMBER,
             'main': True,
             'xaxis': xaxis,
@@ -755,7 +755,7 @@ class JobBackend:
 
         self.read_config(model_name)
         self.client = JobClient(self.host, self.event_listener, self.logger)
-        self.git = Git(self.logger, self.client, self.host, self.git_path, self.model_name)
+        self.git = Git(self.logger, self.client, self.host, self.config['storage_dir'], self.model_name)
 
     @property
     def log_level(self):
@@ -763,10 +763,6 @@ class JobBackend:
             return 'DEBUG'
 
         return 'INFO'
-
-    @property
-    def git_path(self):
-        return self.config['git_path']
 
     @property
     def host(self):
@@ -782,7 +778,10 @@ class JobBackend:
         self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
 
     def on_signusr1(self, signal, frame):
-        self.logger.warning("USR1: client (online=%s, active=%s, registered=%s, connected=%s, queue=%d), git (online=%s, active_thread=%s)." % (
+        self.logger.warning("USR1: backend (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
+                            "connected=%s, queue=%d), git (online=%s, active_thread=%s, last_push_time=%s)." % (
+          str(self.running),
+          str(self.ended),
           str(self.client.online),
           str(self.client.active),
           str(self.client.registered),
@@ -790,6 +789,7 @@ class JobBackend:
           len(self.client.queue),
           str(self.git.online),
           str(self.git.active_thread),
+          str(self.git.last_push_time),
         ))
 
     def on_signint(self, signal, frame):
@@ -863,7 +863,7 @@ class JobBackend:
                     if self.total_epochs - (self.current_epoch - 1) > 0:
                         eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
 
-                    self.set_system_info('eta', eta, True)
+                    self.git.store_file('aetros/job/times/eta.json', str(eta))
 
         self.current_batch = batch
 
@@ -944,12 +944,14 @@ class JobBackend:
 
         on_shutdown.started_jobs.append(self)
 
-        self.logger.debug('Job backend start')
         self.client.configure(self.model_name, self.job_id)
 
         if self.git.online:
+            self.logger.debug('Job backend start')
             self.client.start()
             self.git.start()
+        else:
+            self.logger.debug('Job backend not started, since being online not detected.')
 
         self.git.commit_file('JOB', 'aetros/job/times/started.json', str(time.time()))
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
@@ -1206,8 +1208,6 @@ class JobBackend:
                 self.config.update(self.config['models'][model_name])
 
             del self.config['models']
-
-        self.config['git_path'] = '.aetros/' + model_name + '.git'
 
         self.logger.debug('config: ' + str(self.config))
         # todo, read parameters from script arguments
