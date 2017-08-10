@@ -49,7 +49,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
         except api.ApiError as e:
             if 'Connection refused' in e.reason:
                 logger.error("You are offline")
-            logger.error("Can not start new job without knowing what mode type it is. "
+            logger.error("Can not start new job without knowing what model type it is. "
                          "Use your script directly if its a Python model.")
             raise
 
@@ -152,13 +152,13 @@ def git_execute(logger, repo_path, args):
 
 def start_keras(logger, job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
-    from keras import backend as K
-
     os.chdir(job_backend.git.work_tree)
 
+    job_backend.setup_std_output_logging()
     job_backend.start()
 
     # all our shapes are Tensorflow schema. (height, width, channels)
+    from keras import backend as K
     if hasattr(K, 'set_image_dim_ordering'):
         K.set_image_dim_ordering('tf')
 
@@ -190,10 +190,6 @@ def start_keras(logger, job_backend):
     except KeyboardInterrupt:
         if job_backend.running:
             job_backend.set_status('ABORTED')
-            logger.warning('Early stopping ...')
-
-            if job_backend.stop_requested:
-                logger.warning(' ... stop requested through trainer.')
 
             if trainer.model:
                 trainer.model.stop_training = True
@@ -201,16 +197,12 @@ def start_keras(logger, job_backend):
             job_backend.sync_weights()
             job_backend.abort()
             logger.warning("Aborted.")
+
         sys.exit(1)
-
     except Exception as e:
-        logger.error("Crashed ...")
-
         if trainer.model:
             trainer.model.stop_training = True
 
         logging.error(traceback.format_exc())
-
         job_backend.crash(e)
-        logger.error("Exited.")
         raise

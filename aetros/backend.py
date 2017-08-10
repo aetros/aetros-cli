@@ -4,9 +4,7 @@ from __future__ import print_function
 import subprocess
 import atexit
 import os
-import pprint
 import socket
-import select
 from threading import Thread, Lock
 
 import coloredlogs
@@ -17,21 +15,15 @@ import requests
 import signal
 import json
 import time
-import numpy
-from io import BytesIO
 import six
-import base64
 import PIL.Image
 import sys
 import msgpack
-import zlib
-
-import yaml
 
 from aetros.const import JOB_STATUS
-from aetros.git import Git, GitCommandException
+from aetros.git import Git
 from aetros.logger import GeneralLogger
-from aetros.utils import git, invalid_json_values, read_home_config, read_config
+from aetros.utils import git, invalid_json_values, read_config
 
 try:
     from cStringIO import StringIO
@@ -170,6 +162,10 @@ class BackendClient:
         pass
 
     def go_offline(self):
+        if not self.online:
+            return
+
+        self.event_listener.fire('offline')
         self.online = False
 
     def connect(self):
@@ -179,7 +175,7 @@ class BackendClient:
         Also, when more than 10 connection tries are detected, we delay extra 60 seconds.
         """
         if self.connection_tries > 10:
-            # We only try in 5 minutes again
+            # We only try in 1 minute again
             time.sleep(60)
 
         if self.in_connecting:
@@ -193,9 +189,6 @@ class BackendClient:
             if self.connected or not self.online:
                 return True
 
-            if self.connection_tries < 3:
-                self.logger.info("Connecting to " + self.host + " ... ")
-
             def preexec_fn():
                 # Ignore the SIGINT signal by setting the handler to the standard
                 # signal handler SIG_IGN.
@@ -208,30 +201,33 @@ class BackendClient:
                                                stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
             self.logger.debug('Done: pid=' + str(self.ssh_stream.pid))
+            messages = self.wait_for_at_least_one_message()
+            stderrdata = ''
 
-            self.connected = True
-            self.logger.debug('Call on_connect()')
-            self.registered = self.on_connect(self.was_connected_once)
-            self.logger.debug('Got ' + str(self.registered))
+            if not messages:
+                stderrdata = self.ssh_stream.stderr.read().decode("utf-8").strip()
+            else:
+                self.connected = True
+                self.registered = self.on_connect(self.was_connected_once)
 
             if not self.registered:
                 self.connected = False
                 self.ssh_stream.kill()
                 self.connection_tries += 1
+                self.go_offline()
 
-                ssh_err = self.ssh_stream.stderr.read().decode("utf-8").strip()
-                if ssh_err:
-                    self.logger.error(ssh_err)
+                if stderrdata:
+                    if 'Connection refused' not in stderrdata and 'Permission denied' not in stderrdata:
+                        self.logger.error(stderrdata)
 
-                if 'Permission denied' in ssh_err:
+                if 'Permission denied' in stderrdata:
                     if self.connection_tries < 3:
                         self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
+
                     self.close()
                     sys.exit(1)
             else:
                 self.was_connected_once = True
-                if self.connection_tries < 3:
-                    self.logger.info("Connected.")
 
         except Exception as error:
             self.connected = False
@@ -241,6 +237,8 @@ class BackendClient:
             raise
         finally:
             self.in_connecting = False
+
+        return self.connected
 
     def debug(self):
         sent = len(filter(lambda x: x['_sent'], self.queue))
@@ -279,7 +277,7 @@ class BackendClient:
             self.logger.error(message)
 
         import traceback
-        traceback.print_exc()
+        self.logger.debug(traceback.format_exc())
 
         self.event_listener.fire('disconnect')
         self.connection_errors += 1
@@ -287,7 +285,6 @@ class BackendClient:
     def thread_write(self):
         while self.active:
             if self.online:
-
                 if self.connected and self.registered:
                     queue_copy = self.queue[:]
 
@@ -347,13 +344,9 @@ class BackendClient:
             time.sleep(0.01)
 
     def wait_sending_last_messages(self):
-        if not self.online or not self.active:
-            self.logger.warning('Requested to wait for all queued messages, but client is inactive or not online.')
-            return
-
         # send all missing messages
         i = 0
-        while True:
+        while self.registered:
             if len(self.queue) == 0:
                 break
 
@@ -389,7 +382,8 @@ class BackendClient:
 
     def send(self, message):
         if not self.active:
-            raise Exception("Requested to send messages, but client is inactive.")
+            return
+            # raise Exception("Requested to send messages, but client is inactive.")
 
         self.message_id += 1
         message['_id'] = self.message_id
@@ -494,9 +488,7 @@ class JobClient(BackendClient):
         self.logger.debug("Got " + str(messages))
 
         if not messages:
-            reason = self.ssh_stream.stderr.read()
-
-            self.event_listener.fire('registration_failed', {'reason': reason})
+            self.event_listener.fire('registration_failed', {'reason': 'No answer received.'})
             return False
 
         message = messages.pop(0)
@@ -749,8 +741,10 @@ class JobBackend:
         self.event_listener.on('aborted', self.external_aborted)
         self.event_listener.on('registration', self.on_registration)
         self.event_listener.on('registration_failed', self.on_registration_failed)
+        self.event_listener.on('offline', self.on_client_offline)
 
         signal.signal(signal.SIGINT, self.on_signint)
+        signal.signal(signal.SIGTERM, self.on_signint)
         signal.signal(signal.SIGUSR1, self.on_signusr1)
 
         self.read_config(model_name)
@@ -773,9 +767,18 @@ class JobBackend:
         if 'Permission denied' in params['reason']:
             self.logger.warning("Make sure you have saved your ssh pub key in your AETROS Trainer user account.")
 
+    def on_client_offline(self, params):
+        self.logger.warning("Could not establish a connection. We stopped automatic syncing.")
+        self.logger.warning("You can publish later this job to AETROS Trainer using following command in this folder.")
+        self.logger.warning("$ aetros publish-job " + self.model_name + " " + self.git.ref_head)
+        self.git.online = False
+
     def on_registration(self, params):
         self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
         self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
+
+        self.logger.debug('Git backend start')
+        self.git.start()
 
     def on_signusr1(self, signal, frame):
         self.logger.warning("USR1: backend (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
@@ -945,11 +948,9 @@ class JobBackend:
         on_shutdown.started_jobs.append(self)
 
         self.client.configure(self.model_name, self.job_id)
-
         if self.git.online:
             self.logger.debug('Job backend start')
             self.client.start()
-            self.git.start()
         else:
             self.logger.debug('Job backend not started, since being online not detected.')
 
@@ -1068,9 +1069,11 @@ class JobBackend:
         self.ended = True
         self.running = False
 
-        if self.git.online:
-            self.logger.info("Send last git commits ...")
+        info_to_send_job = not wait_for_client
+        if not info_to_send_job:
+            info_to_send_job = len(self.client.queue) > 0 and not self.client.registered
 
+        if self.git.online:
             if wait_for_client:
                 self.logger.debug("client send last %d messages ..." % (len(self.client.queue),))
                 self.client.wait_sending_last_messages()
@@ -1091,7 +1094,12 @@ class JobBackend:
 
         # both sides should have same blobs, so we do now our final push
         self.logger.debug("git last push ...")
-        self.git.push()
+        successful_push = self.git.push()
+
+        if not successful_push and info_to_send_job:
+            self.logger.warning("Not all job information has been uploaded.")
+            self.logger.warning("Please run following command to make sure your job is stored on the server.")
+            self.logger.warning("$ aetros publish-job " + self.model_name + ' ' + self.git.ref_head)
 
         # remove the index file
         self.git.clean_up()
@@ -1180,7 +1188,6 @@ class JobBackend:
             self.job['config']['insights'] = False
 
         self.git.create_job_id(self.job)
-        self.git.push()
         self.job['id'] = self.job_id
 
         self.logger.info("Job created " + self.model_name + '/' + self.job_id + " with git ref " + self.git.ref_head)

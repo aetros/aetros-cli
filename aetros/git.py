@@ -1,6 +1,8 @@
 import json
 import os
 import subprocess
+
+import signal
 import six
 from threading import Thread, Lock
 
@@ -80,7 +82,7 @@ class Git:
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
 
-        self.logger.info("Started tracking of files in git %s for remote %s" % (os.path.abspath(self.git_path), origin_url))
+        self.logger.info("Started tracking of job files in git %s for remote %s" % (os.path.abspath(self.git_path), origin_url))
 
     @property
     def work_tree(self):
@@ -128,9 +130,14 @@ class Git:
         stdoutdata = ''
         stderrdata = ''
 
+        def preexec_fn():
+            # Ignore the SIGINT signal by setting the handler to the standard
+            # signal handler SIG_IGN.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+
         try:
             p = subprocess.Popen(
-                command,
+                command, preexec_fn=preexec_fn, bufsize=0,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
             )
 
@@ -138,13 +145,17 @@ class Git:
         except KeyboardInterrupt:
             interrupted = True
 
-        input = 'binary'
+        input = ''
+        stderrdata = ''
+
         try:
             input = inputdata.decode('utf-8')
         except:
-            pass
+            input = 'binary'
 
-        stderrdata = stderrdata.decode('utf-8')
+        try:
+            stderrdata = stderrdata.decode('utf-8')
+        except: pass
 
         message = "Git command: " + (' '.join(command)) + ', input=' + input
         message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata)
@@ -156,22 +167,14 @@ class Git:
             if 'Permission denied' in stderrdata:
                 self.logger.warning("You have no permission to push to that model.")
 
-            self.logger.warning(stderrdata)
-
-            self.go_offline()
+            self.online = False
+            self.logger.error(stderrdata)
             return '', 1, ''
 
         if not interrupted and not allowed_to_fail and p is not None and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
         return stdoutdata, p.returncode, stderrdata
-
-    def go_offline(self):
-        self.logger.warning("You seem to be offline. We stopped automatic syncing.")
-        self.logger.warning("You can publish later your jobs to AETROS Trainer using following command in this folder.")
-        self.logger.warning("$ aetros publish-job " + self.model_name + " " + self.ref_head)
-        self.online = False
-        self.client.go_offline()
 
     def prepare_index_file(self):
         """
@@ -220,12 +223,7 @@ class Git:
         if not os.path.exists(self.work_tree):
             os.makedirs(self.work_tree)
 
-        self.logger.info('Git working tree in ' + self.work_tree)
         self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '.'])
-
-        self.active_push = True
-
-        self.push()
 
     def create_job_id(self, data):
         """
@@ -250,12 +248,7 @@ class Git:
         if not os.path.exists(self.work_tree):
             os.makedirs(self.work_tree)
 
-        self.logger.info('Git working tree in ' + self.work_tree)
         self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head])
-
-        self.push()
-
-        self.active_push = True
 
         return self.job_id
 
@@ -263,7 +256,11 @@ class Git:
         """
         Start the git push thread
         """
+        if self.active_thread:
+            return
+
         self.active_thread = True
+        self.active_push = True
 
         self.thread_push_instance = Thread(target=self.thread_push)
         self.thread_push_instance.daemon = True
@@ -481,7 +478,11 @@ class Git:
         """
         Push all changes to origin
         """
-        self.command_exec(['push', 'origin', '-f', self.ref_head])
+        try:
+            self.command_exec(['push', 'origin', '-f', self.ref_head])
+            return True
+        except:
+            return False
 
     def commit_index(self, message):
         """
