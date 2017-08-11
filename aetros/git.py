@@ -40,7 +40,7 @@ class Git:
         self.storage_dir = storage_dir
         self.model_name = model_name
 
-        self.git_path = os.path.abspath(self.storage_dir + '/' + model_name + '.git')
+        self.git_path = self.storage_dir + '/' + model_name + '.git'
 
         self.debug = False
         self.last_push_time = 0
@@ -82,11 +82,11 @@ class Git:
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
 
-        self.logger.info("Started tracking of job files in git %s for remote %s" % (os.path.abspath(self.git_path), origin_url))
+        self.logger.info("Started tracking of job files in git %s for remote %s" % (self.git_path, origin_url))
 
     @property
     def work_tree(self):
-        return os.path.abspath(self.storage_dir + '/' + self.model_name + '/' + self.job_id)
+        return self.storage_dir + '/' + self.model_name + '/' + self.job_id
 
     @property
     def env(self):
@@ -98,12 +98,17 @@ class Git:
 
     def thread_push(self):
         while self.active_thread:
-            if self.job_id and self.online and self.active_push:
-                start = time.time()
-                self.command_exec(['push', '-f', 'origin', self.ref_head])
-                self.last_push_time = time.time() - start
+            try:
+                if self.job_id and self.online and self.active_push:
+                    start = time.time()
+                    self.command_exec(['push', '-f', 'origin', self.ref_head])
+                    self.last_push_time = time.time() - start
 
-            time.sleep(1)
+                time.sleep(1)
+            except SystemExit:
+                return
+            except KeyboardInterrupt:
+                return
 
     @property
     def temp_path(self):
@@ -133,6 +138,7 @@ class Git:
         def preexec_fn():
             # Ignore the SIGINT signal by setting the handler to the standard
             # signal handler SIG_IGN.
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
             signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         try:
@@ -157,11 +163,10 @@ class Git:
             stderrdata = stderrdata.decode('utf-8')
         except: pass
 
-        message = "Git command: " + (' '.join(command)) + ', input=' + input
-        message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata)
-        message += "\nindex: " + self.env['GIT_INDEX_FILE']
+        message = "Git command: " + (' '.join(command))
+        # message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata)
 
-        # self.logger.debug(message)
+        self.logger.debug(message)
 
         if 'Connection refused' in stderrdata or 'Permission denied' in stderrdata:
             if 'Permission denied' in stderrdata:
@@ -223,6 +228,7 @@ class Git:
         if not os.path.exists(self.work_tree):
             os.makedirs(self.work_tree)
 
+        self.logger.info('Working directory in ' + self.work_tree)
         self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '.'])
 
     def create_job_id(self, data):
@@ -276,7 +282,7 @@ class Git:
         self.active_thread = False
 
         with self.batch_commit('STREAM_END'):
-            for path, handle in six.iteritems(self.streamed_files):
+            for path, handle in six.iteritems(self.streamed_files.copy()):
                 full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
                 handle.seek(0)
                 self.commit_file(path, path, handle.read())
@@ -285,7 +291,7 @@ class Git:
             self.streamed_files = {}
 
         with self.batch_commit('STORE_END'):
-            for path, bar in six.iteritems(self.store_files):
+            for path, bar in six.iteritems(self.store_files.copy()):
                 full_path = self.temp_path + '/store-blob/' + self.job_id + '/' + path
                 self.commit_file(path, path, open(full_path, 'r').read())
                 os.unlink(full_path)

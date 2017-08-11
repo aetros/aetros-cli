@@ -51,10 +51,10 @@ def download_image(url, path):
 
 class ImageDownloaderWorker(Thread):
 
-    def __init__(self, q, trainer, dataset, max, images, controller):
+    def __init__(self, q, progress, dataset, max, images, controller):
         Thread.__init__(self)
         self.q = q
-        self.trainer = trainer
+        self.progress = progress
         self.dataset = dataset
         self.max = max
         self.images = images
@@ -78,9 +78,7 @@ class ImageDownloaderWorker(Thread):
         if 'id' not in image:
             return
 
-        local_name = image['id']
-        local_image_path = '%s/%s' % (
-            self.trainer.job_model.get_dataset_downloads_dir(self.dataset), local_name)
+        local_image_path = message[2]
 
         try:
             ensure_dir(os.path.dirname(local_image_path))
@@ -104,15 +102,18 @@ class ImageDownloaderWorker(Thread):
 
                         local_image_path = os.path.splitext(local_image_path)[0] + '.jpg'
                         img.save(local_image_path, 'JPEG', quality=quality, optimize=True)
+
+                except SystemExit:
+                    self.controller['running'] = False
+                except KeyboardInterrupt:
+                    self.controller['running'] = False
                 except Exception as e:
                     print(("No valid image found %s" % (local_image_path,)))
                     if os.path.exists(local_image_path):
                         os.remove(local_image_path)
-                except KeyboardInterrupt:
-                    self.controller['running'] = False
 
         self.images[image['id']] = local_image_path
-        self.trainer.set_status('LOAD IMAGE %d/%d' % (len(self.images), self.max))
+        self.progress.advance(1)
 
 # class to read all images in the ram at once
 
@@ -205,7 +206,6 @@ def read_images_in_memory(job_model, dataset, node, trainer):
 
     dataset_config = dataset['config']
     controller = {'running': True}
-    config = dataset['config']  # TODO: config not used
     q = Queue(concurrent)
 
     result = {
@@ -284,11 +284,11 @@ def read_images_in_memory(job_model, dataset, node, trainer):
         trainer.set_generator_training_nb(nb_sample)
         trainer.set_generator_validation_nb(len(test_images))
 
-        print(("Found %d classes, %d images (%d in training [%saugmented], %d in validation). Read all images into memory from %s" %
+        trainer.logger.info(("Found %d classes, %d images (%d in training [%saugmented], %d in validation). Read all images into memory from %s" %
                (classes_count, max, len(train_images), 'not ' if augmentation is False else '', len(test_images), path)))
 
         if classes_count == 0:
-            print("Could not find any classes. Does the directory contains images?")
+            trainer.logger.warning("Could not find any classes. Does the directory contains images?")
             sys.exit(1)
 
         trainer.output_size = classes_count
@@ -336,7 +336,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
         grayscale = True
 
     dataset_config = dataset['config']
-    print(("Generate image iterator in folder %s " % (dataset_config['path'],)))
+    trainer.logger.info(("Generate image iterator in folder %s " % (dataset_config['path'],)))
 
     augmentation = bool(get_option(dataset_config, 'augmentation', False))
 
@@ -404,11 +404,11 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
     trainer.set_generator_validation_nb(validation_samples)
     trainer.set_generator_training_nb(train_samples)
 
-    print(("Found %d classes, %d images (%d in training [%saugmented], %d in validation) in %s " %
+    trainer.logger.info(("Found %d classes, %d images (%d in training [%saugmented], %d in validation) in %s " %
            (len(classes), validation_samples + train_samples, train_samples, 'not ' if augmentation is False else '', validation_samples, dataset_config['path'])))
 
     if trainer.output_size == 0:
-        print("Could not find any classes. Does the directory contains images?")
+        trainer.logger.warning("Could not find any classes. Does the directory contains images?")
         sys.exit(1)
 
     pprint(train_generator.class_indices)
@@ -438,7 +438,7 @@ def get_images(job_model, dataset, node, trainer):
     ensure_dir(dir)
 
     if 'classes' not in config or not config['classes']:
-        print("Dataset %s does not contain any classes." % (dataset['id'],))
+        trainer.logger.warning("Dataset %s does not contain any classes." % (dataset['id'],))
         return {
             'X_train': np.array([]),
             'Y_train': np.array([]),
@@ -487,19 +487,19 @@ def get_images(job_model, dataset, node, trainer):
     if need_download:
 
         if had_previous:
-            print("Reset dataset and re-download images to " + dir)
+            trainer.logger.info("Reset dataset and re-download images to " + dir)
             if classes_changed:
-                print(" .. because classes changed in", meta['classes_md5'], classes_md5, meta_information_file)
+                trainer.logger.info(" .. because classes changed in", meta['classes_md5'], classes_md5, meta_information_file)
             if config_changed:
-                print(" .. because settings changed in", meta_information_file)
+                trainer.logger.info(" .. because settings changed in", meta_information_file)
         else:
-            print("Download images to " + dir)
+            trainer.logger.info("Download images to " + dir)
 
         resize = bool(get_option(config, 'resize', True))
         if resize:
             resizeSize = (int(get_option(config, 'resizeWidth', 64)),
                           int(get_option(config, 'resizeHeight', 64)))
-            print(" .. with resizing to %dx%d " % resizeSize)
+            trainer.logger.info(" .. with resizing to %dx%d " % resizeSize)
 
         # # we need to donwload all images
         shutil.rmtree(dataset_path)
@@ -509,14 +509,19 @@ def get_images(job_model, dataset, node, trainer):
             for category in classes:
                 max += len(category['images'])
 
+            progress = trainer.job_backend.create_progress('dataset-download-images', max)
+            progress.label('Download dataset images')
+
             for i in range(concurrent):
-                t = ImageDownloaderWorker(q, trainer, dataset, max, images, controller)
+                t = ImageDownloaderWorker(q, progress, dataset, max, images, controller)
                 t.daemon = True
                 t.start()
 
             for category_idx, category in enumerate(classes):
                 for image in category['images']:
-                    q.put([image, category_idx])
+                    local_name = image['id']
+                    local_path = '%s/%s' % (trainer.job_model.get_dataset_downloads_dir(dataset), local_name)
+                    q.put([image, category_idx, local_path])
 
             q.join()
             controller['running'] = False
@@ -550,15 +555,14 @@ def get_images(job_model, dataset, node, trainer):
                     'classes_md5': classes_md5,
                     'config': config
                 }
-                print("save meta.json", classes_md5)
                 json.dump(meta, f, default=invalid_json_values)
 
         except KeyboardInterrupt:
             controller['running'] = False
             sys.exit(1)
     else:
-        print("Downloaded images up2date in " + dir)
-        print(" - Remove this directory if you want to re-download all images of your dataset and re-shuffle training/validation images.")
+        trainer.logger.info("Downloaded images up2date in " + dir)
+        trainer.logger.info(" - Remove this directory if you want to re-download all images of your dataset and re-shuffle training/validation images.")
 
     trainer.output_size = len(classes)
 

@@ -100,8 +100,5 @@ def job_prepare(job_model):
     """
 
     path = 'aetros-job/%s/%s' % (job_model.model_id, job_model.id)
-    datasets_path = path + '/datasets'
-    config = job_model.config
 
     ensure_dir(path)
-    ensure_dir(datasets_path)

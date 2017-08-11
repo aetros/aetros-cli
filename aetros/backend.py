@@ -316,7 +316,10 @@ class BackendClient:
                             if message in self.queue:
                                 self.queue.remove(message)
                         self.lock.release()
-
+                    except SystemExit:
+                        return
+                    except KeyboardInterrupt:
+                        return
                     finally:
                         if self.lock.locked():
                             self.lock.release()
@@ -338,6 +341,10 @@ class BackendClient:
                             self.handle_messages(messages)
 
                         continue
+                    except SystemExit:
+                        return
+                    except KeyboardInterrupt:
+                        return
                     except:
                         pass
 
@@ -736,6 +743,8 @@ class JobBackend:
         self.stop_requested_force = False
 
         self.kpi_channel = None
+        self.registered = None
+        self.progresses = {}
 
         self.event_listener.on('stop', self.external_stop)
         self.event_listener.on('aborted', self.external_aborted)
@@ -746,6 +755,8 @@ class JobBackend:
         signal.signal(signal.SIGINT, self.on_signint)
         signal.signal(signal.SIGTERM, self.on_signint)
         signal.signal(signal.SIGUSR1, self.on_signusr1)
+
+        self.pid = os.getpid()
 
         self.read_config(model_name)
         self.client = JobClient(self.host, self.event_listener, self.logger)
@@ -774,11 +785,15 @@ class JobBackend:
         self.git.online = False
 
     def on_registration(self, params):
-        self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
-        self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
+        if not self.registered:
+            self.registered = True
+            self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
+            self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
 
-        self.logger.debug('Git backend start')
-        self.git.start()
+            self.logger.debug('Git backend start')
+            self.git.start()
+        else:
+            self.logger.info("Successfully reconnected.")
 
     def on_signusr1(self, signal, frame):
         self.logger.warning("USR1: backend (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
@@ -795,24 +810,42 @@ class JobBackend:
           str(self.git.last_push_time),
         ))
 
-    def on_signint(self, signal, frame):
-        if self.stopping:
+    def on_signint(self, sig, frame):
+        if self.stop_requested:
+            self.stop_requested_force = True
             self.logger.warning('Force stopped')
             sys.exit(1)
+
+        self.stop_requested = True
 
         self.logger.warning('Received SIGINT signal. Press CTRL+C again to force stop. Stopping ...')
         self.abort(True)
         sys.exit(1)
 
     def external_aborted(self, params):
+        """
+        Immediately abort the job
+        """
         self.ended = True
         self.running = False
 
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
+        self.git.stop()
         self.client.close()
 
+        sys.exit(1)
+
+    def external_stop(self, params):
+        """
+        Stop through GUI
+        """
+        if self.stop_requested:
+            return
+
+        self.logger.warning("Sent SIGINT through AETROS Trainer.")
+        self.stop_requested_force = params
         os.kill(os.getpid(), signal.SIGINT)
 
     def setup_std_output_logging(self):
@@ -821,15 +854,6 @@ class JobBackend:
         """
         sys.stdout = self.general_logger_stdout
         sys.stderr = self.general_logger_error
-
-    def external_stop(self, params):
-        if self.stop_requested:
-            return
-
-        self.logger.warning("Sent SIGINT through AETROS Trainer.")
-        self.stop_requested = True
-        self.stop_requested_force = params
-        os.kill(os.getpid(), signal.SIGINT)
 
     def batch(self, batch, total, size=None):
         time_diff = time.time() - self.last_batch_time
@@ -860,11 +884,13 @@ class JobBackend:
                     eta = 0
                     if batch < total:
                         # time to end this epoch
-                        eta += (total - batch) / self.batches_per_second
+                        if self.batches_per_second != 0:
+                            eta = (total - batch) / self.batches_per_second
 
                     # time until all epochs are done
                     if self.total_epochs - (self.current_epoch - 1) > 0:
-                        eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
+                        if epochs_per_second != 0:
+                            eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
 
                     self.git.store_file('aetros/job/times/eta.json', str(eta))
 
@@ -875,6 +901,79 @@ class JobBackend:
         if 'settings' in self.job['config']:
             return self.job['config']['settings']
         return {}
+
+    def create_progress(self, id, total_steps=100):
+        if id in self.progresses:
+            return self.progresses[id]
+
+        class Controller():
+            def __init__(self, git, id, total_steps=100):
+                self.started = False
+                self.stopped = False
+                self.lock = Lock()
+                self.id = id
+                self.step = 0
+                self.steps = total_steps
+                self.eta = 0
+                self.last_call = 0
+                self.git = git
+                self._label = id
+
+                self.store()
+
+            def store(self):
+                info = {
+                    'label': self._label,
+                    'started': self.started,
+                    'stopped': self.stopped,
+                    'step': self.step,
+                    'steps': self.steps,
+                    'eta': self.eta,
+                }
+                self.git.store_file('aetros/job/progress/' + self.id + '.json', json.dumps(info))
+
+            def label(self, label):
+                self._label = label
+                self.store()
+
+            def start(self):
+                if self.started is not False:
+                    return
+
+                self.started = time.time()
+                self.last_call = time.time()
+                self.store()
+
+            def stop(self):
+                if self.stopped is not False:
+                    return
+
+                self.stopped = time.time()
+                self.store()
+
+            def advance(self, steps=1):
+                if steps <= 0:
+                    return
+
+                self.lock.acquire()
+                if self.started is False:
+                    self.start()
+
+                took = (time.time() - self.last_call) / steps
+
+                self.last_call = time.time()
+                self.step += steps
+                self.eta = took * (self.steps - self.step)
+
+                if self.step >= self.steps:
+                    self.stop()
+
+                self.store()
+                self.lock.release()
+
+        self.progresses[id] = Controller(self.git, id, total_steps)
+
+        return self.progresses[id]
 
     def progress(self, epoch, total):
         self.current_epoch = epoch
@@ -981,9 +1080,12 @@ class JobBackend:
             pass
 
     def early_stop(self):
+        """
+        Stop when a limitatin is reached (like maxEpoch, maxtime)
+        """
         self.in_early_stop = True
         self.done()
-        os.kill(os.getpid(), signal.SIGINT)
+        os.kill(self.pid, signal.SIGINT)
 
     def start_monitoring(self):
         if not self.monitoring_thread:
@@ -1275,20 +1377,23 @@ class JobBackend:
         # so download the ref and check it out.
         self.git.fetch_job(job_id)
 
-        if not os.path.exists('aetros/job.json'):
+        if not os.path.exists(self.git.work_tree + '/aetros/job.json'):
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
-        with open('aetros/job.json') as f:
+        with open(self.git.work_tree + '/aetros/job.json') as f:
             self.job = json.loads(f.read())
+
+        print(str(self.job))
 
         if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
 
         self.job['id'] = job_id
 
-        try:
-            progress = float(self.git.git_read('aetros/job/status/progress.json').decode('utf-8'))
-        except:
+        if os.path.exists(self.git.work_tree + '/aetros/job/status/progress.json'):
+            with open(self.git.work_tree + '/aetros/job/status/progress.json', 'r') as f:
+                progress = float(f.read().decode('utf-8'))
+        else:
             progress = 0
 
         if progress >= 2:
@@ -1296,8 +1401,6 @@ class JobBackend:
             self.logger.error('You can alternatively reset the git reference to the root commit and force push that ref to reset the job.')
             sys.exit(1)
 
-        self.logger.info("Progress " + str(progress))
-        self.logger.info("Job loaded " + self.model_name + '/' + self.job_id)
         self.logger.debug(str(self.job))
 
     def get_job_model(self):
@@ -1310,7 +1413,7 @@ class JobBackend:
 
         from aetros.JobModel import JobModel
 
-        return JobModel(self.job_id, self.job)
+        return JobModel(self.job_id, self.job, self.config['storage_dir'])
 
     def sync_weights(self):
         self.job_add_status('status', 'SYNC WEIGHTS')

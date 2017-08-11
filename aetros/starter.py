@@ -103,7 +103,7 @@ def start_custom(logger, job_backend):
     my_env['AETROS_MODEL_NAME'] = job_model.model_id
     my_env['AETROS_JOB_ID'] = job_model.id
 
-    logger.info("Setting up git repository %s in %s" % (git_url, os.path.abspath(work_tree)))
+    logger.info("Setting up git repository %s in %s" % (git_url, work_tree))
     logger.info("Using git tree of %s " % (git_tree, ))
 
     try:
@@ -167,12 +167,6 @@ def start_keras(logger, job_backend):
     from .KerasCallback import KerasCallback
     trainer = Trainer(job_backend)
     keras_logger = KerasCallback(job_backend, job_backend.general_logger_stdout)
-
-    def ctrlc(sig, frame):
-        logger.warning(("signal %s received\n" % str(sig)))
-        raise KeyboardInterrupt("CTRL-C!")
-
-    signal.signal(signal.SIGINT, ctrlc)
 
     try:
         logger.info("Setup simple job")

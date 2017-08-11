@@ -41,6 +41,10 @@ class Trainer():
 
         self.lock = Lock()
 
+    @property
+    def logger(self):
+        return self.job_backend.logger
+
     def set_model(self, model):
         self.model = model
 

@@ -19,9 +19,10 @@ class JobModel:
     """
     :type job : dict
     """
-    def __init__(self, id, job):
+    def __init__(self, id, job, storage_dir):
         self.id = id
         self.job = job
+        self.storage_dir = storage_dir
         self._layers = None
         self._datasets = None
 
@@ -59,7 +60,7 @@ class JobModel:
         return self.job['config']['batchSize']
 
     def get_model_h5_path(self):
-        return os.getcwd() + '/aetros-/model.h5'
+        return os.getcwd() + '/aetros/model.h5'
 
     def get_layers_path(self):
         return os.getcwd() + '/aetros/layers.json'
@@ -68,7 +69,7 @@ class JobModel:
         return os.getcwd() + '/aetros/dataset'
 
     def get_dataset_downloads_dir(self, dataset):
-        return os.getcwd() + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],)
+        return self.storage_dir + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],)
 
     def get_weights_filepath_latest(self):
         return os.getcwd() + '/aetros/weights_latest.hdf5'

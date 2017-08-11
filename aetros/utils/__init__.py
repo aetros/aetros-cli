@@ -33,10 +33,12 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
 
     config = {
         'host': os.getenv('API_HOST') or 'trainer.aetros.com',
-        'storage_dir': '.aetros'
+        'storage_dir': '~/.aetros'
     }
 
     config.update(custom_config)
+
+    config['storage_dir'] = os.path.abspath(os.path.expanduser(config['storage_dir']))
 
     return config
 
