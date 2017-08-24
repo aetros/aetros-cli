@@ -19,6 +19,17 @@ def get_option(dict, key, default=None, type=None):
     return dict[key]
 
 
+def unpack_full_job_id(full_id):
+    if full_id.count('/') < 2:
+        raise Exception('Not a valid full job id: ' + full_id)
+
+    owner = full_id[0:full_id.index('/')]
+    model = full_id[full_id.index('/') + 1:full_id.rindex('/')]
+    id = full_id[full_id.rindex('/')+1:]
+
+    return [owner, model, id]
+
+
 def read_home_config(path = '~/.aetros.yml', logger=None):
     path = os.path.expanduser(path)
     custom_config = {}

@@ -13,7 +13,7 @@ import sys
 import traceback
 
 from aetros import api
-from aetros.utils import git, read_home_config
+from aetros.utils import git, read_home_config, unpack_full_job_id
 from . import keras_model_utils
 from .backend import JobBackend
 from .Trainer import Trainer
@@ -34,8 +34,8 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
 
     if full_id.count('/') == 1:
         owner, name = full_id.split('/')
-    elif full_id.count('/') == 2:
-        owner, name, id = full_id.split('/')
+    elif full_id.count('/') >= 2:
+        owner, name, id = unpack_full_job_id(full_id)
     else:
         logger.error("Invalid id %s given. Supported formats: owner/modelName or owner/modelName/jobId." % (full_id, ))
         sys.exit(1)
@@ -89,7 +89,7 @@ def start_custom(logger, job_backend):
         git_url = config['sourceGitUrl']
     else:
         user_config = read_home_config()
-        git_url = 'git@' + user_config['host'] + ':' + job_model.model_id + '.git'
+        git_url = 'git@' + user_config['host'] + ':' + job_backend.model_name + '.git'
 
     if 'sourceGitTree' in config and config['sourceGitTree']:
         git_tree = config['sourceGitTree']
@@ -100,8 +100,8 @@ def start_custom(logger, job_backend):
     if 'PYTHONPATH' not in my_env:
         my_env['PYTHONPATH'] = ''
     my_env['PYTHONPATH'] += ':' + os.getcwd()
-    my_env['AETROS_MODEL_NAME'] = job_model.model_id
-    my_env['AETROS_JOB_ID'] = job_model.id
+    my_env['AETROS_MODEL_NAME'] = job_backend.model_name
+    my_env['AETROS_JOB_ID'] = job_backend.job_id
 
     logger.info("Setting up git repository %s in %s" % (git_url, work_tree))
     logger.info("Using git tree of %s " % (git_tree, ))
@@ -170,7 +170,7 @@ def start_keras(logger, job_backend):
 
     try:
         logger.info("Setup simple job")
-        keras_model_utils.job_prepare(job_model)
+        keras_model_utils.job_prepare(job_backend)
         job_backend.progress(0, job_backend.job['config']['epochs'])
 
         logger.info("Start job")

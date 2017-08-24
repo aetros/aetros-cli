@@ -93,12 +93,12 @@ def job_start(job_backend, trainer, keras_logger):
     model_provider.train(trainer, model, data_train, data_validation)
 
 
-def job_prepare(job_model):
+def job_prepare(job_backend):
     """
     Setups all necessary folder structure so the network can run with datasets code and model_provider.py.
     :type job_model: JobModel
     """
 
-    path = 'aetros-job/%s/%s' % (job_model.model_id, job_model.id)
+    path = 'aetros-job/%s/%s' % (job_backend.model_name, job_backend.job_id)
 
     ensure_dir(path)

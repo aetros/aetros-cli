@@ -23,7 +23,7 @@ def predict(job_id, file_paths, insights=False, weights_path=None, api_key=None)
     log = io.open(tempfile.mktemp(), 'w', encoding='utf8')
     log.truncate()
 
-    keras_model_utils.job_prepare(job_model)
+    keras_model_utils.job_prepare(job_backend)
 
     if not weights_path:
         weight_path = job_model.get_weights_filepath_best()

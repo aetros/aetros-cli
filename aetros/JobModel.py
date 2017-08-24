@@ -27,10 +27,6 @@ class JobModel:
         self._datasets = None
 
     @property
-    def model_id(self):
-        return self.job['name']
-
-    @property
     def config(self):
         return self.job['config']
 
@@ -259,6 +255,9 @@ class JobModel:
         config = self.job['config']
         for layer in self.layers[0]:
             if 'datasetId' in layer and layer['datasetId']:
+
+                if layer['datasetId'] not in self.datasets:
+                    raise Exception('Dataset %s not found in datasets %s' % (layer['datasetId'], json.dumps(self.datasets.keys())))
 
                 dataset = self.datasets[layer['datasetId']]
                 if not dataset:

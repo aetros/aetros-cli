@@ -1252,7 +1252,6 @@ class JobBackend:
         :param server:
         :param insights: whether you want to activate insights
         """
-        self.job['name'] = self.model_name
         self.job['server'] = server
         self.job['config'] = copy.deepcopy(self.config)
         self.job['optimization'] = None
