@@ -62,7 +62,7 @@ class JobModel:
         return os.getcwd() + '/aetros/layers.json'
 
     def get_dataset_dir(self):
-        return os.getcwd() + '/aetros/dataset'
+        return os.getcwd() + '/aetros/dataset/'
 
     def get_dataset_downloads_dir(self, dataset):
         return self.storage_dir + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],)
@@ -235,13 +235,20 @@ class JobModel:
         if self._datasets is None:
             self._datasets = {}
 
+            def read_dataset(id):
+                with open(self.get_dataset_dir() + id + '.json', 'r') as f:
+                    self._datasets[id] = json.loads(f.read())
+
             for owner in os.listdir(self.get_dataset_dir()):
-                path = self.get_dataset_dir() + '/' + owner + '/dataset/'
+                path = self.get_dataset_dir() + owner + '/dataset/'
                 for name in os.listdir(path):
                     if name.endswith('.json'):
-                        id = owner + '/dataset/' + name[:-len('.json')]
-                        with open(path + name, 'r') as f:
-                            self._datasets[id] = json.loads(f.read())
+                        read_dataset(owner + '/dataset/' + name[:-len('.json')])
+
+                    if os.path.isdir(path + name):
+                        for sub in os.listdir(path + name):
+                            if sub.endswith('.json'):
+                                read_dataset(owner + '/dataset/' + name + '/' + sub[:-len('.json')])
 
         return self._datasets
 

@@ -99,6 +99,4 @@ def job_prepare(job_backend):
     :type job_model: JobModel
     """
 
-    path = 'aetros-job/%s/%s' % (job_backend.model_name, job_backend.job_id)
-
-    ensure_dir(path)
+    pass

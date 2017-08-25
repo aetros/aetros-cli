@@ -28,6 +28,7 @@ from aetros.utils.image import get_layer_vis_square, get_layer_vis_square_raw, g
 from .keras_model_utils import ensure_dir, get_total_params
 import six
 
+
 # compatibility with keras 1.x
 def image_data_format():
     if hasattr(K, 'image_data_format'):

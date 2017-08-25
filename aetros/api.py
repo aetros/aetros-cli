@@ -11,6 +11,7 @@ class ApiError(Exception):
     def __str__(self):
         return self.message + ', Reason: ' + self.reason
 
+
 def request(path, query=None, body=None):
     query = query or {}
 

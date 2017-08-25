@@ -2,15 +2,10 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import sys
-
 import logging
-
-import coloredlogs
 import os
 
 import aetros.const
-from aetros.commands.ApiCommand import ApiCommand
-from aetros.commands.PublishJobCommand import PublishJobCommand
 
 __version__ = const.__version__
 
@@ -47,6 +42,8 @@ def main(args=None):
     if args is None:
         args = sys.argv[1:]
 
+    from aetros.commands.ApiCommand import ApiCommand
+    from aetros.commands.PublishJobCommand import PublishJobCommand
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
     from aetros.commands.PredictCommand import PredictCommand
@@ -71,6 +68,8 @@ def main(args=None):
         log_level = 'DEBUG'
 
     logger = logging.getLogger('aetros-'+cmd_name)
+
+    import coloredlogs
     coloredlogs.install(level=log_level, logger=logger)
 
     if cmd_name not in commands_dict:

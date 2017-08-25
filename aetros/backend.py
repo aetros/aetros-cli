@@ -878,7 +878,7 @@ class JobBackend:
                 elapsed = time.time() - self.start_time
                 self.set_system_info('elapsed', elapsed, True)
 
-                self.git.store_file('aetros/job/times/elapsed.json', json.dumps(elapsed))
+                # self.git.store_file('aetros/job/times/elapsed.json', json.dumps(elapsed))
 
                 if self.total_epochs:
                     eta = 0
@@ -892,7 +892,7 @@ class JobBackend:
                         if epochs_per_second != 0:
                             eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
 
-                    self.git.store_file('aetros/job/times/eta.json', str(eta))
+                    self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
 
         self.current_batch = batch
 
@@ -980,28 +980,31 @@ class JobBackend:
         self.total_epochs = total
         epoch_limit = False
 
-        with self.git.batch_commit('PROGRESS ' + str(epoch)):
-            if 'maxEpochs' in self.job['config'] and self.job['config']['maxEpochs'] > 0:
-                epoch_limit = True
-                self.total_epochs = self.job['config']['maxEpochs']
+        if 'maxEpochs' in self.job['config'] and self.job['config']['maxEpochs'] > 0:
+            epoch_limit = True
+            self.total_epochs = self.job['config']['maxEpochs']
 
-            if epoch is not 0 and self.last_progress_call:
-                # how long took it since the last call?
-                time_per_epoch = time.time() - self.last_progress_call
-                eta = time_per_epoch * (self.total_epochs - epoch)
-                self.set_system_info('eta', eta, True)
-                if time_per_epoch > 0:
-                    self.set_system_info('epochsPerSecond', 1 / time_per_epoch, True)
+        if epoch is not 0 and self.last_progress_call:
+            # how long took it since the last call?
+            time_per_epoch = time.time() - self.last_progress_call
+            eta = time_per_epoch * (self.total_epochs - epoch)
+            if epoch > total:
+                eta = 0
 
-            self.set_system_info('epoch', epoch, True)
-            self.set_system_info('epochs', self.total_epochs, True)
-            self.last_progress_call = time.time()
+            self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
 
-            if epoch_limit and self.total_epochs > 0:
-                if epoch >= self.total_epochs:
-                    self.logger.warning("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
-                    self.early_stop()
-                    return
+            if time_per_epoch > 0:
+                self.set_system_info('epochsPerSecond', 1 / time_per_epoch, True)
+
+        self.set_system_info('epoch', epoch, True)
+        self.set_system_info('epochs', self.total_epochs, True)
+        self.last_progress_call = time.time()
+
+        if epoch_limit and self.total_epochs > 0:
+            if epoch >= self.total_epochs:
+                self.logger.warning("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
+                self.early_stop()
+                return
 
     def create_loss_channel(self, name, xaxis=None, yaxis=None, layout=None):
         """

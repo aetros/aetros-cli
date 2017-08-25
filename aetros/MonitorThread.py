@@ -67,7 +67,7 @@ class MonitoringThread(Thread):
             gpu_memory_use = free/total*100
 
         self.stream.write(json.dumps([self.second, cpu_util, mem.percent, gpu_memory_use])[1:-1] + "\n")
-        self.job_backend.git.store_file('aetros/job/times/elapsed', str(time.time() - self.started))
+        self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))
 
         self.second += 1
         pass
