@@ -64,9 +64,9 @@ class Git:
 
         # check if its a git repo
         if os.path.exists(self.git_path):
-            out, code, err = self.command_exec(['remote', 'get-url', 'origin'])
+            out, code, err = self.command_exec(['remote'])
             if code != 0:
-                raise Exception('Given git_path (%s) already exists and does not seem to be a git repository. Error: %s' % (self.git_path, p.stderr.read()))
+                raise Exception('Given git_path (%s) already exists and does not seem to be a git repository. Error: %s' % (self.git_path, err))
         else:
             os.makedirs(self.git_path)
             self.command_exec(['init'])
@@ -74,7 +74,7 @@ class Git:
 
         # check if given repo_path is current folder.
         # check its origin remote and see if model_name matches
-        origin_url = self.command_exec(['remote', 'get-url', 'origin'], allowed_to_fail=True)[0].decode('utf-8').strip()
+        origin_url = self.get_remote_url('origin')
 
         if origin_url and ':' + self.model_name + '.git' not in origin_url:
             raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " % (self.git_path, origin_url, model_name))
@@ -83,6 +83,14 @@ class Git:
             os.makedirs(self.temp_path)
 
         self.logger.info("Started tracking of job files in git %s for remote %s" % (self.git_path, origin_url))
+
+    def get_remote_url(self, origin_name):
+        output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip()
+
+        import re
+        match = re.match('^' + re.escape(origin_name) + '\t([^\s]+)', output)
+        if match:
+            return match.group(1)
 
     @property
     def work_tree(self):
@@ -149,6 +157,12 @@ class Git:
 
             stdoutdata, stderrdata = p.communicate(inputdata)
         except KeyboardInterrupt:
+            try:
+                if p is not None:
+                    stdoutdata = p.stdout.read()
+                    stderrdata = p.stderr.read()
+            except:
+                pass
             interrupted = True
 
         input = ''
@@ -177,7 +191,7 @@ class Git:
             return '', 1, ''
 
         if not interrupted and not allowed_to_fail and p is not None and p.returncode != 0:
-            raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
+            raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstdout: '" + str(stdoutdata)+"',\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
         return stdoutdata, p.returncode, stderrdata
 
