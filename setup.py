@@ -11,7 +11,7 @@ setup(name='aetros',
       download_url='https://github.com/aetros/aetros-cli/tarball/' + aetros.const.__version__,
       license='MIT',
       entry_points={
-          'console_scripts': ['aetros = aetros:main'],
+          'console_scripts': ['aetros=aetros:main'],
       },
       install_requires=('keras',
                         'requests',

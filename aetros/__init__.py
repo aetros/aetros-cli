@@ -61,7 +61,12 @@ def main(args=None):
         'api': ApiCommand,
         'publish-job': PublishJobCommand,
     }
+
+
     cmd_name, cmd_args = parseopts(args)
+    if cmd_name == '--version':
+        print(aetros.const.__version__)
+        sys.exit(0)
 
     log_level = 'INFO'
     if os.getenv('DEBUG') == '1':

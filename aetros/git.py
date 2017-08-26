@@ -449,13 +449,13 @@ class Git:
     def write_blob(self, content):
         return self.command_exec(['hash-object', '-w', "--stdin"], content)[0].decode('utf-8').strip()
 
-    def add_index(self, tree):
+    def add_index(self, mode, blob_id, path):
         """
         Add new entry to the current index
         :param tree: 
         :return: 
         """
-        self.command_exec(['update-index', '--add', '--cacheinfo', tree])
+        self.command_exec(['update-index', '--add', '--cacheinfo', mode, blob_id, path])
 
     def write_tree(self):
         """
@@ -475,8 +475,7 @@ class Git:
         :param content: str
         """
         blob_id = self.write_blob(content)
-        tree = '100644 ' + blob_id + ' ' + path
-        self.add_index(tree)
+        self.add_index('100644', blob_id, path)
 
     def commit_file(self, message, path, content):
         """
