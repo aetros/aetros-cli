@@ -31,8 +31,12 @@ def download_image(url, path):
     if os.path.exists(path):
         return True
 
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36'
+    }
     try:
-        r = requests.get(url, stream=True, timeout=9)
+
+        r = requests.get(url, stream=True, timeout=9, headers=headers)
         if r.status_code == 200:
             with open(path, 'wb') as f:
                 r.raw.decode_content = True

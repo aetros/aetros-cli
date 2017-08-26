@@ -10,6 +10,9 @@ import subprocess
 
 import signal
 
+import requests
+
+from aetros.api import raise_response_exception
 from aetros.logger import GeneralLogger
 
 from aetros.backend import EventListener, BackendClient
@@ -17,8 +20,8 @@ from aetros.utils import read_home_config
 
 
 class ServerClient(BackendClient):
-    def __init__(self, host, event_listener, logger):
-        BackendClient.__init__(self, host, event_listener, logger)
+    def __init__(self, host, event_listener, logger, ssh_key_path=None):
+        BackendClient.__init__(self, host, event_listener, logger, ssh_key_path=ssh_key_path)
         self.server_name = None
 
     def configure(self, server_name):
@@ -108,6 +111,7 @@ class ServerCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' server')
         parser.add_argument('name', nargs='?', help="Server name")
+        parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in your account, and delete them when the command exits.")
         parser.add_argument('--max-parallel', help="How many jobs should be run at the same time.")
         parser.add_argument('--max-jobs', help="How many jobs are allowed to run in total.")
         parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
@@ -141,7 +145,49 @@ class ServerCommand:
 
         signal.signal(signal.SIGUSR1, self.on_signusr1)
 
-        self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger)
+        ssh_key_path = None
+        if parsed_args.generate_ssh_key:
+
+            ssh_key_path = os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa')
+            if not os.path.exists(ssh_key_path):
+                self.logger.info('Generate SSH key')
+                subprocess.check_output(['ssh-keygen', '-q', '-N', '', '-t', 'rsa', '-b', '4048', '-f', ssh_key_path])
+
+            self.logger.info('Register SSH key at ' + config['host'])
+            url = 'http://' + config['host'] + '/api/server/ssh-key'
+
+            with open(ssh_key_path +'.pub', 'r') as f:
+                data = {
+                    'name': parsed_args.name,
+                    'secure_key': parsed_args.generate_ssh_key,
+                    'key': f.read(),
+                }
+                response = requests.post(url, data, headers={'Accept': 'application/json'})
+
+                if response.status_code != 200:
+                    raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
+
+        def delete_ssh_key():
+            with open(ssh_key_path +'.pub', 'r') as f:
+                data = {
+                    'secure_key': parsed_args.generate_ssh_key,
+                    'key': f.read(),
+                }
+                self.logger.info('Delete SSH key at ' + config['host'])
+                url = 'http://' + config['host'] + '/api/server/ssh-key/delete'
+                response = requests.post(url, data, headers={'Accept': 'application/json'})
+
+                if response.status_code != 200:
+                    raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)
+
+                os.unlink(ssh_key_path)
+                os.unlink(ssh_key_path +'.pub')
+
+        if parsed_args.generate_ssh_key:
+            import atexit
+            atexit.register(delete_ssh_key)
+
+        self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger, ssh_key_path=ssh_key_path)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_stderr = GeneralLogger(job_backend=self, error=True)
@@ -150,6 +196,7 @@ class ServerCommand:
         sys.stderr = sys.__stderr__ = self.general_logger_stderr
 
         self.server.configure(parsed_args.name)
+        self.logger.info('Connecting to ' + config['host'])
         self.server.start()
         self.write_log("\n")
 

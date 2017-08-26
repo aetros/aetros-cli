@@ -106,7 +106,7 @@ class ApiClient:
 
 
 class BackendClient:
-    def __init__(self, host, event_listener, logger):
+    def __init__(self, host, event_listener, logger, ssh_key_path=None):
         """
         :type api_host: string
         :type api_key: string
@@ -115,6 +115,7 @@ class BackendClient:
         """
         self.host = host or os.getenv('API_HOST') or 'trainer.aetros.com'
         self.ssh_stream = None
+        self.ssh_key_path = ssh_key_path
 
         self.event_listener = event_listener
         self.logger = logger
@@ -194,7 +195,11 @@ class BackendClient:
                 # signal handler SIG_IGN.
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-            args = ['ssh', 'git@' + self.host, 'stream']
+            args = ['ssh']
+            if self.ssh_key_path:
+                args = args + ['-i', self.ssh_key_path]
+
+            args = args + ['git@' + self.host, 'stream']
             self.logger.debug('Open ssh: ' + (' '.join(args)))
 
             self.ssh_stream = subprocess.Popen(args, preexec_fn=preexec_fn, bufsize=0,

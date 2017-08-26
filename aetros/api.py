@@ -1,7 +1,9 @@
-import json
 import subprocess
+
+import six
 from six.moves.urllib.parse import urlencode
 from aetros.utils import read_home_config
+import json
 
 class ApiError(Exception):
     def __init__(self, message, reason):
@@ -42,6 +44,24 @@ def request(path, query=None, body=None):
         raise ApiError('Could not request api: ' + path, stderr)
 
     return stdout
+
+
+def raise_response_exception(message, response):
+
+    content = response.content
+    error = 'unknown'
+    error_message = ''
+
+    if isinstance(content, six.string_types):
+        content_parsed = json.loads(content)
+        if 'error' in content_parsed:
+            error = content_parsed['error']
+        if 'message' in content_parsed:
+            error_message = content_parsed['message']
+
+    reason = 'StatusCode='+str(response.status_code)+', error: ' + error+ ', message: ' + error_message
+
+    raise ApiError(message, reason)
 
 
 def read(obj):
