@@ -475,7 +475,7 @@ class Git:
         :param content: str
         """
         blob_id = self.write_blob(content)
-        tree = '100644,' + blob_id + ',' + path
+        tree = '100644 ' + blob_id + ' ' + path
         self.add_index(tree)
 
     def commit_file(self, message, path, content):
