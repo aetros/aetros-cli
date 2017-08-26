@@ -323,10 +323,6 @@ class ServerCommand:
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
 
-            if 'PYTHONPATH' not in my_env:
-                my_env['PYTHONPATH'] = ''
-
-            my_env['PYTHONPATH'] += ':' + os.getcwd()
             args = [sys.executable, '-m', 'aetros', 'start', job['id']]
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': job['id']})
