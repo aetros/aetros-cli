@@ -106,16 +106,17 @@ class ApiClient:
 
 
 class BackendClient:
-    def __init__(self, host, event_listener, logger, ssh_key_path=None):
+    def __init__(self, config, event_listener, logger):
         """
         :type api_host: string
         :type api_key: string
         :type event_listener: EventListener
         :type job_id: integer
         """
-        self.host = host or os.getenv('API_HOST') or 'trainer.aetros.com'
+        self.host = config['host']
         self.ssh_stream = None
-        self.ssh_key_path = ssh_key_path
+        self.ssh_command = config['ssh']
+        self.ssh_key_path = config['ssh_key']
 
         self.event_listener = event_listener
         self.logger = logger
@@ -195,7 +196,7 @@ class BackendClient:
                 # signal handler SIG_IGN.
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-            args = ['ssh']
+            args = [self.ssh_command]
             if self.ssh_key_path:
                 args = args + ['-i', self.ssh_key_path]
 
@@ -764,7 +765,7 @@ class JobBackend:
         self.pid = os.getpid()
 
         self.read_config(model_name)
-        self.client = JobClient(self.host, self.event_listener, self.logger)
+        self.client = JobClient(self.config, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.host, self.config['storage_dir'], self.model_name)
 
     @property
@@ -1326,7 +1327,13 @@ class JobBackend:
             del self.config['models']
 
         self.logger.debug('config: ' + str(self.config))
-        # todo, read parameters from script arguments
+
+        # todo, read parameters from script command arguments
+
+        ssh_command = self.config['ssh']
+        if self.config['ssh_key']:
+            ssh_command += ' -i ' + os.path.expanduser(self.config['ssh_key'])
+        os.environ['GIT_SSH_COMMAND'] = ssh_command
 
         if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')

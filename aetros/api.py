@@ -53,11 +53,14 @@ def raise_response_exception(message, response):
     error_message = ''
 
     if isinstance(content, six.string_types):
-        content_parsed = json.loads(content)
-        if 'error' in content_parsed:
-            error = content_parsed['error']
-        if 'message' in content_parsed:
-            error_message = content_parsed['message']
+        try:
+            content_parsed = json.loads(content)
+            if 'error' in content_parsed:
+                error = content_parsed['error']
+            if 'message' in content_parsed:
+                error_message = content_parsed['message']
+        except:
+            pass
 
     reason = 'StatusCode='+str(response.status_code)+', error: ' + error+ ', message: ' + error_message
 

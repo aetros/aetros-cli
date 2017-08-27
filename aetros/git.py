@@ -62,6 +62,8 @@ class Git:
 
         self.prepare_index_file()
 
+        self.logger.debug("GIT_SSH_COMMAND=" + str(os.getenv('GIT_SSH_COMMAND')))
+
         # check if its a git repo
         if os.path.exists(self.git_path):
             out, code, err = self.command_exec(['remote'])
@@ -166,7 +168,6 @@ class Git:
             interrupted = True
 
         input = ''
-        stderrdata = ''
 
         try:
             input = inputdata.decode('utf-8')

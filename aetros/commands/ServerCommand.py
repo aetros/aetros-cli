@@ -20,8 +20,8 @@ from aetros.utils import read_home_config
 
 
 class ServerClient(BackendClient):
-    def __init__(self, host, event_listener, logger, ssh_key_path=None):
-        BackendClient.__init__(self, host, event_listener, logger, ssh_key_path=ssh_key_path)
+    def __init__(self, host, event_listener, logger):
+        BackendClient.__init__(self, host, event_listener, logger)
         self.server_name = None
 
     def configure(self, server_name):
@@ -100,6 +100,7 @@ class ServerCommand:
         self.executed_jobs = 0
         self.max_parallel_jobs = 2
         self.max_jobs = 0
+        self.ssh_key_path = None
 
         self.job_processes = []
         self.registered = False
@@ -145,18 +146,18 @@ class ServerCommand:
 
         signal.signal(signal.SIGUSR1, self.on_signusr1)
 
-        ssh_key_path = None
+        ssh_key_registered = False
         if parsed_args.generate_ssh_key:
 
-            ssh_key_path = os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa')
-            if not os.path.exists(ssh_key_path):
+            self.ssh_key_path = os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa')
+            if not os.path.exists(self.ssh_key_path):
                 self.logger.info('Generate SSH key')
-                subprocess.check_output(['ssh-keygen', '-q', '-N', '', '-t', 'rsa', '-b', '4048', '-f', ssh_key_path])
+                subprocess.check_output(['ssh-keygen', '-q', '-N', '', '-t', 'rsa', '-b', '4048', '-f', self.ssh_key_path])
 
             self.logger.info('Register SSH key at ' + config['host'])
             url = 'http://' + config['host'] + '/api/server/ssh-key'
 
-            with open(ssh_key_path +'.pub', 'r') as f:
+            with open(self.ssh_key_path +'.pub', 'r') as f:
                 data = {
                     'name': parsed_args.name,
                     'secure_key': parsed_args.generate_ssh_key,
@@ -167,8 +168,10 @@ class ServerCommand:
                 if response.status_code != 200:
                     raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
 
+                ssh_key_registered = response.content == 'true'
+
         def delete_ssh_key():
-            with open(ssh_key_path +'.pub', 'r') as f:
+            with open(self.ssh_key_path +'.pub', 'r') as f:
                 data = {
                     'secure_key': parsed_args.generate_ssh_key,
                     'key': f.read(),
@@ -180,14 +183,20 @@ class ServerCommand:
                 if response.status_code != 200:
                     raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)
 
-                os.unlink(ssh_key_path)
-                os.unlink(ssh_key_path +'.pub')
+                os.unlink(self.ssh_key_path)
+                os.unlink(self.ssh_key_path +'.pub')
 
-        if parsed_args.generate_ssh_key:
+        if parsed_args.generate_ssh_key and ssh_key_registered:
             import atexit
             atexit.register(delete_ssh_key)
 
-        self.server = ServerClient(parsed_args.host or config['host'], event_listener, self.logger, ssh_key_path=ssh_key_path)
+        if parsed_args.host:
+            config['host'] = parsed_args.host
+
+        if self.ssh_key_path:
+            config['ssh_key'] = self.ssh_key_path
+
+        self.server = ServerClient(config, event_listener, self.logger)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_stderr = GeneralLogger(job_backend=self, error=True)
@@ -369,6 +378,9 @@ class ServerCommand:
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
+
+            if self.ssh_key_path is not None:
+                my_env['AETROS_SSH_KEY'] = self.ssh_key_path
 
             args = [sys.executable, '-m', 'aetros', 'start', job['id']]
             self.logger.info('$ ' + ' '.join(args))

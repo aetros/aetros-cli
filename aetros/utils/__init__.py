@@ -44,7 +44,9 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
 
     config = {
         'host': os.getenv('API_HOST') or 'trainer.aetros.com',
-        'storage_dir': '~/.aetros'
+        'storage_dir': '~/.aetros',
+        'ssh_key': os.getenv('AETROS_SSH_KEY'),
+        'ssh': 'ssh',
     }
 
     config.update(custom_config)
