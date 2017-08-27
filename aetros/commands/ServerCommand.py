@@ -11,6 +11,7 @@ import subprocess
 import signal
 
 import requests
+import six
 
 from aetros.api import raise_response_exception
 from aetros.logger import GeneralLogger
@@ -275,7 +276,6 @@ class ServerCommand:
 
                 del self.queuedMap[id]
 
-
     def queue_jobs(self, jobs):
         self.logger.debug('Got queue list with %d items.' % (len(jobs), ))
 
@@ -304,6 +304,13 @@ class ServerCommand:
 
     def is_job_queued(self, id):
         return id in self.queuedMap
+
+    def queued_count(self):
+        i = 0
+        for jobs in six.itervalues(self.queue):
+            i += len(jobs)
+
+        return i
 
     def is_job_running(self, id):
         for process in self.job_processes:
@@ -446,7 +453,7 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
-        values['jobs'] = {'parallel': self.max_parallel_jobs, 'enqueued': len(self.queue), 'running': len(self.job_processes)}
+        values['jobs'] = {'parallel': self.max_parallel_jobs, 'enqueued': self.queued_count(), 'running': len(self.job_processes)}
         values['nets'] = {}
         values['processes'] = []
 
