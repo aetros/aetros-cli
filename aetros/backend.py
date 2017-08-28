@@ -196,9 +196,11 @@ class BackendClient:
                 # signal handler SIG_IGN.
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-            args = [self.ssh_command]
+            args = [self.ssh_command] if isinstance(self.ssh_command, six.string_types) else self.ssh_command
+            args += ['-o', 'StrictHostKeyChecking no']
+
             if self.ssh_key_path:
-                args = args + ['-i', self.ssh_key_path]
+                args += ['-i', self.ssh_key_path]
 
             args = args + ['git@' + self.host, 'stream']
             self.logger.debug('Open ssh: ' + (' '.join(args)))
@@ -1331,8 +1333,11 @@ class JobBackend:
         # todo, read parameters from script command arguments
 
         ssh_command = self.config['ssh']
+        ssh_command += ' -o "StrictHostKeyChecking no"'
+
         if self.config['ssh_key']:
             ssh_command += ' -i ' + os.path.expanduser(self.config['ssh_key'])
+
         os.environ['GIT_SSH_COMMAND'] = ssh_command
 
         if not self.model_name and ('model' in self.job or not self.job['model']):

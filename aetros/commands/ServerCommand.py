@@ -49,8 +49,7 @@ class ServerClient(BackendClient):
 
             if "registered" in message['a']:
                 self.registered = True
-                self.event_listener.fire('registration')
-                self.logger.info("As server %s registered." % (self.server_name, ))
+                self.event_listener.fire('registration', {'username': message['username'], 'server': self.server_name})
                 self.handle_messages(messages)
                 return True
 
@@ -410,6 +409,7 @@ class ServerCommand:
         self.queue = {}
         self.queueMap = {}
 
+        self.logger.info("As server %s under account %s registered." % (params['server'], params['username']))
         self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
     def collect_system_information(self):

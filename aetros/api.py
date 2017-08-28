@@ -27,7 +27,14 @@ def request(path, query=None, body=None):
     else:
         path += '?' + query
 
-    ssh_stream = subprocess.Popen(['ssh', 'git@' + config['host'], 'api', path],
+    config = read_home_config()
+    args = [config['ssh']] if isinstance(config['ssh'], six.string_types) else config['ssh']
+    args += ['-o', 'StrictHostKeyChecking no']
+
+    if config['ssh_key']:
+        args += ['-i', config['ssh_key']]
+
+    ssh_stream = subprocess.Popen(args + ['git@' + config['host'], 'api', path],
         stderr=subprocess.PIPE,
         stdin=subprocess.PIPE if body is not None else None, stdout=subprocess.PIPE)
 

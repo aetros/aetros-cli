@@ -6,7 +6,6 @@ import sys
 
 from aetros import api
 
-
 class ApiCommand:
     def __init__(self, logger):
         self.logger = logger
