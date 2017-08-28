@@ -104,11 +104,10 @@ def start_custom(logger, job_backend):
     my_env['AETROS_JOB_ID'] = job_backend.job_id
 
     logger.info("Setting up git repository %s in %s" % (git_url, work_tree))
-    logger.info("Using git tree of %s " % (git_tree, ))
+    logger.info("Using git tree of '%s'" % (git_tree, ))
 
     try:
         if os.path.exists(work_tree):
-            logger.warning("Path already exists. We delete it.")
             shutil.rmtree(work_tree)
 
         args = ['git', 'clone', git_url, work_tree]

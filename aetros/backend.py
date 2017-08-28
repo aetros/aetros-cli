@@ -1328,21 +1328,35 @@ class JobBackend:
 
             del self.config['models']
 
-        self.logger.debug('config: ' + str(self.config))
-
         # todo, read parameters from script command arguments
 
+        self.logger.debug('config: ' + str(self.config))
+
+        if not self.model_name and ('model' in self.job or not self.job['model']):
+            raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
+
         ssh_command = self.config['ssh']
-        ssh_command += ' -o "StrictHostKeyChecking no"'
+        ssh_command += ' -o StrictHostKeyChecking=no'
 
         if self.config['ssh_key']:
             ssh_command += ' -i "' + os.path.expanduser(self.config['ssh_key']) + '"'
 
-        os.environ['GIT_SSH_COMMAND'] = ssh_command
-        self.logger.debug('GIT_SSH_COMMAND=' + ssh_command)
+        import tempfile
+        f = tempfile.NamedTemporaryFile(delete=False)
+        f.write('#/bin/sh\n')
+        f.write(ssh_command + ' "$@"')
+        f.close()
+        os.environ['GIT_SSH'] = f.name
+        os.chmod(f.name, 0700)
 
-        if not self.model_name and ('model' in self.job or not self.job['model']):
-            raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
+        import atexit
+        def delelete_git_ssh_file():
+            os.unlink(f.name)
+
+        atexit.register(delelete_git_ssh_file)
+
+        self.logger.debug('SSH_COMMAND:'+ssh_command)
+
 
     def get_parameter(self, path, default=None):
         """
