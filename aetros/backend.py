@@ -1357,7 +1357,6 @@ class JobBackend:
 
         self.logger.debug('SSH_COMMAND:'+ssh_command)
 
-
     def get_parameter(self, path, default=None):
         """
         Reads hyper parameter from job configuration. If nothing found, fallback to user config in .aetros.yml

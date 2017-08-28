@@ -2,7 +2,7 @@ import subprocess
 
 import six
 from six.moves.urllib.parse import urlencode
-from aetros.utils import read_home_config
+from aetros.utils import read_config
 import json
 
 class ApiError(Exception):
@@ -13,8 +13,10 @@ class ApiError(Exception):
     def __str__(self):
         return self.message + ', Reason: ' + self.reason
 
+class ApiConnectionError(ApiError):
+    pass
 
-def request(path, query=None, body=None):
+def request(path, query=None, body=None, config=None):
     query = query or {}
 
     if isinstance(query, dict):
@@ -25,7 +27,8 @@ def request(path, query=None, body=None):
     else:
         path += '?' + query
 
-    config = read_home_config()
+    config = read_config() if config is None else config
+
     args = [config['ssh']] if isinstance(config['ssh'], six.string_types) else config['ssh']
     args += ['-o', 'StrictHostKeyChecking no']
 
@@ -46,6 +49,9 @@ def request(path, query=None, body=None):
     ssh_stream.wait()
 
     if ssh_stream.returncode != 0:
+        if 'Connection ' in stderr:
+            raise ApiConnectionError('Could not request api: ' + path, stderr)
+
         raise ApiError('Could not request api: ' + path, stderr)
 
     return stdout

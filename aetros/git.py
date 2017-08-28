@@ -10,6 +10,7 @@ import time
 
 import sys
 
+from aetros.api import ApiConnectionError
 from aetros.utils import invalid_json_values
 
 
@@ -63,6 +64,23 @@ class Git:
         self.prepare_index_file()
 
         self.logger.debug("GIT_SSH='" + str(os.getenv('GIT_SSH'))+"'")
+        self.git_name = None
+        self.git_email = None
+
+        import aetros.api
+        try:
+            user = json.loads(aetros.api.request('user-git'))
+
+            self.git_name = user['name']
+            self.git_email = user['email']
+        except ApiConnectionError as e:
+            self.online = False
+
+        if not self.git_name:
+            import getpass
+            self.git_name = getpass.getuser()
+            import socket
+            self.git_email = self.git_name + '@' + socket.gethostname()
 
         # check if its a git repo
         if os.path.exists(self.git_path):
@@ -139,7 +157,10 @@ class Git:
             inputdata = six.b(inputdata)
 
         if command[0] != 'git':
-            command = ['git', '--bare', '--git-dir', self.git_path] + command
+            base_command = ['git', '--bare', '--git-dir', self.git_path]
+            base_command += ['-c', 'user.name=' + self.git_name]
+            base_command += ['-c', 'user.email=' + self.git_email]
+            command = base_command + command
 
         p = None
         stdoutdata = ''
