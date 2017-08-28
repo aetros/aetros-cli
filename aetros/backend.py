@@ -1347,7 +1347,7 @@ class JobBackend:
         f.write(ssh_command + ' "$@"')
         f.close()
         os.environ['GIT_SSH'] = f.name
-        os.chmod(f.name, 0700)
+        os.chmod(f.name, 0o700)
 
         import atexit
         def delelete_git_ssh_file():
