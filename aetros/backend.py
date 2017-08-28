@@ -145,7 +145,7 @@ class BackendClient:
         self.registered = False
         self.connected = False
         self.was_connected_once = False
-        self.read_unpacker = msgpack.Unpacker(encoding='utf8')
+        self.read_unpacker = msgpack.Unpacker(encoding='utf-8')
 
     def start(self):
         self.active = True
@@ -443,7 +443,7 @@ class BackendClient:
         Reads until we receive at least one message we can unpack. Return all found messages.
         """
 
-        unpacker = msgpack.Unpacker(encoding='utf8')
+        unpacker = msgpack.Unpacker(encoding='utf-8')
 
         while True:
             chunk = ''

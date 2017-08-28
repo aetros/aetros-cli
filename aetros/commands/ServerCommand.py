@@ -55,7 +55,7 @@ class ServerClient(BackendClient):
 
         self.logger.error("Registration of server %s failed due to protocol error." % (self.server_name,))
         if message:
-            self.logger.error("Got server response: " + json.dumps(message))
+            self.logger.error("Got server response: " + str(message))
 
         return False
 
