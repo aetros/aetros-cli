@@ -1336,9 +1336,10 @@ class JobBackend:
         ssh_command += ' -o "StrictHostKeyChecking no"'
 
         if self.config['ssh_key']:
-            ssh_command += ' -i ' + os.path.expanduser(self.config['ssh_key'])
+            ssh_command += ' -i "' + os.path.expanduser(self.config['ssh_key']) + '"'
 
         os.environ['GIT_SSH_COMMAND'] = ssh_command
+        self.logger.debug('GIT_SSH_COMMAND=' + ssh_command)
 
         if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')

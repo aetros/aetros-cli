@@ -20,8 +20,6 @@ def request(path, query=None, body=None):
     if isinstance(query, dict):
         query = urlencode(query)
 
-    config = read_home_config()
-
     if '?' in path:
         path += '&' + query
     else:
