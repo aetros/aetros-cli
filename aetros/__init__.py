@@ -17,7 +17,7 @@ command_summaries = [
     ['server', 'Spawns a job server that handles jobs managed through AETROS Trainer.'],
     ['run', 'Executes a command on an AETROS server.'],
     ['api', 'Executes a API call through SSH connection.'],
-    ['publish-job', 'Pushes a local job to AETROS Trainer.'],
+    ['push-job', 'Pushes a local job to AETROS Trainer.'],
 ]
 
 def parseopts(args):
@@ -48,7 +48,7 @@ def main(args=None):
         sys.exit(0)
 
     from aetros.commands.ApiCommand import ApiCommand
-    from aetros.commands.PublishJobCommand import PublishJobCommand
+    from aetros.commands.PushJobCommand import PushJobCommand
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
     from aetros.commands.PredictCommand import PredictCommand
@@ -64,7 +64,7 @@ def main(args=None):
         'server': ServerCommand,
         'run': RunCommand,
         'api': ApiCommand,
-        'publish-job': PublishJobCommand,
+        'push-job': PushJobCommand,
     }
 
     log_level = 'INFO'

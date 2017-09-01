@@ -72,6 +72,8 @@ def read_config(path = '.aetros.yml', logger=None):
     if 'parameters' not in config:
         config['parameters'] = {}
 
+    config['storage_dir'] = os.path.expanduser(config['storage_dir'])
+
     return config
 
 def invalid_json_values(obj):

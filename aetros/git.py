@@ -27,11 +27,11 @@ class Git:
     is already on our server which eliminates useless content transmissions.
     
     In either way (online or offline) all job information is stored in the local git repository and can be pushed any
-    time to the AETROS git server. If the training happened in offline modus, one can push the job's ref (e.g. git push origin refs/aetros/job/<id>/head)
+    time to the AETROS git server. If the training happened in offline modus, one can push the job's ref (e.g. git push origin refs/aetros/job/<id>)
     to make the job available in AETROS Trainer later on.
     
     Job id is created always in the local git, except the job has been created through the AETROS Trainer interface.
-    If created in AETROS Trainer, we retrieve the initial configuration of the job using `git pull origin refs/aetros/job/<id>/head` and read
+    If created in AETROS Trainer, we retrieve the initial configuration of the job using `git pull origin refs/aetros/job/<id>` and read
     its `aetros/job.json` blob of the head tree.
     """
     def __init__(self, logger, client, git_host, storage_dir, model_name):
@@ -144,7 +144,7 @@ class Git:
 
     @property
     def ref_head(self):
-        return 'refs/aetros/job/' + self.job_id + '/head'
+        return 'refs/aetros/job/' + self.job_id
 
     @property
     def git_url(self):
@@ -236,7 +236,7 @@ class Git:
 
     def fetch_job(self, job_id):
         """
-        Fetch the current job reference (refs/aetros/job/<id>/head) from origin and read its tree to the current git index.
+        Fetch the current job reference (refs/aetros/job/<id>) from origin and read its tree to the current git index.
         
         :type job_id: str 
         """
@@ -269,7 +269,7 @@ class Git:
 
     def create_job_id(self, data):
         """
-        Create a new job id and reference (refs/aetros/job/<id>/head) by creating a new commit with empty tree. That
+        Create a new job id and reference (refs/aetros/job/<id>) by creating a new commit with empty tree. That
         root commit is the actual job id. A reference is then created to the newest (head) commit of this commit history.
         The reference will always be updated once a new commit is added.
         """

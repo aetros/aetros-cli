@@ -789,7 +789,7 @@ class JobBackend:
     def on_client_offline(self, params):
         self.logger.warning("Could not establish a connection. We stopped automatic syncing.")
         self.logger.warning("You can publish later this job to AETROS Trainer using following command in this folder.")
-        self.logger.warning("$ aetros publish-job " + self.model_name + " " + self.git.ref_head)
+        self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
         self.git.online = False
 
     def on_registration(self, params):
@@ -1212,7 +1212,7 @@ class JobBackend:
         if not successful_push and info_to_send_job:
             self.logger.warning("Not all job information has been uploaded.")
             self.logger.warning("Please run following command to make sure your job is stored on the server.")
-            self.logger.warning("$ aetros publish-job " + self.model_name + ' ' + self.git.ref_head)
+            self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
 
         # remove the index file
         self.git.clean_up()
