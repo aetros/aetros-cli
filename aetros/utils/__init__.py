@@ -42,6 +42,9 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
         except:
             raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
 
+        if custom_config is None:
+            custom_config = {}
+
     config = {
         'host': os.getenv('API_HOST') or 'trainer.aetros.com',
         'storage_dir': '~/.aetros',
@@ -65,6 +68,9 @@ def read_config(path = '.aetros.yml', logger=None):
         f = open(path, 'r')
 
         custom_config = yaml.load(f)
+        if custom_config is None:
+            custom_config = {}
+
         config.update(custom_config)
 
         logger and logger.debug('Config loaded from ' + os.path.realpath(path))

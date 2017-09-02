@@ -5,8 +5,6 @@ from __future__ import absolute_import
 import os
 import time
 
-from keras.optimizers import Adadelta, Adam, Adamax, Adagrad, RMSprop, SGD
-
 from aetros.Trainer import is_generator
 from aetros.backend import JobImage
 
@@ -304,6 +302,8 @@ class KerasCallback(Callback):
 
         if hasattr(self.model, 'optimizer'):
             config = self.model.optimizer.get_config()
+
+            from keras.optimizers import Adadelta, Adam, Adamax, Adagrad, RMSprop, SGD
 
             if isinstance(self.model.optimizer, Adadelta) or isinstance(self.model.optimizer, Adam) \
                     or isinstance(self.model.optimizer, Adamax) or isinstance(self.model.optimizer, Adagrad)\

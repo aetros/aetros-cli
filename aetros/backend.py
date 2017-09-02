@@ -1343,8 +1343,8 @@ class JobBackend:
 
         import tempfile
         f = tempfile.NamedTemporaryFile(delete=False)
-        f.write('#/bin/sh\n')
-        f.write(ssh_command + ' "$@"')
+        f.write(six.b('#/bin/sh\n'))
+        f.write(six.b(ssh_command + ' "$@"'))
         f.close()
         os.environ['GIT_SSH'] = f.name
         os.chmod(f.name, 0o700)

@@ -79,7 +79,7 @@ def raise_response_exception(message, response):
 
 
 def read(obj):
-    r = ''
+    r = six.b('#/bin/sh\n')
     while True:
         buf = obj.read()
         if buf == '':
