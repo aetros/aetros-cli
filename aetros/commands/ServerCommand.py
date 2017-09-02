@@ -12,6 +12,7 @@ import signal
 
 import requests
 import six
+from requests.auth import HTTPBasicAuth
 
 from aetros.api import raise_response_exception
 from aetros.logger import GeneralLogger
@@ -163,7 +164,12 @@ class ServerCommand:
                     'secure_key': parsed_args.generate_ssh_key,
                     'key': f.read(),
                 }
-                response = requests.post(url, data, headers={'Accept': 'application/json'})
+
+                auth = None
+                if 'auth_user' in config:
+                    auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
+
+                response = requests.post(url, data, auth=auth, headers={'Accept': 'application/json'})
 
                 if response.status_code != 200:
                     raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
@@ -178,7 +184,12 @@ class ServerCommand:
                 }
                 self.logger.info('Delete SSH key at ' + config['host'])
                 url = 'http://' + config['host'] + '/api/server/ssh-key/delete'
-                response = requests.post(url, data, headers={'Accept': 'application/json'})
+
+                auth = None
+                if 'auth_user' in config:
+                    auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
+
+                response = requests.post(url, data, auth=auth, headers={'Accept': 'application/json'})
 
                 if response.status_code != 200:
                     raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)

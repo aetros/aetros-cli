@@ -1288,7 +1288,7 @@ class JobBackend:
                     self.git.add_file('aetros/dataset/' + k + '.json', json.dumps(v))
 
                 self.git.add_file('aetros/model.py', json.dumps(create_info['code']))
-                self.git.add_file('aetros/layers.json', json.dumps(create_info['layers']))
+                self.git.add_file('aetros/layer.json', json.dumps(create_info['layers']))
 
         if insights is not None:
             self.job['config']['insights'] = insights

@@ -59,7 +59,7 @@ class JobModel:
         return os.getcwd() + '/aetros/model.h5'
 
     def get_layers_path(self):
-        return os.getcwd() + '/aetros/layers.json'
+        return os.getcwd() + '/aetros/layer.json'
 
     def get_dataset_dir(self):
         return os.getcwd() + '/aetros/dataset/'
