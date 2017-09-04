@@ -1318,6 +1318,8 @@ class JobBackend:
     def read_config(self, model_name=None):
         self.config = read_config(logger=self.logger)
 
+        self.logger.debug('config: ' + json.dumps(self.config))
+
         if model_name is None and 'model' not in self.config:
             raise Exception('No AETROS Trainer model name given. Specify it in aetros.backend.start_job("model/name") or in .aetros.yml `model: model/name`.')
 
@@ -1330,8 +1332,6 @@ class JobBackend:
 
         # todo, read parameters from script command arguments
 
-        self.logger.debug('config: ' + str(self.config))
-
         if not self.model_name and ('model' in self.job or not self.job['model']):
             raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
 
@@ -1343,7 +1343,6 @@ class JobBackend:
 
         import tempfile
         f = tempfile.NamedTemporaryFile(delete=False)
-        f.write(six.b('#/bin/sh\n'))
         f.write(six.b(ssh_command + ' "$@"'))
         f.close()
         os.environ['GIT_SSH'] = f.name

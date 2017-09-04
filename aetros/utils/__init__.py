@@ -50,6 +50,7 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
         'storage_dir': '~/.aetros',
         'ssh_key': os.getenv('AETROS_SSH_KEY'),
         'ssh': 'ssh',
+        'ssl_verify': True,
     }
 
     config.update(custom_config)

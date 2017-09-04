@@ -156,7 +156,7 @@ class ServerCommand:
                 subprocess.check_output(['ssh-keygen', '-q', '-N', '', '-t', 'rsa', '-b', '4048', '-f', self.ssh_key_path])
 
             self.logger.info('Register SSH key at ' + config['host'])
-            url = 'http://' + config['host'] + '/api/server/ssh-key'
+            url = 'https://' + config['host'] + '/api/server/ssh-key'
 
             with open(self.ssh_key_path +'.pub', 'r') as f:
                 data = {
@@ -169,7 +169,7 @@ class ServerCommand:
                 if 'auth_user' in config:
                     auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
 
-                response = requests.post(url, data, auth=auth, headers={'Accept': 'application/json'})
+                response = requests.post(url, data, auth=auth, verify=config['ssl_verify'], headers={'Accept': 'application/json'})
 
                 if response.status_code != 200:
                     raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
@@ -183,13 +183,13 @@ class ServerCommand:
                     'key': f.read(),
                 }
                 self.logger.info('Delete SSH key at ' + config['host'])
-                url = 'http://' + config['host'] + '/api/server/ssh-key/delete'
+                url = 'https://' + config['host'] + '/api/server/ssh-key/delete'
 
                 auth = None
                 if 'auth_user' in config:
                     auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
 
-                response = requests.post(url, data, auth=auth, headers={'Accept': 'application/json'})
+                response = requests.post(url, data, auth=auth, verify=config['ssl_verify'], headers={'Accept': 'application/json'})
 
                 if response.status_code != 200:
                     raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)

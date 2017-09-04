@@ -96,8 +96,10 @@ class Git:
         # check its origin remote and see if model_name matches
         origin_url = self.get_remote_url('origin')
 
-        if origin_url and ':' + self.model_name + '.git' not in origin_url:
-            raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " % (self.git_path, origin_url, model_name))
+        if origin_url and self.git_url not in origin_url:
+            raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). "
+                            "You seem to switched between aetros.com and on-premise installation. "
+                            "Please remove the Git repository." % (self.git_path, origin_url, self.git_url))
 
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
