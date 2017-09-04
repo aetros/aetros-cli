@@ -54,7 +54,7 @@ def request(path, query=None, body=None, config=None):
 
         raise ApiError('Could not request api: ' + path, stderr)
 
-    return stdout
+    return stdout.decode('utf8')
 
 
 def raise_response_exception(message, response):
@@ -82,7 +82,7 @@ def read(obj):
     r = six.b('')
     while True:
         buf = obj.read()
-        if buf == '':
+        if buf == six.b(''):
             break
         r += buf
 
