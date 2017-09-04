@@ -73,7 +73,7 @@ def raise_response_exception(message, response):
         except:
             pass
 
-    reason = 'StatusCode='+str(response.status_code)+', error: ' + error+ ', message: ' + error_message
+    reason = 'StatusCode='+str(response.status_code)+', error: ' + str(error)+ ', message: ' + str(error_message)
 
     raise ApiError(message, reason)
 

@@ -230,6 +230,7 @@ class Git:
 
         # we give git a unique file path for that index. However, git expect it to be non-existent for empty indexes.
         # empty file would lead to "fatal: index file smaller than expected"
+        os.close(h)
         os.unlink(self.index_path)
 
         self.logger.debug('GIT_INDEX_FILE created at ' + self.index_path)
