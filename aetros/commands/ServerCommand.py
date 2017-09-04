@@ -18,7 +18,7 @@ from aetros.api import raise_response_exception
 from aetros.logger import GeneralLogger
 
 from aetros.backend import EventListener, BackendClient
-from aetros.utils import read_home_config
+from aetros.utils import read_config
 
 
 class ServerClient(BackendClient):
@@ -126,7 +126,7 @@ class ServerCommand:
             parser.print_help()
             sys.exit()
 
-        config = read_home_config()
+        config = read_config()
 
         if parsed_args.max_parallel:
             self.max_parallel_jobs = int(parsed_args.max_parallel)
