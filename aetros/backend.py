@@ -750,6 +750,7 @@ class JobBackend:
         self.stop_requested = False
         self.stop_requested_force = False
 
+        self.ssh_git_file = None
         self.kpi_channel = None
         self.registered = None
         self.progresses = {}
@@ -1164,6 +1165,9 @@ class JobBackend:
         elif self.running:
             self.done()
 
+        if self.ssh_git_file is not None and os.path.exists(self.ssh_git_file):
+            os.unlink(self.ssh_git_file)
+
         if self.in_early_stop:
             sys.exit(0)
 
@@ -1345,14 +1349,9 @@ class JobBackend:
         f = tempfile.NamedTemporaryFile(delete=False)
         f.write(six.b(ssh_command + ' "$@"'))
         f.close()
+        self.ssh_git_file = f.name
         os.environ['GIT_SSH'] = f.name
         os.chmod(f.name, 0o700)
-
-        import atexit
-        def delelete_git_ssh_file():
-            os.unlink(f.name)
-
-        atexit.register(delelete_git_ssh_file)
 
         self.logger.debug('SSH_COMMAND:'+ssh_command)
 
