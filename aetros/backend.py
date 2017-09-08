@@ -763,7 +763,8 @@ class JobBackend:
 
         signal.signal(signal.SIGINT, self.on_signint)
         signal.signal(signal.SIGTERM, self.on_signint)
-        signal.signal(signal.SIGUSR1, self.on_signusr1)
+        if hasattr(signal, 'SIGUSR1'):
+            signal.signal(signal.SIGUSR1, self.on_signusr1)
 
         self.pid = os.getpid()
 
@@ -1121,11 +1122,6 @@ class JobBackend:
 
         if confusion_matrix and (validation_data is None or validation_data is False):
             raise Exception('Can not build Keras callback with active confusion_matrix but with invalid `validation_data` as input.')
-
-        from aetros.Trainer import Trainer
-        self.trainer = Trainer(self)
-
-        self.trainer.model = model
 
         from aetros.KerasCallback import KerasCallback
         self.callback = KerasCallback(self, self.general_logger_stdout, force_insights=insights)

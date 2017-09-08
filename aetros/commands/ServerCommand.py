@@ -145,7 +145,8 @@ class ServerCommand:
         event_listener.on('stop-job', self.stop_job)
         event_listener.on('close', self.on_client_close)
 
-        signal.signal(signal.SIGUSR1, self.on_signusr1)
+        if hasattr(signal, 'SIGUSR1'):
+            signal.signal(signal.SIGUSR1, self.on_signusr1)
 
         ssh_key_registered = False
         if parsed_args.generate_ssh_key:

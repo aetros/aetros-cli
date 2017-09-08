@@ -292,7 +292,7 @@ class JobModel:
                 elif dataset['type'] == 'python':
                     name = dataset['id']
 
-                    sys.path.append(sys.path.abspath('./aetros/'))
+                    sys.path.append(os.path.abspath('./aetros/'))
                     data_provider = __import__(name, '')
                     print("Imported dataset provider from %s " % (os.path.abspath('./aetros/' + name + '.py'),))
                     sys.path.pop()

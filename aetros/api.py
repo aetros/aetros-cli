@@ -90,7 +90,10 @@ def read(obj):
 
 
 def parse_json(content):
-    a = json.loads(content)
+    try:
+        a = json.loads(content)
+    except:
+        raise Exception('Could not parse api request. Content: ' + str(content))
 
     if 'error' in a:
         raise Exception('API request failed %s: %s.' % (a['error'], a['message']))

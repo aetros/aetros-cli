@@ -58,7 +58,11 @@ class GeneralLogger(object):
                 if buf == '':
                     return
 
-                self.write(buf)
+                try:
+                    self.write(buf.decode("utf-8"))
+                except:
+                    # if its not printable, we don't print it
+                    pass
 
         thread = Thread(target=reader)
         thread.daemon = True
