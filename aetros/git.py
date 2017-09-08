@@ -322,17 +322,26 @@ class Git:
 
         with self.batch_commit('STREAM_END'):
             for path, handle in six.iteritems(self.streamed_files.copy()):
-                full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
-                handle.seek(0)
-                self.commit_file(path, path, handle.read())
+                # make sure its written to the disk
+                handle.flush()
                 handle.close()
+
+                # open again and read full content
+                full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
+                self.logger.debug('Git stream end for file: ' + full_path)
+                with open(full_path, 'r') as f:
+                    self.commit_file(path, path, f.read())
+
                 os.unlink(full_path)
             self.streamed_files = {}
 
         with self.batch_commit('STORE_END'):
             for path, bar in six.iteritems(self.store_files.copy()):
                 full_path = self.temp_path + '/store-blob/' + self.job_id + '/' + path
+
+                self.logger.debug('Git store end for file: ' + full_path)
                 self.commit_file(path, path, open(full_path, 'r').read())
+
                 os.unlink(full_path)
             self.store_files = {}
 
@@ -464,6 +473,7 @@ class Git:
             def write(self, data):
                 try:
                     handle.write(data)
+                    handle.flush()
                     if self.git.online:
                         self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})
                 except:

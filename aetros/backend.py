@@ -1177,6 +1177,10 @@ class JobBackend:
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
+        # make sure all buffers are sent to the git backend
+        self.general_logger_error.send_buffer()
+        self.general_logger_stdout.send_buffer()
+
         self.stopping = True
         self.logger.debug("stopping ...")
         self.ended = True
