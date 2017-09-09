@@ -48,6 +48,9 @@ class Git:
         self.active_push = False
         self.index_path = None
 
+        # dirty means, the git repository has changed and need a push
+        self.dirty = False
+
         self.job_id = None
         self.online = True
         self.active_thread = False
@@ -129,7 +132,8 @@ class Git:
     def thread_push(self):
         while self.active_thread:
             try:
-                if self.job_id and self.online and self.active_push:
+                if self.job_id and self.online and self.active_push and self.dirty:
+                    self.dirty = False
                     start = time.time()
                     self.command_exec(['push', '-f', 'origin', self.ref_head])
                     self.last_push_time = time.time() - start
@@ -237,9 +241,10 @@ class Git:
 
         self.logger.debug('GIT_INDEX_FILE created at ' + self.index_path)
 
-    def fetch_job(self, job_id):
+    def fetch_job(self, job_id, checkout=False):
         """
-        Fetch the current job reference (refs/aetros/job/<id>) from origin and read its tree to the current git index.
+        Fetch the current job reference (refs/aetros/job/<id>) from origin and (when checkout=True)read its tree to
+        the current git index and checkout into working director.
         
         :type job_id: str 
         """
@@ -258,8 +263,25 @@ class Git:
             self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
             raise
 
-        self.git_last_commit = job_id
-        self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
+        self.git_last_commit = self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
+        self.command_exec(['read-tree', self.ref_head])
+
+        if checkout:
+            # make sure we have checked out all files we have added until now. Important for simple models, so we have the
+            # actual model.py and dataset scripts.
+            if not os.path.exists(self.work_tree):
+                os.makedirs(self.work_tree)
+
+            self.logger.info('Working directory in ' + self.work_tree)
+            self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '.'])
+
+    def restart_job(self):
+        if not self.job_id:
+            raise Exception('Could not restart unknown job. fetch_job() it first.')
+
+        self.command_exec(['update-ref', self.ref_head, self.job_id])
+        self.dirty = True
+
         self.command_exec(['read-tree', self.ref_head])
 
         # make sure we have checked out all files we have added until now. Important for simple models, so we have the
@@ -294,6 +316,7 @@ class Git:
             os.makedirs(self.work_tree)
 
         self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head])
+        self.dirty = True
 
         return self.job_id
 
@@ -556,6 +579,7 @@ class Git:
 
         # update ref
         self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
+        self.dirty = True
 
         return self.git_last_commit
 
@@ -563,9 +587,9 @@ class Git:
         if not self.job_id:
             raise Exception('Can not fetch last commit sha, when no job_id is set.')
 
-        out, code = self.command_exec(['show-ref', self.ref_head])
+        out, code = self.command_exec(['rev-parse', self.ref_head])
         if not code:
-            return out.decode('utf-8').strip().split(' ')[0]
+            return out.decode('utf-8').strip()
         else:
             raise Exception('Job ref not created yet. ' + self.ref_head)
 

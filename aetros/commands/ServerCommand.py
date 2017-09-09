@@ -233,7 +233,13 @@ class ServerCommand:
             self.stop()
 
     def on_signusr1(self, signal, frame):
-        self.logger.info("%d queued, %d running, %d max" % (len(self.queue), len(self.job_processes), self.max_parallel_jobs))
+        self.logger.info("ending=%s, active=%s, %d queued, %d running, %d max-parallel" % (
+            str(self.ending),
+            str(self.active),
+            self.queued_count(),
+            len(self.job_processes),
+            self.max_parallel_jobs
+        ))
 
     def on_client_close(self, params):
         self.active = False

@@ -296,7 +296,7 @@ def read_images_in_memory(job_model, dataset, node, trainer):
             sys.exit(1)
 
         trainer.output_size = classes_count
-        trainer.set_info('Classes', classes)
+        trainer.set_info('classes', classes)
         trainer.classes = classes
 
         result['X_train'] = train
@@ -371,7 +371,7 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
         else:
             classes.append(folderName)
 
-    trainer.set_job_system_info('classes', classes)
+    trainer.set_info('classes', classes)
     trainer.classes = classes
 
     # ensure_dir(dataset_config['path'] + '/preview')
@@ -415,8 +415,8 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
         trainer.logger.warning("Could not find any classes. Does the directory contains images?")
         sys.exit(1)
 
-    pprint(train_generator.class_indices)
-    pprint(classes)
+    trainer.logger.debug(str(train_generator.class_indices))
+    trainer.logger.debug(str(classes))
 
     return {
         'X_train': train_generator,

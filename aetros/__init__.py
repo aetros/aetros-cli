@@ -50,7 +50,6 @@ def main(args=None):
     from aetros.commands.ApiCommand import ApiCommand
     from aetros.commands.PushJobCommand import PushJobCommand
     from aetros.commands.ServerCommand import ServerCommand
-    from aetros.commands.UploadWeightsCommand import UploadWeightsCommand
     from aetros.commands.PredictCommand import PredictCommand
     from aetros.commands.PredictionServerCommand import PredictionServerCommand
     from aetros.commands.StartCommand import StartCommand
@@ -59,7 +58,6 @@ def main(args=None):
     commands_dict = {
         'start': StartCommand,
         'predict': PredictCommand,
-        'upload-weights': UploadWeightsCommand,
         'prediction-server': PredictionServerCommand,
         'server': ServerCommand,
         'run': RunCommand,

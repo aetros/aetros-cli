@@ -13,18 +13,20 @@ class PredictCommand:
 
         from aetros.predict import predict
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' predict')
-        parser.add_argument('job', nargs='?', help='the job id, e.g. GoVDO1Njm')
-        parser.add_argument('--api-key', help="Secure key. Alternatively use API_KEY environment varibale.")
-        parser.add_argument('--insights', action='store_true', help="activates insights")
+        parser.add_argument('id', nargs='?', help='the job id, e.g. peter/mnist/5d0f81d3ea73e8b2da3236c93f502339190c7037')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
         parser.add_argument('-i', nargs='+', help="Input (path or url). Multiple allowed")
-        parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
+        parser.add_argument('--th', action='store_true', help="Uses Theano instead of Tensorflow")
 
         parsed_args = parser.parse_args(args)
 
-        if not parsed_args.job:
+        if not parsed_args.id:
             parser.print_help()
             sys.exit()
 
-        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
-        predict(parsed_args.job, parsed_args.i, parsed_args.insights, parsed_args.weights, api_key=parsed_args.api_key)
+        if not parsed_args.i:
+            parser.print_help()
+            sys.exit()
+
+        os.environ['KERAS_BACKEND'] = 'theano' if parsed_args.th else 'tensorflow'
+        predict(parsed_args.id, parsed_args.i, parsed_args.weights)

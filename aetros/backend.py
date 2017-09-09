@@ -379,8 +379,12 @@ class BackendClient:
         if not self.ssh_stream:
             return
 
+        i = 0
         while self.ssh_stream.poll() is None:
+            i += 1
             time.sleep(0.1)
+            if i % 50 == 0:
+                self.logger.warning("We still waiting for connection closing on server side.")
 
         self.online = False
 
@@ -544,6 +548,7 @@ def start_job(name=None):
 
     if os.getenv('AETROS_JOB_ID'):
         job.load(os.getenv('AETROS_JOB_ID'))
+        job.restart()
     else:
         job.create()
 
@@ -806,8 +811,9 @@ class JobBackend:
             self.logger.info("Successfully reconnected.")
 
     def on_signusr1(self, signal, frame):
-        self.logger.warning("USR1: backend (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
+        self.logger.warning("USR1: backend job_id=%s (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
                             "connected=%s, queue=%d), git (online=%s, active_thread=%s, last_push_time=%s)." % (
+          str(self.job_id),
           str(self.running),
           str(self.ended),
           str(self.client.online),
@@ -1277,7 +1283,7 @@ class JobBackend:
 
         if create_info is not None:
             if 'config' not in create_info:
-                print(create_info)
+                self.logger.debug('create_info: ' + str(create_info))
                 raise Exception('Given create_info is not valid.')
 
             self.job['type'] = create_info['type']
@@ -1304,7 +1310,6 @@ class JobBackend:
             self.job['config']['insights'] = False
 
         self.git.create_job_id(self.job)
-        self.job['id'] = self.job_id
 
         self.logger.info("Job created " + self.model_name + '/' + self.job_id + " with git ref " + self.git.ref_head)
         return self.job_id
@@ -1400,13 +1405,19 @@ class JobBackend:
 
     def load(self, job_id):
         """
-        Loads job and sets as current.
+        Loads job, restart its ref and sets as current.
+
         :param job_id: int
         """
 
         # normally git would create a job_id, but we have already one
         # so download the ref and check it out.
-        self.git.fetch_job(job_id)
+        self.git.fetch_job(job_id, checkout=True)
+        self.load_job_from_ref()
+
+    def load_job_from_ref(self):
+        if not self.job_id:
+            raise Exception('Job not loaded yet. Use load(id) first.')
 
         if not os.path.exists(self.git.work_tree + '/aetros/job.json'):
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
@@ -1414,12 +1425,17 @@ class JobBackend:
         with open(self.git.work_tree + '/aetros/job.json') as f:
             self.job = json.loads(f.read())
 
-        print(str(self.job))
-
         if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
 
-        self.job['id'] = job_id
+        self.logger.debug('job: ' + str(self.job))
+
+    def restart(self):
+        if not self.job_id:
+            raise Exception('Job not loaded yet. Use load(id) first.')
+
+        self.git.restart_job()
+        self.load_job_from_ref()
 
         if os.path.exists(self.git.work_tree + '/aetros/job/status/progress.json'):
             with open(self.git.work_tree + '/aetros/job/status/progress.json', 'r') as f:
@@ -1431,8 +1447,6 @@ class JobBackend:
             self.logger.error('You can not restart an existing job that was already running. You need to restart the job through AETROS Trainer.')
             self.logger.error('You can alternatively reset the git reference to the root commit and force push that ref to reset the job.')
             sys.exit(1)
-
-        self.logger.debug(str(self.job))
 
     def get_job_model(self):
         """
@@ -1447,13 +1461,29 @@ class JobBackend:
         return JobModel(self.job_id, self.job, self.config['storage_dir'])
 
     def sync_weights(self):
-        self.job_add_status('status', 'SYNC WEIGHTS')
-        print("Sync weights ...")
-        try:
-            self.upload_weights('latest.hdf5', self.get_job_model().get_weights_filepath_latest(), with_status=True)
-        except:
-            pass
-        print("Weights synced.")
+
+        if not os.path.exists(self.get_job_model().get_weights_filepath_latest()):
+            return
+
+        self.set_status('SYNC WEIGHTS')
+
+        with open(self.get_job_model().get_weights_filepath_latest(), 'r') as f:
+            import keras.backend
+            self.git.commit_file('Added weights', 'aetros/weights/latest.hdf5', f.read())
+
+            image_data_format = None
+            if hasattr(keras.backend, 'set_image_data_format'):
+                image_data_format = keras.backend.image_data_format()
+
+            info = {
+                'framework': 'keras',
+                'backend': keras.backend.backend(),
+                'image_data_format': image_data_format
+            }
+            self.git.commit_file('Added weights', 'aetros/weights/latest.json', json.dumps(info))
+            self.git.push()
+
+        # todo, implement optional saving of self.get_job_model().get_weights_filepath_best()
 
     def job_add_status(self, key, value):
         self.git.store_file('aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))

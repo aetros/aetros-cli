@@ -1,7 +1,11 @@
 from __future__ import division
 from __future__ import absolute_import
 from __future__ import print_function
+
+import json
 from threading import Lock
+import os
+
 
 def is_generator(obj):
     import inspect
@@ -32,6 +36,12 @@ class Trainer():
 
         self.job_model = job_backend.get_job_model()
         self.settings = {}
+
+        classes_file = self.job_backend.git.work_tree + '/aetros/job/info/classes.json'
+        if os.path.exists(classes_file):
+            with open(self.job_backend.git.work_tree + '/aetros/job/info/classes.json') as f:
+                self.classes = json.loads(f.read())
+                self.output_size = len(self.classes)
 
         if 'batchSize' in self.job_backend.job['config']:
             self.settings['batchSize'] = self.job_backend.job['config']['batchSize']

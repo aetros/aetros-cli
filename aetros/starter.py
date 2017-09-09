@@ -43,6 +43,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
     job_backend = JobBackend(model_name=owner + '/' + name)
     if id:
         job_backend.load(id)
+        job_backend.restart()
     else:
         try:
             create_info = api.create_job_info(full_id, hyperparameter, dataset_id)
@@ -157,9 +158,12 @@ def start_keras(logger, job_backend):
     job_backend.start()
 
     # all our shapes are Tensorflow schema. (height, width, channels)
-    from keras import backend as K
-    if hasattr(K, 'set_image_dim_ordering'):
-        K.set_image_dim_ordering('tf')
+    import keras.backend
+    if hasattr(keras.backend, 'set_image_dim_ordering'):
+        keras.backend.set_image_dim_ordering('tf')
+
+    if hasattr(keras.backend, 'set_image_data_format'):
+        keras.backend.set_image_data_format('channels_last')
 
     job_model = job_backend.get_job_model()
 
@@ -169,7 +173,6 @@ def start_keras(logger, job_backend):
 
     try:
         logger.info("Setup simple job")
-        keras_model_utils.job_prepare(job_backend)
         job_backend.progress(0, job_backend.job['config']['epochs'])
 
         logger.info("Start job")

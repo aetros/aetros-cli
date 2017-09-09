@@ -80,8 +80,6 @@ class PredictionServerCommand:
             f.write(urllib.urlopen(weight_url).read())
             f.close()
 
-        keras_model_utils.job_prepare(job_backend)
-
         trainer = Trainer(job_backend)
 
         self.job_model.set_input_shape(trainer)

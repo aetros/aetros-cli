@@ -218,7 +218,6 @@ class KerasCallback(Callback):
     def on_epoch_begin(self, epoch, logs={}):
         self.learning_rate_start = self.get_learning_rate()
 
-
     def on_epoch_end(self, epoch, logs={}):
         log = logs.copy()
 
@@ -240,15 +239,16 @@ class KerasCallback(Callback):
         total_accuracy_validation = log.get(val_accuracy_log_name, 0)
         total_accuracy_training = log.get(accuracy_log_name, 0)
 
-        if total_accuracy_validation > self.best_total_accuracy:
-            self.best_total_accuracy = total_accuracy_validation
-            self.best_epoch = log['epoch']
-            try:
-                self.model.save_weights(self.filepath_best, overwrite=True)
-            except:
-                # sometimes hangs with: IOError: Unable to create file (Unable to open file: name = ...
-                # without any obvious reason.
-                pass
+        # todo, make this optional
+        # if total_accuracy_validation > self.best_total_accuracy:
+        #     self.best_total_accuracy = total_accuracy_validation
+        #     self.best_epoch = log['epoch']
+        #     try:
+        #         self.model.save_weights(self.filepath_best, overwrite=True)
+        #     except:
+        #         # sometimes hangs with: IOError: Unable to create file (Unable to open file: name = ...
+        #         # without any obvious reason.
+        #         pass
 
         try:
             self.model.save_weights(self.filepath_latest, overwrite=True)

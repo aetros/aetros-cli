@@ -107,43 +107,32 @@ class JobModel:
                 trainer.input_shape = shape
 
     def is_python_model(self):
-        return 'fromCode' in self.job['config'] and self.job['config']['fromCode']
+        return 'type' in self.job['config'] and self.job['config']['type'] != 'simple'
 
     def is_keras_model(self):
-        return 'fromCode' not in self.job['config'] or not self.job['config']['fromCode']
+        return 'type' in self.job['config'] and self.job['config']['type'] == 'simple'
 
     def get_built_model(self, trainer):
+        # its built with model designer
+        model_provider = self.get_model_provider()
+        model = model_provider.get_model(trainer)
 
-        if 'fromCode' in self.job['config'] and self.job['config']['fromCode']:
-            # its built with custom code using KerasIntegration class
-            from keras.models import model_from_json
-            model = model_from_json(self.job['config']['model'])
-            return model
-        else:
+        loss = model_provider.get_loss(trainer)
+        optimizer = model_provider.get_optimizer(trainer)
 
-            if 'classes' in self.job['info']:
-                trainer.output_size = len(self.job['info']['classes'])
-
-            # its built with model designer
-            model_provider = self.get_model_provider()
-            model = model_provider.get_model(trainer)
-
-            loss = model_provider.get_loss(trainer)
-            optimizer = model_provider.get_optimizer(trainer)
-
-            model_provider.compile(trainer, model, loss, optimizer)
+        model_provider.compile(trainer, model, loss, optimizer)
 
         return model
 
-    def predict(self, model, input):
-        prediction = model.predict(input)
+    def predict(self, trainer, input):
+        prediction = trainer.model.predict(input)
 
         top5 = np.argsort(-prediction[0])[:5]
 
         result = []
         for i in top5:
             result.append({
-                'class': self.get_dataset_class_label(self.get_first_output_layer(), i),
+                'class': self.get_dataset_class_label(trainer, self.get_first_output_layer(), i),
                 'prediction': float(prediction[0][i])
             })
 
@@ -292,45 +281,55 @@ class JobModel:
                 elif dataset['type'] == 'python':
                     name = dataset['id']
 
-                    sys.path.append(os.path.abspath('./aetros/'))
-                    data_provider = __import__(name, '')
-                    print("Imported dataset provider from %s " % (os.path.abspath('./aetros/' + name + '.py'),))
-                    sys.path.pop()
-                    import inspect
-                    argSpec = inspect.getargspec(data_provider.get_data)
+                    try:
+                        sys.path.append(os.path.abspath('./aetros/dataset/' + os.path.dirname(name)))
+                        data_provider = __import__(os.path.basename(name))
+                        print("Imported dataset provider from %s " % (os.path.abspath('./aetros/dataset/' + name + '.py'),))
 
-                    if len(argSpec.args) > 0:
-                        datasets[dataset['id']] = data_provider.get_data(trainer)
-                    else:
-                        datasets[dataset['id']] = data_provider.get_data()
+                        import inspect
+                        argSpec = inspect.getargspec(data_provider.get_data)
+
+                        if len(argSpec.args) > 0:
+                            datasets[dataset['id']] = data_provider.get_data(trainer)
+                        else:
+                            datasets[dataset['id']] = data_provider.get_data()
+
+                    except:
+                        trainer.logger.error('Could not import dataset code: ' + name + ' in ' + os.path.abspath('./aetros/dataset/'))
+                        raise
+                    finally:
+                        sys.path.pop()
 
         return datasets
 
-    def get_dataset_class_label(self, output_layer, prediction):
+    def get_dataset_class_label(self, trainer, output_layer, prediction):
         dataset_id = output_layer['datasetId']
         dataset = self.datasets[dataset_id]
+
         if not dataset:
             raise Exception('Dataset of id %s does not exists. Available %s' % (
             dataset_id, ','.join(list(self.datasets.keys()))))
 
-        if 'classes' in self.job['info']:
-            return self.job['info']['classes'][prediction]
+        if trainer.classes:
+            return trainer.classes[prediction]
 
         elif dataset['type'] == 'python':
-            name = dataset['id'].replace('/', '__')
-
+            name = dataset['id']
             datasets_dir = self.get_dataset_dir()
             try:
-                sys.path.append(datasets_dir)
-                data_provider = __import__(name, '')
-                sys.path.pop()
+                sys.path.append(os.path.abspath('./aetros/dataset/' + os.path.dirname(name)))
+                data_provider = __import__(os.path.basename(name))
+
                 if hasattr(data_provider, 'get_class_label'):
                     return data_provider.get_class_label(prediction)
                 else:
                     return prediction
-            except Exception as e:
+            except Exception:
                 print(("Method get_class_label failed in %s " % (datasets_dir + '/' + name + '.py',)))
-                raise e
+                raise
+            finally:
+                sys.path.pop()
+
 
     def get_first_input_layer(self):
         config = self.job['config']
