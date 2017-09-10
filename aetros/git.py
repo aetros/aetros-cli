@@ -283,9 +283,9 @@ class Git:
                 os.makedirs(self.work_tree)
 
             # updates index and working tree
+            # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
+            # of files checked out by start.py (custom models)
             self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
-            # clears all files not beloging to git. Use .gitignore to protect files
-            self.command_exec(['--work-tree', self.work_tree, 'clean', '-d', '-f'])
 
     def restart_job(self):
         if not self.job_id:
@@ -302,9 +302,9 @@ class Git:
             os.makedirs(self.work_tree)
 
         # updates index and working tree
+        # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
+        # of files checked out by start.py (custom models)
         self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
-        # clears all files not beloging to git. Use .gitignore to protect files
-        self.command_exec(['--work-tree', self.work_tree, 'clean', '-d', '-f'])
 
     def create_job_id(self, data):
         """
@@ -332,9 +332,9 @@ class Git:
         self.logger.info('Working directory in ' + self.work_tree)
 
         # updates index and working tree
+        # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
+        # of files checked out by start.py (custom models)
         self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
-        # clears all files not beloging to git. Use .gitignore to protect files
-        self.command_exec(['--work-tree', self.work_tree, 'clean', '-d', '-f'])
         self.dirty = True
 
         return self.job_id
