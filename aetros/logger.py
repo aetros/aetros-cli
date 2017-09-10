@@ -3,8 +3,10 @@ from __future__ import absolute_import
 import sys
 import time
 import datetime
+
+import os
 import six
-from threading import Timer, Thread
+from threading import Timer, Thread, Lock
 
 
 class GeneralLogger(object):
@@ -14,19 +16,11 @@ class GeneralLogger(object):
         self.buffer = ''
         self.last_timer = None
         self.last_messages = ''
-        self.logger = logger or (sys.__stdout__ if error is False else sys.__stderr__)
+        self.logger = logger
+        self.lock = Lock()
 
-    def get_time(self):
-        ts = time.time()
-        st = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-
-        return st + '.' + str(ts % 1)[2:6]
-
-    def get_line(self, line):
-        if line:
-            return "[%s] %s\n" % (self.get_time(), line)
-
-        return line
+        if not self.logger:
+            self.logger = sys.__stdout__ if error is False else sys.__stderr__
 
     def fileno(self):
         return self.logger.fileno()
@@ -39,10 +33,11 @@ class GeneralLogger(object):
         self.last_timer = None
 
         if self.buffer:
-            if self.job_backend:
-                self.job_backend.write_log(self.buffer)
+            buf = self.buffer
+            self.buffer = ''
 
-        self.buffer = ''
+            if self.job_backend:
+                self.job_backend.write_log(buf)
 
     def attach(self, buffer):
         """
@@ -53,15 +48,18 @@ class GeneralLogger(object):
         def reader():
             while True:
 
-                # read() needs to block
-                buf = buffer.read(1)
-                if buf == '':
-                    return
-
                 try:
-                    self.write(buf.decode("utf-8"))
-                except:
-                    # if its not printable, we don't print it
+                    # read() needs to block
+                    # buf = os.read(buffer.fileno(), 4096)
+                    buf = buffer.read(1)
+                    if buf == six.b(''):
+                        return
+
+                    self.write(buf)
+                except Exception as e:
+                    #  we need to make sure, we continue to read otherwise the process of this buffer
+                    # will block and we have a stuck process.
+                    sys.__stderr__.write(str(e))
                     pass
 
         thread = Thread(target=reader)
@@ -70,11 +68,13 @@ class GeneralLogger(object):
 
     def write(self, message):
         try:
-            message = six.text_type(message)
-        except:
-            pass
+            self.lock.acquire()
 
-        try:
+            if hasattr(message, 'decode'):
+                # don't decode string again
+                # necessary for Python3
+                message = message.decode('utf-8')
+
             self.logger.write(message)
 
             self.last_messages += message
@@ -86,11 +86,11 @@ class GeneralLogger(object):
                     self.buffer = self.buffer[:-1]
                 else:
                     self.buffer += char
-        except:
-            self.last_messages = ''
-            self.buffer = ''
-            pass
 
-        if not self.last_timer:
-            self.last_timer = Timer(1.0, self.send_buffer)
-            self.last_timer.start()
+            if not self.last_timer:
+                self.last_timer = Timer(1.0, self.send_buffer)
+                self.last_timer.start()
+        except Exception as e:
+            sys.__stderr__.write(str(e))
+        finally:
+            self.lock.release()

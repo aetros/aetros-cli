@@ -133,6 +133,7 @@ class BackendClient:
         self.queue = []
         self.connection_tries = 0
         self.in_connecting = False
+        self.stop_on_empty_queue = False
 
         # indicates whether we are offline or not, means not connection to the internet and
         # should not establish a connection to Aetros.
@@ -219,6 +220,7 @@ class BackendClient:
                 self.registered = self.on_connect(self.was_connected_once)
 
             if not self.registered:
+                self.logger.debug("Client: registration failed. stderrdata: " + stderrdata)
                 self.connected = False
                 self.ssh_stream.kill()
                 self.connection_tries += 1
@@ -230,7 +232,7 @@ class BackendClient:
 
                 if 'Permission denied' in stderrdata:
                     if self.connection_tries < 3:
-                        self.logger.warning("Access denied. Did you setup your ssh key correctly and saved it in your AETROS Trainer user account?")
+                        self.logger.warning("Access denied. Did you setup your SSH public key correctly and saved it in your AETROS Trainer user account?")
 
                     self.close()
                     sys.exit(1)
@@ -315,28 +317,39 @@ class BackendClient:
                                     sent.append(message)
 
                                     sent_size += size
+                                    # not too much at once (max 1MB), so we have time to listen for incoming messages
                                     if sent_size > 1024 * 1024:
-                                        # not too much at once (max 1MB), so we have time to listen for incoming messages
                                         break
+                                else:
+                                    break
 
                         self.lock.acquire()
                         for message in sent:
                             if message in self.queue:
                                 self.queue.remove(message)
                         self.lock.release()
+
+                        if self.stop_on_empty_queue:
+                            self.logger.debug('Client sent %d / %d messages' % (len(sent), len(self.queue)))
+                            return
+
                     except SystemExit:
+                        self.logger.debug('Closed write thread: SystemExit. %d messages left' % (len(self.queue), ))
                         return
                     except KeyboardInterrupt:
-                        return
-                    finally:
-                        if self.lock.locked():
-                            self.lock.release()
+                        self.logger.debug('Closed write thread: KeyboardInterrupt. %d messages left' % (len(self.queue), ))
+                        pass
+                    except Exception as e:
+                        self.logger.debug('Closed write thread: exception. %d messages left' % (len(self.queue), ))
+                        self.connection_error(e)
 
                 if not self.connected and not self.expect_close:
                     if not self.connect():
                         time.sleep(5)
 
             time.sleep(0.01)
+
+        self.logger.debug('Closed write thread: ended. %d messages left' % (len(self.queue), ))
 
     def thread_read(self):
         while self.active:
@@ -350,25 +363,23 @@ class BackendClient:
 
                         continue
                     except SystemExit:
+                        self.logger.debug('Closed read thread: SystemExit')
                         return
                     except KeyboardInterrupt:
-                        return
-                    except:
+                        self.logger.debug('Closed read thread: KeyboardInterrupt')
                         pass
+                    except Exception as e:
+                        self.logger.debug('Closed read thread: exception')
+                        self.connection_error(e)
 
             time.sleep(0.01)
 
+        self.logger.debug('Closed read thread: ended')
+
     def wait_sending_last_messages(self):
         # send all missing messages
-        i = 0
-        while self.registered:
-            if len(self.queue) == 0:
-                break
-
-            i += 1
-            time.sleep(0.1)
-            if i % 50 == 0:
-                self.logger.warning("We still sync job data. %d messages left. " % (len(self.queue),))
+        self.stop_on_empty_queue = True
+        self.thread_write_instance.join()
 
     def wait_for_close(self):
         self.active = False
@@ -413,21 +424,22 @@ class BackendClient:
 
     def send_message(self, message):
         if not self.connected:
+            self.logger.debug("Client wanted to send, but not connected.")
             return False
 
         message['_sending'] = True
 
-        import msgpack
         msg = msgpack.packb(message, default=invalid_json_values)
 
         try:
             self.ssh_stream.stdin.write(msg)
-            message['sent'] = True
+            message['_sent'] = True
             self.ssh_stream.stdin.flush()
 
             return len(msg)
         except KeyboardInterrupt:
-            if message['sent']:
+
+            if message['_sent']:
                 return len(msg)
 
             return False
@@ -511,7 +523,7 @@ class JobClient(BackendClient):
             return False
 
         message = messages.pop(0)
-        self.logger.debug("handle message: " + str(message))
+        self.logger.debug("Client: handle message: " + str(message))
         if isinstance(message, dict) and 'a' in message:
             if 'aborted' == message['a']:
                 self.logger.error("Job aborted meanwhile. Exiting")
@@ -547,28 +559,13 @@ def start_job(name=None):
     job.setup_std_output_logging()
 
     if os.getenv('AETROS_JOB_ID'):
-        job.load(os.getenv('AETROS_JOB_ID'))
-        job.restart()
+        job.restart(os.getenv('AETROS_JOB_ID'))
     else:
         job.create()
 
     job.start()
 
     return job
-
-
-def create_job(name):
-    """
-    Creates a new job.
-
-    :param name: string : model name
-    :return: JobBackend
-    """
-    job = JobBackend(name)
-    job.create()
-
-    return job
-
 
 class JobLossChannel:
     """
@@ -744,7 +741,10 @@ class JobBackend:
 
         if not self.logger:
             self.logger = logging.getLogger('aetros-job')
-            coloredlogs.install(level=self.log_level, logger=self.logger)
+            atty = None
+            if '1' == os.getenv('AETROS_ATTY'):
+                atty = True
+            coloredlogs.install(level=self.log_level, logger=self.logger, isatty=atty)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_error = GeneralLogger(job_backend=self, error=True)
@@ -803,7 +803,7 @@ class JobBackend:
         if not self.registered:
             self.registered = True
             self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
-            self.logger.info("Open http://%s/model/%s/job/%s to monitor the training." % (self.host, self.model_name, self.job_id))
+            self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
 
             self.logger.debug('Git backend start')
             self.git.start()
@@ -1198,7 +1198,7 @@ class JobBackend:
 
         if self.git.online:
             if wait_for_client:
-                self.logger.debug("client send last %d messages ..." % (len(self.client.queue),))
+                self.logger.debug("client sends last %d messages ..." % (len(self.client.queue),))
                 self.client.wait_sending_last_messages()
 
         # store all store_file and stream_file as blob
@@ -1229,6 +1229,11 @@ class JobBackend:
 
         self.stopping = False
         self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
+
+        if progress == JOB_STATUS.PROGRESS_STATUS_CRASHED:
+            os._exit(1)
+
+        os._exit(0)
 
     def abort(self, wait_for_client_messages=True):
         if not self.running:
@@ -1297,8 +1302,8 @@ class JobBackend:
 
                     self.git.add_file('aetros/dataset/' + k + '.json', json.dumps(v))
 
-                self.git.add_file('aetros/model.py', json.dumps(create_info['code']))
-                self.git.add_file('aetros/layer.json', json.dumps(create_info['layers']))
+                self.git.add_file('model.py', create_info['code'])
+                self.git.add_file('aetros/layer.json', json.dumps(create_info['layer']))
 
         if insights is not None:
             self.job['config']['insights'] = insights
@@ -1430,16 +1435,14 @@ class JobBackend:
 
         self.logger.debug('job: ' + str(self.job))
 
-    def restart(self):
-        if not self.job_id:
-            raise Exception('Job not loaded yet. Use load(id) first.')
-
+    def restart(self, job_id):
+        self.git.fetch_job(job_id)
         self.git.restart_job()
         self.load_job_from_ref()
 
         if os.path.exists(self.git.work_tree + '/aetros/job/status/progress.json'):
             with open(self.git.work_tree + '/aetros/job/status/progress.json', 'r') as f:
-                progress = float(f.read().decode('utf-8'))
+                progress = float(f.read())
         else:
             progress = 0
 
@@ -1467,7 +1470,7 @@ class JobBackend:
 
         self.set_status('SYNC WEIGHTS')
 
-        with open(self.get_job_model().get_weights_filepath_latest(), 'r') as f:
+        with open(self.get_job_model().get_weights_filepath_latest(), 'rb') as f:
             import keras.backend
             self.git.commit_file('Added weights', 'aetros/weights/latest.hdf5', f.read())
 

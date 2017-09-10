@@ -65,15 +65,6 @@ def main(args=None):
         'push-job': PushJobCommand,
     }
 
-    log_level = 'INFO'
-    if os.getenv('DEBUG') == '1':
-        log_level = 'DEBUG'
-
-    logger = logging.getLogger('aetros-'+cmd_name)
-
-    import coloredlogs
-    coloredlogs.install(level=log_level, logger=logger)
-
     if cmd_name not in commands_dict:
         print(("Command %s not found" % (cmd_name,)))
         sys.exit(1)
@@ -82,8 +73,13 @@ def main(args=None):
     if '-v' in args:
         level = 'DEBUG'
 
+    atty = None
+    if '1' == os.getenv('AETROS_ATTY'):
+        atty = True
+
+    import coloredlogs
     logger = logging.getLogger('aetros-'+cmd_name)
-    coloredlogs.install(level=level, logger=logger)
+    coloredlogs.install(level=level, logger=logger, isatty=atty)
     command = commands_dict[cmd_name](logger)
 
     code = command.main(cmd_args)

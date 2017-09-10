@@ -19,6 +19,7 @@ from aetros.logger import GeneralLogger
 
 from aetros.backend import EventListener, BackendClient
 from aetros.utils import read_config
+import aetros.cuda_gpu
 
 
 class ServerClient(BackendClient):
@@ -213,8 +214,8 @@ class ServerCommand:
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_stderr = GeneralLogger(job_backend=self, error=True)
 
-        sys.stdout = sys.__stdout__ = self.general_logger_stdout
-        sys.stderr = sys.__stderr__ = self.general_logger_stderr
+        sys.stdout = self.general_logger_stdout
+        sys.stderr = self.general_logger_stderr
 
         self.server.configure(parsed_args.name)
         self.logger.info('Connecting to ' + config['host'])
@@ -402,6 +403,7 @@ class ServerCommand:
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
+            my_env['AETROS_ATTY'] = '1'
 
             if self.ssh_key_path is not None:
                 my_env['AETROS_SSH_KEY'] = self.ssh_key_path
@@ -410,11 +412,15 @@ class ServerCommand:
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': job['id']})
 
-            process = subprocess.Popen(args, bufsize=1,
-                stdin=DEVNULL, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
+            if self.show_stdout:
+                process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
+                    stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
-            self.general_logger_stdout.attach(process.stdout)
-            self.general_logger_stderr.attach(process.stderr)
+                self.general_logger_stdout.attach(process.stdout)
+                self.general_logger_stderr.attach(process.stderr)
+            else:
+                process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
+                    stderr=DEVNULL, stdout=DEVNULL)
 
             setattr(process, 'job', job)
             self.job_processes.append(process)
@@ -441,7 +447,14 @@ class ServerCommand:
         values['cpu'] = [cpu['hz_actual_raw'][0], cpu['count']]
         values['nets'] = {}
         values['disks'] = {}
+        values['gpus'] = []
         values['boot_time'] = psutil.boot_time()
+
+        try:
+            for i in range(0, aetros.cuda_gpu.get_installed_devices()):
+                values['gpus'].append(aetros.cuda_gpu.get_device_properties(i))
+        except:
+            pass
 
         for disk in psutil.disk_partitions():
             try:
@@ -479,6 +492,13 @@ class ServerCommand:
         values['jobs'] = {'parallel': self.max_parallel_jobs, 'enqueued': self.queued_count(), 'running': len(self.job_processes)}
         values['nets'] = {}
         values['processes'] = []
+        values['gpus'] = []
+
+        try:
+            for i in range(0, aetros.cuda_gpu.get_installed_devices()):
+                values['gpus'].append(aetros.cuda_gpu.get_memory(i))
+        except:
+            pass
 
         for disk in psutil.disk_partitions():
             try:

@@ -86,7 +86,7 @@ def read(obj):
             break
         r += buf
 
-    return r.decode("utf8")
+    return r.decode("utf-8")
 
 
 def parse_json(content):

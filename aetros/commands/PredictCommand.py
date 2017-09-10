@@ -29,4 +29,4 @@ class PredictCommand:
             sys.exit()
 
         os.environ['KERAS_BACKEND'] = 'theano' if parsed_args.th else 'tensorflow'
-        predict(parsed_args.id, parsed_args.i, parsed_args.weights)
+        predict(self.logger, parsed_args.id, parsed_args.i, parsed_args.weights)

@@ -8,7 +8,7 @@ import os
 from aetros.utils import unpack_full_job_id
 from .backend import JobBackend, invalid_json_values
 
-def predict(job_id, file_paths, weights_path=None):
+def predict(logger, job_id, file_paths, weights_path=None):
 
     owner, name, id = unpack_full_job_id(job_id)
 
@@ -39,6 +39,7 @@ def predict(job_id, file_paths, weights_path=None):
     trainer.model = model
 
     from aetros.keras import load_weights
+    logger.info('Load weights from ' + weights_path)
     load_weights(model, weights_path)
 
     inputs = []

@@ -164,8 +164,9 @@ class Git:
 
         if command[0] != 'git':
             base_command = ['git', '--bare', '--git-dir', self.git_path]
-            base_command += ['-c', 'user.name=' + self.git_name]
-            base_command += ['-c', 'user.email=' + self.git_email]
+            if command[0] == 'commit-tree' or command[0] == 'commit':
+                base_command += ['-c', 'user.name=' + self.git_name]
+                base_command += ['-c', 'user.email=' + self.git_email]
             command = base_command + command
 
         p = None
@@ -194,21 +195,27 @@ class Git:
                 pass
             interrupted = True
 
-        input = ''
-
-        try:
-            input = inputdata.decode('utf-8')
-        except:
-            input = 'binary'
-
         try:
             stderrdata = stderrdata.decode('utf-8')
         except: pass
 
-        message = "Git command: " + (' '.join(command))
-        # message += "\nstdout: " + str(stdoutdata.decode('utf-8')) + ', stderr: '+ str(stderrdata)
+        self.logger.debug("Git command: " + (' '.join(command)))
 
-        self.logger.debug(message)
+        # When working on Git in several threads, sometimes it can not get the lock file, like:
+        #
+        #   fatal: Unable to create '/Users/marc/.aetros/marcj/debug:test.git/ORIG_HEAD.lock': File exists.
+        #
+        #   Another git process seems to be running in this repository, e.g.
+        #   an editor opened by 'git commit'. Please make sure all processes
+        #   are terminated then try again. If it still fails, a git process
+        #   may have crashed in this repository earlier:
+        #   remove the file manually to continue.
+        #
+        # We neeed to check for that error, and run the command again
+
+        if 'Another git process' in stderrdata:
+            time.sleep(0.3)
+            return self.command_exec(command, inputdata, allowed_to_fail)
 
         if 'Connection refused' in stderrdata or 'Permission denied' in stderrdata:
             if 'Permission denied' in stderrdata:
@@ -264,7 +271,10 @@ class Git:
             raise
 
         self.git_last_commit = self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
+        self.logger.debug('Job ref points to ' + self.git_last_commit)
         self.command_exec(['read-tree', self.ref_head])
+
+        self.logger.info('Working directory in ' + self.work_tree)
 
         if checkout:
             # make sure we have checked out all files we have added until now. Important for simple models, so we have the
@@ -272,8 +282,10 @@ class Git:
             if not os.path.exists(self.work_tree):
                 os.makedirs(self.work_tree)
 
-            self.logger.info('Working directory in ' + self.work_tree)
-            self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '.'])
+            # updates index and working tree
+            self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+            # clears all files not beloging to git. Use .gitignore to protect files
+            self.command_exec(['--work-tree', self.work_tree, 'clean', '-d', '-f'])
 
     def restart_job(self):
         if not self.job_id:
@@ -289,8 +301,10 @@ class Git:
         if not os.path.exists(self.work_tree):
             os.makedirs(self.work_tree)
 
-        self.logger.info('Working directory in ' + self.work_tree)
-        self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '.'])
+        # updates index and working tree
+        self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+        # clears all files not beloging to git. Use .gitignore to protect files
+        self.command_exec(['--work-tree', self.work_tree, 'clean', '-d', '-f'])
 
     def create_job_id(self, data):
         """
@@ -315,7 +329,12 @@ class Git:
         if not os.path.exists(self.work_tree):
             os.makedirs(self.work_tree)
 
-        self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head])
+        self.logger.info('Working directory in ' + self.work_tree)
+
+        # updates index and working tree
+        self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+        # clears all files not beloging to git. Use .gitignore to protect files
+        self.command_exec(['--work-tree', self.work_tree, 'clean', '-d', '-f'])
         self.dirty = True
 
         return self.job_id
@@ -558,7 +577,15 @@ class Git:
         try:
             self.command_exec(['push', 'origin', '-f', self.ref_head])
             return True
-        except:
+        except Exception as e:
+            # this may fail due the fact that we have a thread already that pushes when changes occur
+            # git is not "thread safe" in this regard.
+            # e.g.
+            #
+            #     stderr: 'remote: error: cannot lock ref 'refs/aetros/job/cc3114813659d443c8e4f9682517067a1e9ec9ff':
+            #     is at 31785d1c126b24cabd1948cba2e126912393b8e6 but expected 3f7186391884bd097c09c31567ef49718fc271a5
+            #
+            # self.logger.warning(str(e))
             return False
 
     def commit_index(self, message):

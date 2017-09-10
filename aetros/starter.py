@@ -42,8 +42,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
 
     job_backend = JobBackend(model_name=owner + '/' + name)
     if id:
-        job_backend.load(id)
-        job_backend.restart()
+        job_backend.restart(id)
     else:
         try:
             create_info = api.create_job_info(full_id, hyperparameter, dataset_id)
@@ -54,7 +53,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
                          "Use your script directly if its a Python model.")
             raise
 
-        if not create_info or not create_info['id']:
+        if not create_info:
             raise Exception('Could not fetch model information. Are you online and have access to the given model?')
 
         job_backend.create(create_info=create_info, hyperparameter=hyperparameter, server=server, insights=insights)
@@ -103,6 +102,7 @@ def start_custom(logger, job_backend):
     my_env['PYTHONPATH'] += ':' + os.getcwd()
     my_env['AETROS_MODEL_NAME'] = job_backend.model_name
     my_env['AETROS_JOB_ID'] = job_backend.job_id
+    my_env['AETROS_ATTY'] = '1'
 
     logger.info("Setting up git repository %s in %s" % (git_url, work_tree))
     logger.info("Using git tree of '%s'" % (git_tree, ))
@@ -164,8 +164,6 @@ def start_keras(logger, job_backend):
 
     if hasattr(keras.backend, 'set_image_data_format'):
         keras.backend.set_image_data_format('channels_last')
-
-    job_model = job_backend.get_job_model()
 
     from .KerasCallback import KerasCallback
     trainer = Trainer(job_backend)

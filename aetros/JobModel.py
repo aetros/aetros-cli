@@ -68,10 +68,10 @@ class JobModel:
         return self.storage_dir + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],)
 
     def get_weights_filepath_latest(self):
-        return os.getcwd() + '/aetros/weights_latest.hdf5'
+        return os.getcwd() + '/aetros/weights/latest.hdf5'
 
     def get_weights_filepath_best(self):
-        return os.getcwd() + '/aetros/weights_best.hdf5'
+        return os.getcwd() + '/aetros/weights/best.hdf5'
 
     def get_input_names(self):
         names = []
