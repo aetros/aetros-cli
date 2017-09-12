@@ -346,14 +346,14 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
 
     if augmentation:
         train_datagen = get_image_data_augmentor_from_dataset(dataset)
-
-        if 'imageScale' not in node:
-            node['imageScale'] = 255
-
-        if float(node['imageScale']) > 0:
-            train_datagen.rescale = 1.0 / float(node['imageScale'])
     else:
         train_datagen = ImageDataGenerator()
+
+    if 'imageScale' not in node:
+        node['imageScale'] = 255
+
+    if float(node['imageScale']) > 0:
+        train_datagen.rescale = 1.0 / float(node['imageScale'])
 
     train_generator = train_datagen.flow_from_directory(
         directory=os.path.join(dataset_config['path'], 'training'),
@@ -376,7 +376,11 @@ def read_images_keras_generator(job_model, dataset, node, trainer):
 
     # ensure_dir(dataset_config['path'] + '/preview')
 
-    test_datagen = ImageDataGenerator(rescale=1. / 255)
+    test_datagen = ImageDataGenerator()
+
+    if float(node['imageScale']) > 0:
+        test_datagen.rescale = 1.0 / float(node['imageScale'])
+
     validation_generator = test_datagen.flow_from_directory(
         directory=os.path.join(dataset_config['path'], 'validation'),
         # save_to_dir=dataset_config['path'] + '/preview',

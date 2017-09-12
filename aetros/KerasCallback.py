@@ -346,8 +346,7 @@ class KerasCallback(Callback):
 
         for i, layer in enumerate(self.model.input_layers):
             x = input_data_x_sample[i][0]
-            if self.is_image_shape(x):
-
+            if len(x.shape) == 3 and self.is_image_shape(x):
                 if K.image_dim_ordering() == 'tf':
                     x = np.transpose(x, (2, 0, 1))
 
@@ -417,10 +416,9 @@ class KerasCallback(Callback):
                     if Y.size == 1:
                         Y = np.array([Y])
 
-
                     image = None
                     if len(Y.shape) > 1:
-                        if self.is_image_shape(Y) and K.image_dim_ordering() == 'tf':
+                        if len(Y.shape) == 3 and self.is_image_shape(Y) and K.image_dim_ordering() == 'tf':
                             Y = np.transpose(Y, (2, 0, 1))
 
                         image = PIL.Image.fromarray(get_layer_vis_square(Y))
