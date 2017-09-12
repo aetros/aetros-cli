@@ -184,8 +184,8 @@ class KerasCallback(Callback):
         if len(self.model.output_layers) > 1:
             loss_traces = []
             for output in self.model.output_layers:
-                loss_traces.append(output.name+'_validation')
                 loss_traces.append(output.name+'_training')
+                loss_traces.append(output.name+'_validation')
 
             self.all_losses = self.job_backend.create_channel('All loss', main=True, xaxis=xaxis, traces=loss_traces)
 
@@ -232,11 +232,6 @@ class KerasCallback(Callback):
         accuracy_log_name = 'acc'
         val_accuracy_log_name = 'val_acc'
 
-        if len(self.model.output_layers) > 1:
-            name = self.model.output_layers[0].name
-            accuracy_log_name = name+'_acc'
-            val_accuracy_log_name = 'val_' + name + '_acc'
-
         total_accuracy_validation = log.get(val_accuracy_log_name, 0)
         total_accuracy_training = log.get(accuracy_log_name, 0)
 
@@ -260,16 +255,16 @@ class KerasCallback(Callback):
 
         self.loss_channel.send(log['epoch'], log.get('loss', 0), log.get('val_loss', 0))
 
-        accuracy = [total_accuracy_validation*100, total_accuracy_training*100]
+        accuracy = [total_accuracy_training*100, total_accuracy_validation*100]
         if len(self.model.output_layers) > 1:
             accuracy = []
             losses = []
             for layer in self.model.output_layers:
-                accuracy.append(log.get('val_' + layer.name + '_acc', 0)*100)
                 accuracy.append(log.get(layer.name + '_acc', 0)*100)
+                accuracy.append(log.get('val_' + layer.name + '_acc', 0)*100)
 
-                losses.append(log.get('val_' + layer.name + '_loss', 0))
                 losses.append(log.get(layer.name + '_loss', 0))
+                losses.append(log.get('val_' + layer.name + '_loss', 0))
 
             self.all_losses.send(log['epoch'], losses)
 
