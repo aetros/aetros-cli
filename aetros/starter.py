@@ -76,7 +76,7 @@ def start_custom(logger, job_backend):
     if 'gitCustom' in config and config['gitCustom']:
         custom_git = config['gitCustom']
 
-    if custom_git and 'sourceGitUrl' not in config or not config['sourceGitUrl']:
+    if custom_git and ('sourceGitUrl' not in config or not config['sourceGitUrl']):
         raise Exception('Server git url is not configured. Aborted')
 
     if 'sourcePythonScript' not in config or not config['sourcePythonScript']:
