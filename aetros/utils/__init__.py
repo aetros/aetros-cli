@@ -19,6 +19,12 @@ def get_option(dict, key, default=None, type=None):
     return dict[key]
 
 
+def unpack_simple_job_id(full_id):
+    [owner, model, id] = unpack_full_job_id(full_id)
+
+    return [owner + '/' + model, id]
+
+
 def unpack_full_job_id(full_id):
     if full_id.count('/') < 2:
         raise Exception('Not a valid full job id: ' + full_id)

@@ -134,6 +134,7 @@ class KerasCallback(Callback):
         self.job_backend.set_info('parameters', get_total_params(self.model))
         self.job_backend.set_info('backend', K.backend())
         self.job_backend.set_info('Keras version', keras.__version__)
+        self.job_backend.set_info('Keras floatx', K.floatx())
 
         if hasattr(K, 'image_dim_ordering'):
             self.job_backend.set_info('Keras image_data_format', K.image_dim_ordering())
@@ -351,6 +352,10 @@ class KerasCallback(Callback):
         for i, layer in enumerate(self.model.input_layers):
             x = input_data_x_sample[i][0]
             if self.is_image_shape(x):
+
+                if K.image_dim_ordering() == 'tf':
+                    x = np.transpose(x, (2, 0, 1))
+
                 image = self.make_image(x)
                 if image:
                     images.append(JobImage(layer.name, image))
@@ -364,9 +369,9 @@ class KerasCallback(Callback):
 
         layers = self.model.layers + self.insight_layer
 
+        pos = 0
         for layer in layers:
             if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
-
                 fn = K.function(inputs, self.get_layout_output_tensors(layer))
                 Y = fn(input_data_x_sample)[0]
 
@@ -377,7 +382,8 @@ class KerasCallback(Callback):
                         data = np.transpose(data, (2, 0, 1))
 
                     image = PIL.Image.fromarray(get_image_tales(data))
-                    images.append(JobImage(layer.name, image))
+                    pos += 1
+                    images.append(JobImage(layer.name, image, pos=pos))
 
                 if layer.get_weights():
                     data = layer.get_weights()[0]
@@ -396,7 +402,8 @@ class KerasCallback(Callback):
                     data = data.reshape((data.shape[0] * data.shape[1], data.shape[2], data.shape[3]))
 
                     image = PIL.Image.fromarray(get_image_tales(data))
-                    images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights'))
+                    pos += 1
+                    images.append(JobImage(layer.name + '_weights', image, layer.name + ' weights', pos=pos))
 
             elif isinstance(layer, keras.layers.ZeroPadding2D) or isinstance(layer, keras.layers.ZeroPadding1D) or isinstance(layer, keras.layers.ZeroPadding3D):
                 pass
@@ -418,8 +425,7 @@ class KerasCallback(Callback):
 
                     image = None
                     if len(Y.shape) > 1:
-
-                        if len(Y.shape) == 3 and isinstance(layer, keras.layers.Activation) and K.image_dim_ordering() == 'tf':
+                        if self.is_image_shape(Y) and K.image_dim_ordering() == 'tf':
                             Y = np.transpose(Y, (2, 0, 1))
 
                         image = PIL.Image.fromarray(get_layer_vis_square(Y))
@@ -427,7 +433,8 @@ class KerasCallback(Callback):
                         image = self.make_image_from_dense(Y)
 
                     if image:
-                        images.append(JobImage(layer.name, image))
+                        pos += 1
+                        images.append(JobImage(layer.name, image, pos=pos))
 
         return images
 

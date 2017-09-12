@@ -97,17 +97,15 @@ class Git:
 
         # check if given repo_path is current folder.
         # check its origin remote and see if model_name matches
-        origin_url = self.get_remote_url('origin')
+        self.origin_url = self.get_remote_url('origin')
 
-        if origin_url and self.git_url not in origin_url:
+        if self.origin_url and self.git_url not in self.origin_url:
             raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). "
                             "You seem to switched between aetros.com and on-premise installation. "
-                            "Please remove the Git repository." % (self.git_path, origin_url, self.git_url))
+                            "Please remove the Git repository." % (self.git_path, self.origin_url, self.git_url))
 
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
-
-        self.logger.info("Started tracking of job files in git %s for remote %s" % (self.git_path, origin_url))
 
     def get_remote_url(self, origin_name):
         output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip()
@@ -286,6 +284,16 @@ class Git:
             # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
             # of files checked out by start.py (custom models)
             self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+
+    def read_tree(self, ref):
+        """
+        Reads the ref into the current index and points last commit_id to its head.
+
+        :param ref: the actual git reference
+        :return:
+        """
+        self.command_exec(['read-tree', ref])
+        self.git_last_commit = self.command_exec(['rev-parse', ref])[0].decode('utf-8').strip()
 
     def restart_job(self):
         if not self.job_id:
@@ -566,7 +574,7 @@ class Git:
         self.add_file(path, content)
 
         if not self.git_batch_commit:
-            self.commit_index(message)
+            return self.commit_index(message)
         else:
             self.git_batch_commit_messages.append(message)
 

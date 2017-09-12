@@ -18,6 +18,7 @@ command_summaries = [
     ['run', 'Executes a command on an AETROS server.'],
     ['api', 'Executes a API call through SSH connection.'],
     ['push-job', 'Pushes a local job to AETROS Trainer.'],
+    ['add', 'Adds a local file to a job tree.'],
 ]
 
 def parseopts(args):
@@ -54,6 +55,7 @@ def main(args=None):
     from aetros.commands.PredictionServerCommand import PredictionServerCommand
     from aetros.commands.StartCommand import StartCommand
     from aetros.commands.RunCommand import RunCommand
+    from aetros.commands.AddCommand import AddCommand
 
     commands_dict = {
         'start': StartCommand,
@@ -63,6 +65,7 @@ def main(args=None):
         'run': RunCommand,
         'api': ApiCommand,
         'push-job': PushJobCommand,
+        'add': AddCommand,
     }
 
     if cmd_name not in commands_dict:

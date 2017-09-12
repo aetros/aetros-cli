@@ -40,4 +40,4 @@ class PushJobCommand:
             self.logger.error("Are you in the correct directory?")
 
         self.logger.info('Pushing ' + ref)
-        subprocess.call(['git', '--bare', '--git-dir', git_dir, 'push', 'origin', '-f', ref])
+        subprocess.call(['git', '--bare', '--git-dir', git_dir, 'push', 'origin', ref])

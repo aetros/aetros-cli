@@ -597,13 +597,14 @@ class JobLossChannel:
 
 
 class JobImage:
-    def __init__(self, id, image, label=None):
+    def __init__(self, id, image, label=None, pos=None):
         self.id = id
         if not isinstance(image, PIL.Image.Image):
             raise Exception('JobImage requires a PIL.Image as image argument.')
 
         self.image = image
         self.label = label
+        self.pos = pos
 
 
 class JobChannel:
@@ -776,6 +777,8 @@ class JobBackend:
         self.read_config(model_name)
         self.client = JobClient(self.config, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.host, self.config['storage_dir'], self.model_name)
+
+        self.logger.info("Started tracking of job files in git %s for remote %s" % (self.git.git_path, self.git.origin_url))
 
     @property
     def log_level(self):
@@ -1187,6 +1190,11 @@ class JobBackend:
         self.general_logger_error.send_buffer()
         self.general_logger_stdout.send_buffer()
 
+        self.logger.debug("sync weights...")
+        self.sync_weights(push=False)
+
+        self.set_status('STOPPING')
+
         self.stopping = True
         self.logger.debug("stopping ...")
         self.ended = True
@@ -1463,7 +1471,7 @@ class JobBackend:
 
         return JobModel(self.job_id, self.job, self.config['storage_dir'])
 
-    def sync_weights(self):
+    def sync_weights(self, push=True):
 
         if not os.path.exists(self.get_job_model().get_weights_filepath_latest()):
             return
@@ -1484,7 +1492,8 @@ class JobBackend:
                 'image_data_format': image_data_format
             }
             self.git.commit_file('Added weights', 'aetros/weights/latest.json', json.dumps(info))
-            self.git.push()
+            if push:
+                self.git.push()
 
         # todo, implement optional saving of self.get_job_model().get_weights_filepath_best()
 
@@ -1543,7 +1552,8 @@ class JobBackend:
             })
             info[image.id] = {
                 'file': image.id+'.jpg',
-                'label': image.label
+                'label': image.label,
+                'pos': image.pos
             }
 
         with self.git.batch_commit('INSIGHT ' + str(x)):
@@ -1575,9 +1585,6 @@ class JobBackend:
 
         env['hostname'] = socket.gethostname()
         env['variables'] = dict(os.environ)
-
-        if 'API_KEY' in env['variables']:
-            del env['variables']['API_KEY']
 
         env['pip_packages'] = sorted([[i.key, i.version] for i in pip.get_installed_distributions()])
         self.set_system_info('environment', env)
