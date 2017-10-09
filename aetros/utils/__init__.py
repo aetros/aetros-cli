@@ -37,7 +37,7 @@ def unpack_full_job_id(full_id):
 
 
 def read_home_config(path = '~/.aetros.yml', logger=None):
-    path = os.path.expanduser(path)
+    path = os.path.normpath(os.path.expanduser(path))
     custom_config = {}
 
     if os.path.exists(path):
@@ -67,7 +67,7 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
 
 
 def read_config(path = '.aetros.yml', logger=None):
-    path = os.path.expanduser(path)
+    path = os.path.normpath(os.path.expanduser(path))
     home_config = read_home_config(logger=logger)
 
     config = home_config
@@ -85,7 +85,7 @@ def read_config(path = '.aetros.yml', logger=None):
     if 'parameters' not in config:
         config['parameters'] = {}
 
-    config['storage_dir'] = os.path.expanduser(config['storage_dir'])
+    config['storage_dir'] = os.path.normpath(os.path.expanduser(config['storage_dir']))
 
     return config
 

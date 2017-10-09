@@ -56,22 +56,22 @@ class JobModel:
         return self.job['config']['batchSize']
 
     def get_model_h5_path(self):
-        return os.getcwd() + '/aetros/model.h5'
+        return os.path.normpath(os.getcwd() + '/aetros/model.h5')
 
     def get_layers_path(self):
-        return os.getcwd() + '/aetros/layer.json'
+        return os.path.normpath(os.getcwd() + '/aetros/layer.json')
 
     def get_dataset_dir(self):
-        return os.getcwd() + '/aetros/dataset/'
+        return os.path.normpath(os.getcwd() + '/aetros/dataset/')
 
     def get_dataset_downloads_dir(self, dataset):
-        return self.storage_dir + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],)
+        return os.path.normpath(self.storage_dir + '/aetros/dataset/%s/datasets_downloads' % (dataset['id'],))
 
     def get_weights_filepath_latest(self):
-        return os.getcwd() + '/aetros/weights/latest.hdf5'
+        return os.path.normpath(os.getcwd() + '/aetros/weights/latest.hdf5')
 
     def get_weights_filepath_best(self):
-        return os.getcwd() + '/aetros/weights/best.hdf5'
+        return os.path.normpath(os.getcwd() + '/aetros/weights/best.hdf5')
 
     def get_input_names(self):
         names = []
@@ -229,7 +229,7 @@ class JobModel:
                     self._datasets[id] = json.loads(f.read())
 
             for owner in os.listdir(self.get_dataset_dir()):
-                path = self.get_dataset_dir() + owner + '/dataset/'
+                path = os.path.normpath(self.get_dataset_dir() + owner + '/dataset/')
                 for name in os.listdir(path):
                     if name.endswith('.json'):
                         read_dataset(owner + '/dataset/' + name[:-len('.json')])

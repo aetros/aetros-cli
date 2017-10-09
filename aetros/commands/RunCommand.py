@@ -75,6 +75,7 @@ class RunCommand:
             self.show_stdout = True
 
         config_path = parsed_args.config if parsed_args.config else '.aetros.yml'
+        config_path = os.path.normpath(config_path)
         config = {}
 
         if os.path.exists(config_path):
