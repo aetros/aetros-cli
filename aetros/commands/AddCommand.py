@@ -37,13 +37,13 @@ class AddCommand:
         [model, job_id] = unpack_simple_job_id(parsed_args.id)
         ref = 'refs/aetros/job/' + job_id
 
-        git_dir = config['storage_dir'] + '/' + model + '.git'
+        git_dir = os.path.normpath(config['storage_dir'] + '/' + model + '.git')
 
         if not os.path.isdir(git_dir):
             self.logger.error("Git repository for model %s in %s not found." % (parsed_args.id, git_dir))
             self.logger.error("Are you in the correct directory?")
 
-        git = Git(self.logger, None, config['host'], config['storage_dir'], model)
+        git = Git(self.logger, None, config, model)
         git.job_id = job_id
         try:
             git.read_tree(ref)

@@ -11,7 +11,7 @@ class StartCommand:
     def main(self, args):
         from aetros.starter import start
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' start')
-        parser.add_argument('name', nargs='?', help='the model name, e.g. aetros/mnist-network, or job id, e.g. user/modelname/0db75a64acb74c27bd72c22e359de7a4c44a20e5.')
+        parser.add_argument('name', nargs='?', help='the model name, e.g. aetros/mnist-network to start new job, or job id, e.g. user/modelname/0db75a64acb74c27bd72c22e359de7a4c44a20e5 to restart.')
         parser.add_argument('--insights', action='store_true', help="activates insights. Only for simple models.")
         parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for simple models with placeholders as input/output.")
         parser.add_argument('--gpu', action='store_true', help="Activates GPU if available. Only for Theano models.")

@@ -13,7 +13,7 @@ import sys
 import traceback
 
 from aetros import api
-from aetros.utils import git, read_home_config, unpack_full_job_id
+from aetros.utils import git, read_home_config, unpack_full_job_id, read_config
 from . import keras_model_utils
 from .backend import JobBackend
 from .Trainer import Trainer
@@ -61,6 +61,9 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS Trainer.')
 
+    job_backend.setup_std_output_logging()
+    job_backend.start()
+
     if job_backend.is_simple_model():
         start_keras(logger, job_backend)
     else:
@@ -99,6 +102,7 @@ def start_custom(logger, job_backend):
     my_env = os.environ.copy()
     if 'PYTHONPATH' not in my_env:
         my_env['PYTHONPATH'] = ''
+
     my_env['PYTHONPATH'] += ':' + os.getcwd()
     my_env['AETROS_MODEL_NAME'] = job_backend.model_name
     my_env['AETROS_JOB_ID'] = job_backend.job_id
@@ -114,24 +118,36 @@ def start_custom(logger, job_backend):
         args = ['git', 'clone', git_url, work_tree]
         code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
         if code != 0:
-            raise Exception('Could not clone repository %s to %s' %(git_url, work_tree))
+            raise Exception('Could not clone repository %s to %s' % (git_url, work_tree))
 
         # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
         git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
         git_execute(logger, work_tree, ['checkout', git_tree])
 
     except GitCommandException as e:
-        raise Exception('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
+        logger.error('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
+        raise
 
-    args = (sys.executable, python_script)
+    if os.path.exists(work_tree + '/.aetros.yml'):
+        logger.error('No .aetros.yml file found in your Git repository. See Configuration section in the documentation.')
+        sys.exit(1)
+
+    project_config = read_config(work_tree + '/.aetros.yml')
+
+    if 'command' not in project_config or project_config['command'] == '':
+        logger.error('No "command" specified in .aetros.yml file. See Configuration section in the documentation.')
+        sys.exit(1)
+
+    command = project_config['command']
+
     logger.info("Model source code checked out.")
     logger.info("-----------")
     logger.info("-----------")
     logger.info("Switch working directory to " + work_tree)
-    logger.warning("$ %s %s" % args)
+    logger.warning("$ %s " % command)
 
     try:
-        subprocess.Popen(args, close_fds=True, env=my_env, cwd=work_tree).wait()
+        subprocess.Popen(command, shell=True, env=my_env, stderr=sys.stderr, stdout=sys.stdout, cwd=work_tree).wait()
     except KeyboardInterrupt:
         logger.warning("Job aborted.")
         sys.exit(1)
@@ -153,9 +169,6 @@ def git_execute(logger, repo_path, args):
 def start_keras(logger, job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     os.chdir(job_backend.git.work_tree)
-
-    job_backend.setup_std_output_logging()
-    job_backend.start()
 
     # all our shapes are Tensorflow schema. (height, width, channels)
     import keras.backend

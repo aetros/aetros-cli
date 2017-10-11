@@ -34,14 +34,17 @@ class Git:
     If created in AETROS Trainer, we retrieve the initial configuration of the job using `git pull origin refs/aetros/job/<id>` and read
     its `aetros/job.json` blob of the head tree.
     """
-    def __init__(self, logger, client, git_host, storage_dir, model_name):
+    def __init__(self, logger, client, config, model_name):
         self.logger = logger
         self.client = client
-        self.git_host = git_host
-        self.storage_dir = storage_dir
+
+        self.config = config
+        self.git_host = config['host']
+        self.storage_dir = config['storage_dir']
+
         self.model_name = model_name
 
-        self.git_path = self.storage_dir + '/' + model_name + '.git'
+        self.git_path = os.path.normpath(self.storage_dir + '/' + model_name + '.git')
 
         self.debug = False
         self.last_push_time = 0
@@ -70,20 +73,10 @@ class Git:
         self.git_name = None
         self.git_email = None
 
-        import aetros.api
-        try:
-            user = json.loads(aetros.api.request('user-git'))
-
-            self.git_name = user['name']
-            self.git_email = user['email']
-        except ApiConnectionError as e:
-            self.online = False
-
-        if not self.git_name:
-            import getpass
-            self.git_name = getpass.getuser()
-            import socket
-            self.git_email = self.git_name + '@' + socket.gethostname()
+        import getpass
+        self.git_name = getpass.getuser()
+        import socket
+        self.git_email = self.git_name + '@' + socket.gethostname()
 
         # check if its a git repo
         if os.path.exists(self.git_path):
@@ -107,6 +100,21 @@ class Git:
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
 
+    def prepare_git_user(self):
+        """
+        Tries to read the git name and email, so all git commits have correct author.
+        Requests /api/user-git to check which user is behind the current configured ssh key.
+        """
+        import aetros.api
+        try:
+            user = json.loads(aetros.api.request('user-git'))
+
+            self.git_name = user['name']
+            self.git_email = user['email']
+        except ApiConnectionError as e:
+            self.online = False
+
+
     def get_remote_url(self, origin_name):
         output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip()
 
@@ -117,7 +125,7 @@ class Git:
 
     @property
     def work_tree(self):
-        return self.storage_dir + '/' + self.model_name + '/' + self.job_id
+        return os.path.normpath(self.storage_dir + '/' + self.model_name + '/' + self.job_id)
 
     @property
     def env(self):
@@ -250,12 +258,10 @@ class Git:
         """
         Fetch the current job reference (refs/aetros/job/<id>) from origin and (when checkout=True)read its tree to
         the current git index and checkout into working director.
-        
-        :type job_id: str 
         """
         self.job_id = job_id
 
-        self.logger.info("Git fetch job reference %s" % (self.ref_head, ))
+        self.logger.debug("Git fetch job reference %s" % (self.ref_head, ))
         out, code, err = self.command_exec(['ls-remote', 'origin', self.ref_head])
 
         if code:
@@ -272,11 +278,11 @@ class Git:
         self.logger.debug('Job ref points to ' + self.git_last_commit)
         self.command_exec(['read-tree', self.ref_head])
 
-        self.logger.info('Working directory in ' + self.work_tree)
-
         if checkout:
-            # make sure we have checked out all files we have added until now. Important for simple models, so we have the
-            # actual model.py and dataset scripts.
+            self.logger.info('Working directory in ' + self.work_tree)
+
+            # make sure we have checked out all files we have added until now. Important for simple models,
+            # so we have the actual model.py and dataset scripts.
             if not os.path.exists(self.work_tree):
                 os.makedirs(self.work_tree)
 
@@ -369,6 +375,7 @@ class Git:
         This removes also the current git index file. You can not start the process again.
         """
         self.active_thread = False
+        self.thread_push_instance.join()
 
         with self.batch_commit('STREAM_END'):
             for path, handle in six.iteritems(self.streamed_files.copy()):
@@ -377,7 +384,7 @@ class Git:
                 handle.close()
 
                 # open again and read full content
-                full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
+                full_path = os.path.normpath(self.temp_path + '/stream-blob/' + self.job_id + '/' + path)
                 self.logger.debug('Git stream end for file: ' + full_path)
                 with open(full_path, 'r') as f:
                     self.commit_file(path, path, f.read())
@@ -387,7 +394,7 @@ class Git:
 
         with self.batch_commit('STORE_END'):
             for path, bar in six.iteritems(self.store_files.copy()):
-                full_path = self.temp_path + '/store-blob/' + self.job_id + '/' + path
+                full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
 
                 self.logger.debug('Git store end for file: ' + full_path)
                 self.commit_file(path, path, open(full_path, 'r').read())
@@ -464,7 +471,7 @@ class Git:
         :return: 
         """
 
-        full_path = self.temp_path + '/store-blob/' + self.job_id + '/' + path
+        full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
         if not os.path.exists(os.path.dirname(full_path)):
             os.makedirs(os.path.dirname(full_path))
 
@@ -508,7 +515,7 @@ class Git:
 
         # return handler to write to this file
 
-        full_path = self.temp_path + '/stream-blob/' + self.job_id + '/' + path
+        full_path = os.path.normpath(self.temp_path + '/stream-blob/' + self.job_id + '/' + path)
         if not os.path.exists(os.path.dirname(full_path)):
             os.makedirs(os.path.dirname(full_path))
 
@@ -627,6 +634,14 @@ class Git:
             return out.decode('utf-8').strip()
         else:
             raise Exception('Job ref not created yet. ' + self.ref_head)
+
+    def has_file(self, path):
+        try:
+            out, code, err = self.command_exec(['cat-file', '-p', self.ref_head+':'+path])
+
+            return code == 0
+        except:
+            return False
 
     def git_read(self, path):
         return self.command_exec(['cat-file', '-p', self.ref_head+':'+path])

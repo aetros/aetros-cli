@@ -56,6 +56,7 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
         'storage_dir': '~/.aetros',
         'ssh_key': os.getenv('AETROS_SSH_KEY'),
         'ssh': 'ssh',
+        'image': 'host',
         'ssl_verify': True,
     }
 
@@ -78,6 +79,9 @@ def read_config(path = '.aetros.yml', logger=None):
         if custom_config is None:
             custom_config = {}
 
+        if 'storage_dir' in custom_config:
+            del custom_config['storage_dir']
+
         config.update(custom_config)
 
         logger and logger.debug('Config loaded from ' + os.path.realpath(path))
@@ -85,9 +89,8 @@ def read_config(path = '.aetros.yml', logger=None):
     if 'parameters' not in config:
         config['parameters'] = {}
 
-    config['storage_dir'] = os.path.normpath(os.path.expanduser(config['storage_dir']))
-
     return config
+
 
 def invalid_json_values(obj):
     if isinstance(obj, np.generic):

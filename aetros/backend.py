@@ -556,6 +556,7 @@ def start_job(name=None):
     """
 
     job = JobBackend(name)
+    # todo, depend on env variable if server already logs stdout/stderrr
     job.setup_std_output_logging()
 
     if os.getenv('AETROS_JOB_ID'):
@@ -776,7 +777,7 @@ class JobBackend:
 
         self.read_config(model_name)
         self.client = JobClient(self.config, self.event_listener, self.logger)
-        self.git = Git(self.logger, self.client, self.host, self.config['storage_dir'], self.model_name)
+        self.git = Git(self.logger, self.client, self.config, self.model_name)
 
         self.logger.info("Started tracking of job files in git %s for remote %s" % (self.git.git_path, self.git.origin_url))
 
@@ -1069,6 +1070,8 @@ class JobBackend:
         on_shutdown.started_jobs.append(self)
 
         self.client.configure(self.model_name, self.job_id)
+        self.git.prepare_git_user()
+
         if self.git.online:
             self.logger.debug('Job backend start')
             self.client.start()
@@ -1408,11 +1411,22 @@ class JobBackend:
         if '.' in path:
             path = path.split('.')
             current = dictionary
+
             for item in path:
                 if item not in current:
                     raise Exception('Parameter ' + path + ' not found and no default value given.')
 
                 current = current[item]
+
+                if isinstance(current, dict) and '$value' in current and current['$value'] in current:
+                    # hyperparameter groups
+                    # keras_optimizer: {
+                    #   $value: "rmsprop",
+                    #   rmsprop: {
+                    #     learning_rate: 0.0781,
+                    #   }
+                    # }
+                    current = current[current['$value']]
 
             return current
 
@@ -1425,6 +1439,7 @@ class JobBackend:
 
         # normally git would create a job_id, but we have already one
         # so download the ref and check it out.
+        self.logger.info('Fetch Git ref for refs/aetros/job/' + job_id)
         self.git.fetch_job(job_id, checkout=True)
         self.load_job_from_ref()
 

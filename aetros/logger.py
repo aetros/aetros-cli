@@ -8,7 +8,6 @@ import os
 import six
 from threading import Timer, Thread, Lock
 
-
 class GeneralLogger(object):
     def __init__(self, job_backend, logger=None, error=False):
         self.error = error
@@ -18,6 +17,7 @@ class GeneralLogger(object):
         self.last_messages = ''
         self.logger = logger
         self.lock = Lock()
+        self.attach_last_messages = {}
 
         if not self.logger:
             self.logger = sys.__stdout__ if error is False else sys.__stderr__
@@ -45,6 +45,10 @@ class GeneralLogger(object):
 
         :param buffer: a buffer instance with block read() method
         """
+
+        bid = id(buffer)
+        self.attach_last_messages[bid] = six.b('')
+
         def reader():
             while True:
 
@@ -55,9 +59,14 @@ class GeneralLogger(object):
                     if buf == six.b(''):
                         return
 
+                    self.attach_last_messages[bid] += buf
+
+                    if len(self.attach_last_messages[bid]) > 21 * 1024:
+                        self.attach_last_messages[bid] = self.attach_last_messages[bid][-20 * 1024:]
+
                     self.write(buf)
                 except Exception as e:
-                    #  we need to make sure, we continue to read otherwise the process of this buffer
+                    # we need to make sure, we continue to read otherwise the process of this buffer
                     # will block and we have a stuck process.
                     sys.__stderr__.write(str(e))
                     pass

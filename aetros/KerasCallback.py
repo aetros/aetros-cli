@@ -167,8 +167,8 @@ class KerasCallback(Callback):
         if len(self.model.output_layers) > 1:
             traces = []
             for output in self.model.output_layers:
-                traces.append(output.name+'_training')
-                traces.append(output.name+'_validation')
+                traces.append('train_' + output.name)
+                traces.append('val_' + output.name)
 
         is_accuracy_kpi = True if self.job_backend.kpi_channel is None else False
 
@@ -184,8 +184,8 @@ class KerasCallback(Callback):
         if len(self.model.output_layers) > 1:
             loss_traces = []
             for output in self.model.output_layers:
-                loss_traces.append(output.name+'_training')
-                loss_traces.append(output.name+'_validation')
+                loss_traces.append('train_' + output.name)
+                loss_traces.append('val_' + output.name)
 
             self.all_losses = self.job_backend.create_channel('All loss', main=True, xaxis=xaxis, traces=loss_traces)
 
@@ -365,7 +365,8 @@ class KerasCallback(Callback):
 
         pos = 0
         for layer in layers:
-            if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D):
+            if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D)\
+                    or isinstance(layer, keras.layers.convolutional.UpSampling2D):
                 fn = K.function(inputs, self.get_layout_output_tensors(layer))
                 Y = fn(input_data_x_sample)[0]
 

@@ -15,12 +15,12 @@ import six
 from requests.auth import HTTPBasicAuth
 
 from aetros.api import raise_response_exception
+from aetros.git import Git
 from aetros.logger import GeneralLogger
 
 from aetros.backend import EventListener, BackendClient
-from aetros.utils import read_config
+from aetros.utils import read_config, unpack_simple_job_id
 import aetros.cuda_gpu
-
 
 class ServerClient(BackendClient):
     def __init__(self, host, event_listener, logger):
@@ -93,6 +93,7 @@ class ServerCommand:
         self.server = None
         self.ending = False
         self.active = True
+        self.config = {}
         self.queue = {}
         self.queuedMap = {}
 
@@ -127,7 +128,7 @@ class ServerCommand:
             parser.print_help()
             sys.exit()
 
-        config = read_config()
+        self.config = read_config()
 
         if parsed_args.max_parallel:
             self.max_parallel_jobs = int(parsed_args.max_parallel)
@@ -152,13 +153,13 @@ class ServerCommand:
         ssh_key_registered = False
         if parsed_args.generate_ssh_key:
 
-            self.ssh_key_path = os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa')
+            self.ssh_key_path = os.path.normpath(os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa'))
             if not os.path.exists(self.ssh_key_path):
                 self.logger.info('Generate SSH key')
                 subprocess.check_output(['ssh-keygen', '-q', '-N', '', '-t', 'rsa', '-b', '4048', '-f', self.ssh_key_path])
 
-            self.logger.info('Register SSH key at ' + config['host'])
-            url = 'https://' + config['host'] + '/api/server/ssh-key'
+            self.logger.info('Register SSH key at ' + self.config['host'])
+            url = 'https://' + self.config['host'] + '/api/server/ssh-key'
 
             with open(self.ssh_key_path +'.pub', 'r') as f:
                 data = {
@@ -168,10 +169,10 @@ class ServerCommand:
                 }
 
                 auth = None
-                if 'auth_user' in config:
-                    auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
+                if 'auth_user' in self.config:
+                    auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
 
-                response = requests.post(url, data, auth=auth, verify=config['ssl_verify'], headers={'Accept': 'application/json'})
+                response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
 
                 if response.status_code != 200:
                     raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
@@ -184,14 +185,14 @@ class ServerCommand:
                     'secure_key': parsed_args.generate_ssh_key,
                     'key': f.read(),
                 }
-                self.logger.info('Delete SSH key at ' + config['host'])
-                url = 'https://' + config['host'] + '/api/server/ssh-key/delete'
+                self.logger.info('Delete SSH key at ' + self.config['host'])
+                url = 'https://' + self.config['host'] + '/api/server/ssh-key/delete'
 
                 auth = None
-                if 'auth_user' in config:
-                    auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
+                if 'auth_user' in self.config:
+                    auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
 
-                response = requests.post(url, data, auth=auth, verify=config['ssl_verify'], headers={'Accept': 'application/json'})
+                response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
 
                 if response.status_code != 200:
                     raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)
@@ -204,12 +205,12 @@ class ServerCommand:
             atexit.register(delete_ssh_key)
 
         if parsed_args.host:
-            config['host'] = parsed_args.host
+            self.config['host'] = parsed_args.host
 
         if self.ssh_key_path:
-            config['ssh_key'] = self.ssh_key_path
+            self.config['ssh_key'] = self.ssh_key_path
 
-        self.server = ServerClient(config, event_listener, self.logger)
+        self.server = ServerClient(self.config, event_listener, self.logger)
 
         self.general_logger_stdout = GeneralLogger(job_backend=self)
         self.general_logger_stderr = GeneralLogger(job_backend=self, error=True)
@@ -218,7 +219,7 @@ class ServerCommand:
         sys.stderr = self.general_logger_stderr
 
         self.server.configure(parsed_args.name)
-        self.logger.info('Connecting to ' + config['host'])
+        self.logger.info('Connecting to ' + self.config['host'])
         self.server.start()
         self.write_log("\n")
 
@@ -360,15 +361,44 @@ class ServerCommand:
         for process in self.job_processes:
             job = getattr(process, 'job')
             exit_code = process.poll()
-            if exit_code is not None and exit_code > 0:
-                reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
-                self.logger.error(reason)
-                self.server.send_message({'type': 'job-failed', 'id': job['id'], 'error': reason})
-            elif exit_code is not None and exit_code == 0:
-                self.logger.info('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
+            model, job_id = unpack_simple_job_id(job['id'])
 
-            if exit_code is not None and job['id'] in self.queuedMap:
-                del self.queuedMap[job['id']]
+            if exit_code is not None:
+                # command ended
+
+                if exit_code == 0:
+                    self.logger.info('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
+                if exit_code > 0:
+                    reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
+                    self.logger.error(reason)
+
+                if job['id'] in self.queuedMap:
+                    del self.queuedMap[job['id']]
+
+                git = Git(self.logger, None, self.config, model)
+                git.fetch_job(job_id)
+
+                if not git.has_file('aetros/job/log.txt'):
+
+                    log = six.b('')
+                    if id(process.stdout) in self.general_logger_stdout.attach_last_messages:
+                        log += self.general_logger_stdout.attach_last_messages[id(process.stdout)]
+
+                    if id(process.stderr) in self.general_logger_stderr.attach_last_messages:
+                        log += self.general_logger_stderr.attach_last_messages[id(process.stderr)]
+
+                    git.commit_file('LOGS', 'aetros/job/log.txt', log)
+
+                from aetros.const import JOB_STATUS
+                if not git.has_file('aetros/job/status/progress.json'):
+                    git.commit_file(
+                        'STOP',
+                        'aetros/job/status/progress.json',
+                        str(JOB_STATUS.PROGRESS_STATUS_CRASHED) if exit_code > 0 else str(JOB_STATUS.PROGRESS_STATUS_DONE)
+                    )
+
+                git.push()
+                git.clean_up()
 
         # remove dead job processes
         self.job_processes = [x for x in self.job_processes if x.poll() is None]
@@ -412,15 +442,12 @@ class ServerCommand:
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': job['id']})
 
-            if self.show_stdout:
-                process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
-                    stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
+            if self.show_stdout:
                 self.general_logger_stdout.attach(process.stdout)
                 self.general_logger_stderr.attach(process.stderr)
-            else:
-                process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
-                    stderr=DEVNULL, stdout=DEVNULL)
 
             setattr(process, 'job', job)
             self.job_processes.append(process)

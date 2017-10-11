@@ -33,7 +33,7 @@ class PushJobCommand:
         model = parsed_args.id[0:parsed_args.id.rindex('/')]
         ref = 'refs/aetros/job/' + parsed_args.id[parsed_args.id.rindex('/')+1:]
 
-        git_dir = config['storage_dir'] + '/' + model + '.git'
+        git_dir = os.path.normpath(config['storage_dir'] + '/' + model + '.git')
 
         if not os.path.isdir(git_dir):
             self.logger.error("Git repository for model %s in %s not found." % (parsed_args.id, git_dir))

@@ -239,9 +239,9 @@ def read_images_in_memory(job_model, dataset, node, trainer):
             t.start()
 
         for validation_or_training in ['validation', 'training']:
-            if os.path.isdir(path + '/' + validation_or_training):
-                for category_name in os.listdir(path + '/' + validation_or_training):
-                    if os.path.isdir(path + '/' + validation_or_training + '/' + category_name):
+            if os.path.isdir(os.path.normpath(path + '/' + validation_or_training)):
+                for category_name in os.listdir(os.path.normpath(path + '/' + validation_or_training)):
+                    if os.path.isdir(os.path.normpath(path + '/' + validation_or_training + '/' + category_name)):
 
                         if category_name not in category_map:
                             category_map[category_name] = classes_count
@@ -255,9 +255,8 @@ def read_images_in_memory(job_model, dataset, node, trainer):
 
                             classes_count += 1
 
-                        for id in os.listdir(path + '/' + validation_or_training + '/' + category_name):
-                            file_path = os.path.join(
-                                path, validation_or_training, category_name, id)
+                        for id in os.listdir(os.path.normpath(path + '/' + validation_or_training + '/' + category_name)):
+                            file_path = os.path.join(path, validation_or_training, category_name, id)
                             q.put([file_path, validation_or_training == 'validation', category_name])
                             max += 1
 
