@@ -212,8 +212,8 @@ class ServerCommand:
 
         self.server = ServerClient(self.config, event_listener, self.logger)
 
-        self.general_logger_stdout = GeneralLogger(job_backend=self)
-        self.general_logger_stderr = GeneralLogger(job_backend=self, error=True)
+        self.general_logger_stdout = GeneralLogger(job_backend=self, redirect_to=sys.__stdout__)
+        self.general_logger_stderr = GeneralLogger(job_backend=self, redirect_to=sys.__stderr__)
 
         sys.stdout = self.general_logger_stdout
         sys.stderr = self.general_logger_stderr
@@ -249,6 +249,7 @@ class ServerCommand:
 
     def write_log(self, message):
         self.server.send_message({'type': 'log', 'message': message})
+        return True
 
     def stop(self):
         self.active = False
@@ -390,7 +391,8 @@ class ServerCommand:
                     git.commit_file('LOGS', 'aetros/job/log.txt', log)
 
                 from aetros.const import JOB_STATUS
-                if not git.has_file('aetros/job/status/progress.json'):
+                if exit_code > 0 or not git.has_file('aetros/job/status/progress.json'):
+                    self.logger.info("Set progress to " + ('CRASHED' if exit_code > 0 else 'DONE'))
                     git.commit_file(
                         'STOP',
                         'aetros/job/status/progress.json',

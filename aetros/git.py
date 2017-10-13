@@ -162,6 +162,13 @@ class Git:
     def git_url(self):
         return 'git@%s:%s.git' % (self.git_host, self.model_name)
 
+    def get_base_command(self):
+        base_command = ['git', '--bare', '--git-dir', self.git_path]
+        base_command += ['-c', 'user.name=' + self.git_name]
+        base_command += ['-c', 'user.email=' + self.git_email]
+
+        return ''.join(base_command)
+
     def command_exec(self, command, inputdata=None, allowed_to_fail=False):
         interrupted = False
 
@@ -287,7 +294,7 @@ class Git:
                 os.makedirs(self.work_tree)
 
             # updates index and working tree
-            # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
+            # this leaves other files in self.work_tree alone, which is necessary because this is also the working tree
             # of files checked out by start.py (custom models)
             self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
 
@@ -600,7 +607,7 @@ class Git:
             #     stderr: 'remote: error: cannot lock ref 'refs/aetros/job/cc3114813659d443c8e4f9682517067a1e9ec9ff':
             #     is at 31785d1c126b24cabd1948cba2e126912393b8e6 but expected 3f7186391884bd097c09c31567ef49718fc271a5
             #
-            # self.logger.warning(str(e))
+            self.logger.warning(str(e))
             return False
 
     def commit_index(self, message):
@@ -642,6 +649,19 @@ class Git:
             return code == 0
         except:
             return False
+
+    def contents(self, path):
+        """
+        Reads the given path of current ref_head and returns its content as utf-8
+        """
+        try:
+            out, code, err = self.command_exec(['cat-file', '-p', self.ref_head+':'+path])
+            if not code:
+                return out.decode('utf-8')
+        except:
+            pass
+
+        return None
 
     def git_read(self, path):
         return self.command_exec(['cat-file', '-p', self.ref_head+':'+path])

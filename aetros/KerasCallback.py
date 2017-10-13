@@ -39,7 +39,7 @@ def image_data_format():
 
 
 class KerasCallback(Callback):
-    def __init__(self, job_backend, general_logger, force_insights=False):
+    def __init__(self, job_backend, logger, force_insights=False):
         self.params = {}
         super(KerasCallback, self).__init__()
         self.validation_per_batch = []
@@ -55,7 +55,7 @@ class KerasCallback(Callback):
         self.confusion_matrix = True
 
         self.job_backend = job_backend
-        self.general_logger = general_logger
+        self.logger = logger
         self._test_with_acc = None
         self.last_batch_time = time.time()
         self.start_time = time.time()
@@ -214,7 +214,7 @@ class KerasCallback(Callback):
         self.job_backend.batch(batch, self.current['nb_batches'], logs['size'])
 
     def write(self, line):
-        self.general_logger.write(line)
+        self.logger.info(line)
 
     def on_epoch_begin(self, epoch, logs={}):
         self.learning_rate_start = self.get_learning_rate()
@@ -277,7 +277,7 @@ class KerasCallback(Callback):
             #todo, multiple outputs
             line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (
                 log['epoch'], log['loss'], log.get('acc', 0), log.get('val_loss', 0), total_accuracy_validation, )
-            self.general_logger.write(line)
+            self.logger.write(line)
 
         if self.force_insights or self.job_model.config['insights']:
             # Todo, support multiple inputs

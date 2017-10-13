@@ -26,3 +26,17 @@ def get_current_commit_hash():
         commit_sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=DEVNULL).decode("utf-8")
 
         return commit_sha.strip()
+
+
+def get_current_commit_message():
+    with open(os.devnull, 'r+b', 0) as DEVNULL:
+        commit_sha = subprocess.check_output(['git', 'log', '-1', '--pretty=%B', 'HEAD'], stderr=DEVNULL).decode("utf-8")
+
+        return commit_sha.strip()
+
+
+def get_current_commit_author():
+    with open(os.devnull, 'r+b', 0) as DEVNULL:
+        commit_sha = subprocess.check_output(['git', 'log', '-1', '--pretty=%an <%ae>', 'HEAD'], stderr=DEVNULL).decode("utf-8")
+
+        return commit_sha.strip()

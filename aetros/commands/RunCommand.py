@@ -10,13 +10,8 @@ from aetros.backend import BackendClient, EventListener, ApiClient
 
 
 class RunClient(BackendClient):
-    def __init__(self, api_host, api_port, event_listener):
-        BackendClient.__init__(self, api_host, api_port, event_listener)
-        self.model_id = None
-
-    def configure(self, model_id, api_key):
+    def configure(self, model_id):
         self.model_id = model_id
-        self.api_key = api_key
 
     def on_connect(self, reconnect=False):
         self.send_message({'register_run': self.api_key, 'model': self.model_id})
@@ -58,10 +53,8 @@ class RunCommand:
                                          prog=aetros.const.__prog__ + ' run')
         parser.add_argument('--server', help="On which AETROS server the command should be executed. Default read in .aetros.yml")
         parser.add_argument('--model', help="Under which model this job should be listed. Default read in .aetros.yml")
-        parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
-        parser.add_argument('--port', help="Default 8051. Read from environment variable API_PORT.")
+        parser.add_argument('--host', help="Default trainer.aetros.com. Default read in ~/.aetros.yml.")
         parser.add_argument('--config', help="Default .aetros.yml in current working directory.")
-        parser.add_argument('--api-key', help="Read from environment variable API_KEY.")
 
         parsed_args = parser.parse_args(args)
 
@@ -69,8 +62,6 @@ class RunCommand:
             parser.print_help()
             sys.exit()
 
-        if parsed_args.max_jobs:
-            self.max_parallel_jobs = int(parsed_args.max_jobs)
         if parsed_args.show_stdout:
             self.show_stdout = True
 
@@ -84,25 +75,7 @@ class RunCommand:
 
         event_listener = EventListener()
 
-        api_host = os.getenv('API_HOST')
-        api_port = os.getenv('API_PORT')
-        api_key = os.getenv('API_KEY')
         model_id = None
-
-        if config['api_key']:
-            api_key = config['api_key']
-        if parsed_args.api_key:
-            api_key = parsed_args.api_key
-
-        if config['host']:
-            api_host = config['host']
-        if parsed_args.host:
-            api_host = parsed_args.host
-
-        if config['port']:
-            api_port = config['host']
-        if parsed_args.host:
-            api_port = parsed_args.port
 
         if config['model']:
             model_id = config['model']
@@ -113,8 +86,8 @@ class RunCommand:
         event_listener.on('disconnect', self.on_disconnect)
         event_listener.on('stop', self.on_stop)
 
-        self.client = RunClient(api_host, api_port, event_listener)
-        self.client.configure(model_id, api_key)
+        self.client = RunClient(config, event_listener)
+        self.client.configure(model_id)
         self.client.start()
 
         while self.active:

@@ -1,24 +1,18 @@
 from __future__ import print_function, division
 
 from __future__ import absolute_import
-import io
 import logging
 import os
-import pprint
-import re
 import shutil
-import signal
 import subprocess
 import sys
 import traceback
 
 from aetros import api
-from aetros.utils import git, read_home_config, unpack_full_job_id, read_config
+from aetros.utils import read_home_config, unpack_full_job_id, read_config
 from . import keras_model_utils
 from .backend import JobBackend
 from .Trainer import Trainer
-from .keras_model_utils import ensure_dir
-import six
 
 
 class GitCommandException(Exception):
@@ -41,6 +35,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
         sys.exit(1)
 
     job_backend = JobBackend(model_name=owner + '/' + name)
+
     if id:
         job_backend.restart(id)
     else:
@@ -61,7 +56,6 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
     if not len(job_backend.get_job_model().config):
         raise Exception('Job does not have a configuration. Make sure you created the job via AETROS Trainer.')
 
-    job_backend.setup_std_output_logging()
     job_backend.start()
 
     if job_backend.is_simple_model():
@@ -82,10 +76,6 @@ def start_custom(logger, job_backend):
     if custom_git and ('sourceGitUrl' not in config or not config['sourceGitUrl']):
         raise Exception('Server git url is not configured. Aborted')
 
-    if 'sourcePythonScript' not in config or not config['sourcePythonScript']:
-        raise Exception('Server python script is not configured. Aborted')
-
-    python_script = config['sourcePythonScript']
     git_tree = 'master'
 
     if custom_git:
@@ -107,9 +97,10 @@ def start_custom(logger, job_backend):
     my_env['AETROS_MODEL_NAME'] = job_backend.model_name
     my_env['AETROS_JOB_ID'] = job_backend.job_id
     my_env['AETROS_ATTY'] = '1'
+    my_env['AETROS_GIT'] = job_backend.git.get_base_command()
 
-    logger.info("Setting up git repository %s in %s" % (git_url, work_tree))
-    logger.info("Using git tree of '%s'" % (git_tree, ))
+    logger.info("Clone job Git URL %s in %s" % (git_url, work_tree))
+    logger.info("Using Git tree of '%s'" % (git_tree, ))
 
     try:
         if os.path.exists(work_tree):
@@ -122,13 +113,13 @@ def start_custom(logger, job_backend):
 
         # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
         git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
-        git_execute(logger, work_tree, ['checkout', git_tree])
+        git_execute(logger, work_tree, ['reset', '--hard', 'FETCH_HEAD'])
 
     except GitCommandException as e:
         logger.error('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
         raise
 
-    if os.path.exists(work_tree + '/.aetros.yml'):
+    if not os.path.exists(work_tree + '/.aetros.yml'):
         logger.error('No .aetros.yml file found in your Git repository. See Configuration section in the documentation.')
         sys.exit(1)
 
@@ -138,16 +129,35 @@ def start_custom(logger, job_backend):
         logger.error('No "command" specified in .aetros.yml file. See Configuration section in the documentation.')
         sys.exit(1)
 
+    if os.path.exists(work_tree + '/.aetros.yml'):
+        job_backend.commit_file(work_tree + '/.aetros.yml', '.aetros.yml')
+
     command = project_config['command']
 
     logger.info("Model source code checked out.")
-    logger.info("-----------")
-    logger.info("-----------")
     logger.info("Switch working directory to " + work_tree)
-    logger.warning("$ %s " % command)
+    os.chdir(job_backend.git.work_tree)
+    job_backend.detect_git_version()
+    logger.warning("$ %s " % str(command))
 
     try:
-        subprocess.Popen(command, shell=True, env=my_env, stderr=sys.stderr, stdout=sys.stdout, cwd=work_tree).wait()
+        job_backend.set_system_info('command', str(command))
+        p = subprocess.Popen(command, shell=True, env=my_env, stderr=subprocess.PIPE, stdout=subprocess.PIPE, cwd=work_tree)
+
+        wait_stdout = sys.stdout.attach(p.stdout)
+        wait_stderr = sys.stderr.attach(p.stderr)
+        p.wait()
+
+        wait_stdout()
+        wait_stderr()
+
+        job_backend.set_system_info('exit_code', p.returncode)
+
+        if p.returncode:
+            job_backend.crash()
+
+        sys.exit(p.returncode)
+
     except KeyboardInterrupt:
         logger.warning("Job aborted.")
         sys.exit(1)
@@ -157,8 +167,13 @@ def git_execute(logger, repo_path, args):
     args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
     logger.info("$ %s" % (' '.join(args), ))
 
-    p = subprocess.Popen(args, stderr=sys.stderr, stdout=sys.stdout)
+    p = subprocess.Popen(args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    wait_stdout = sys.stdout.attach(p.stdout)
+    wait_stderr = sys.stderr.attach(p.stderr)
     p.wait()
+
+    wait_stdout()
+    wait_stderr()
 
     if p.returncode != 0:
         exception = GitCommandException("Git command returned not 0. " + (' '.join(args)))
@@ -180,7 +195,7 @@ def start_keras(logger, job_backend):
 
     from .KerasCallback import KerasCallback
     trainer = Trainer(job_backend)
-    keras_logger = KerasCallback(job_backend, job_backend.general_logger_stdout)
+    keras_logger = KerasCallback(job_backend, job_backend.logger)
 
     try:
         logger.info("Setup simple job")

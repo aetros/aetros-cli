@@ -9,21 +9,25 @@ import six
 from threading import Timer, Thread, Lock
 
 class GeneralLogger(object):
-    def __init__(self, job_backend, logger=None, error=False):
-        self.error = error
+    def __init__(self, redirect_to, job_backend=None):
         self.job_backend = job_backend
         self.buffer = ''
         self.last_timer = None
         self.last_messages = ''
-        self.logger = logger
+        self.logger = redirect_to or sys.__stdout__
         self.lock = Lock()
         self.attach_last_messages = {}
+        self.buffer_disabled = False
 
-        if not self.logger:
-            self.logger = sys.__stdout__ if error is False else sys.__stderr__
+    def disable_buffer(self):
+        self.buffer_disabled = True
+        self.buffer = ''
 
     def fileno(self):
         return self.logger.fileno()
+
+    def isatty(self):
+        return self.logger.isatty()
 
     def flush(self):
         self.logger.flush()
@@ -33,11 +37,9 @@ class GeneralLogger(object):
         self.last_timer = None
 
         if self.buffer:
-            buf = self.buffer
-            self.buffer = ''
-
             if self.job_backend:
-                self.job_backend.write_log(buf)
+                if self.job_backend.write_log(self.buffer):
+                    self.buffer = ''
 
     def attach(self, buffer):
         """
@@ -49,7 +51,10 @@ class GeneralLogger(object):
         bid = id(buffer)
         self.attach_last_messages[bid] = six.b('')
 
+        lock = Lock()
+
         def reader():
+            lock.acquire()
             while True:
 
                 try:
@@ -57,7 +62,7 @@ class GeneralLogger(object):
                     # buf = os.read(buffer.fileno(), 4096)
                     buf = buffer.read(1)
                     if buf == six.b(''):
-                        return
+                        break
 
                     self.attach_last_messages[bid] += buf
 
@@ -65,15 +70,27 @@ class GeneralLogger(object):
                         self.attach_last_messages[bid] = self.attach_last_messages[bid][-20 * 1024:]
 
                     self.write(buf)
+                except ValueError as e:
+                    if 'operation on closed' in e.message:
+                        break
+
                 except Exception as e:
                     # we need to make sure, we continue to read otherwise the process of this buffer
                     # will block and we have a stuck process.
-                    sys.__stderr__.write(str(e))
+                    sys.__stderr__.write(str(type(e))+': ' + str(e))
                     pass
+
+            lock.release()
 
         thread = Thread(target=reader)
         thread.daemon = True
         thread.start()
+
+        def wait():
+            lock.acquire()
+            lock.release()
+
+        return wait
 
     def write(self, message):
         try:
@@ -90,15 +107,17 @@ class GeneralLogger(object):
             if len(self.last_messages) > 20 * 1024:
                 self.last_messages = self.last_messages[-20 * 1024:]
 
-            for char in message:
-                if '\b' == char or '\r' == char:
-                    self.buffer = self.buffer[:-1]
-                else:
-                    self.buffer += char
+            if not self.buffer_disabled:
+                for char in message:
+                    if '\b' == char or '\r' == char:
+                        self.buffer = self.buffer[:-1]
+                    else:
+                        self.buffer += char
 
-            if not self.last_timer:
-                self.last_timer = Timer(1.0, self.send_buffer)
-                self.last_timer.start()
+                if not self.last_timer:
+                    self.last_timer = Timer(1.0, self.send_buffer)
+                    self.last_timer.start()
+
         except Exception as e:
             sys.__stderr__.write(str(e))
         finally:

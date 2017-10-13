@@ -32,11 +32,25 @@ except ImportError:
 
 from aetros.MonitorThread import MonitoringThread
 
+if not isinstance(sys.stdout, GeneralLogger):
+    sys.stdout = GeneralLogger(redirect_to=sys.__stdout__)
+
+if not isinstance(sys.stderr, GeneralLogger):
+    sys.stderr = GeneralLogger(redirect_to=sys.__stderr__)
+
+last_exit_code = None
+original_exit = sys.exit
+
+
+def patched_exit(code):
+    last_exit_code = code
+    original_exit(code)
+
+sys.exit = patched_exit
 
 def on_shutdown():
     for job in on_shutdown.started_jobs:
         job.on_shutdown()
-
 
 on_shutdown.started_jobs = []
 
@@ -556,11 +570,9 @@ def start_job(name=None):
     """
 
     job = JobBackend(name)
-    # todo, depend on env variable if server already logs stdout/stderrr
-    job.setup_std_output_logging()
 
     if os.getenv('AETROS_JOB_ID'):
-        job.restart(os.getenv('AETROS_JOB_ID'))
+        job.load(os.getenv('AETROS_JOB_ID'))
     else:
         job.create()
 
@@ -748,9 +760,6 @@ class JobBackend:
                 atty = True
             coloredlogs.install(level=self.log_level, logger=self.logger, isatty=atty)
 
-        self.general_logger_stdout = GeneralLogger(job_backend=self)
-        self.general_logger_error = GeneralLogger(job_backend=self, error=True)
-
         self.last_progress_call = None
         self.job_ids = []
         self.in_request = False
@@ -779,7 +788,7 @@ class JobBackend:
         self.client = JobClient(self.config, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.config, self.model_name)
 
-        self.logger.info("Started tracking of job files in git %s for remote %s" % (self.git.git_path, self.git.origin_url))
+        self.logger.debug("Started tracking of job files in git %s for remote %s" % (self.git.git_path, self.git.origin_url))
 
     @property
     def log_level(self):
@@ -806,8 +815,10 @@ class JobBackend:
     def on_registration(self, params):
         if not self.registered:
             self.registered = True
-            self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
-            self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
+
+            if self.is_standalone():
+                self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
+                self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
 
             self.logger.debug('Git backend start')
             self.git.start()
@@ -834,12 +845,12 @@ class JobBackend:
         if self.stop_requested:
             self.stop_requested_force = True
             self.logger.warning('Force stopped')
-            sys.exit(1)
+            self.crash('Force stopped', force_exit=True)
+            return
 
         self.stop_requested = True
 
         self.logger.warning('Received SIGINT signal. Press CTRL+C again to force stop. Stopping ...')
-        self.abort(True)
         sys.exit(1)
 
     def external_aborted(self, params):
@@ -855,7 +866,7 @@ class JobBackend:
         self.git.stop()
         self.client.close()
 
-        sys.exit(1)
+        os._exit(1)
 
     def external_stop(self, params):
         """
@@ -866,14 +877,7 @@ class JobBackend:
 
         self.logger.warning("Sent SIGINT through AETROS Trainer.")
         self.stop_requested_force = params
-        os.kill(os.getpid(), signal.SIGINT)
-
-    def setup_std_output_logging(self):
-        """
-        Overwrites sys.stdout and sys.stderr so we can send it additionally to Aetros.
-        """
-        sys.stdout = self.general_logger_stdout
-        sys.stderr = self.general_logger_error
+        sys.exit(1)
 
     def batch(self, batch, total, size=None):
         time_diff = time.time() - self.last_batch_time
@@ -894,11 +898,6 @@ class JobBackend:
 
                 epochs_per_second = self.batches_per_second / total  # all batches
                 self.set_system_info('epochsPerSecond', epochs_per_second, True)
-
-                elapsed = time.time() - self.start_time
-                self.set_system_info('elapsed', elapsed, True)
-
-                # self.git.store_file('aetros/job/times/elapsed.json', json.dumps(elapsed))
 
                 if self.total_epochs:
                     eta = 0
@@ -1067,6 +1066,9 @@ class JobBackend:
         if not self.job:
             raise Exception('Job not loaded')
 
+        self.running = True
+        self.ended = False
+
         on_shutdown.started_jobs.append(self)
 
         self.client.configure(self.model_name, self.job_id)
@@ -1078,39 +1080,71 @@ class JobBackend:
         else:
             self.logger.debug('Job backend not started, since being online not detected.')
 
-        self.git.commit_file('JOB', 'aetros/job/times/started.json', str(time.time()))
-        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
-        self.git.store_file('aetros/job/times/elapsed.json', str(0))
+        if self.is_standalone():
+            self.git.commit_file('JOB', 'aetros/job/times/started.json', str(time.time()))
+            self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
+            self.set_system_info('command', str(sys.argv))
+            self.git.store_file('aetros/job/times/elapsed.json', str(0))
+            self.collect_system_information()
+            self.collect_environment()
+            self.start_monitoring()
 
-        self.stream_log = self.git.stream_file('aetros/job/log.txt')
+            # log stdout to Git by using self.write_log -> git:stream_file
+            self.stream_log = self.git.stream_file('aetros/job/log.txt')
+            if isinstance(sys.stdout, GeneralLogger):
+                sys.stdout.job_backend = self
+                sys.stdout.flush()
 
-        self.running = True
-        self.ended = False
-        self.collect_system_information()
-        self.collect_environment()
-        self.start_monitoring()
+            if isinstance(sys.stderr, GeneralLogger):
+                sys.stderr.job_backend = self
+                sys.stdout.flush()
 
-        self.detect_git_version()
+            self.detect_git_version()
+        else:
+            # if this process has been called within another process that is already using JobBackend
+            # we disable some stuff
+            if isinstance(sys.stdout, GeneralLogger) and not sys.stderr.job_backend:
+                sys.stdout.disable_buffer()
+
+            if isinstance(sys.stderr, GeneralLogger) and not sys.stderr.job_backend:
+                sys.stderr.disable_buffer()
+
+
+    def is_standalone(self):
+        """
+        Standalone means that aetros.backend.start_job() has been called without using the command `aetros start`.
+        If standalone is true, we collect and track some data that usually `aetros start` would do.
+        :return:
+        """
+
+        return os.getenv('AETROS_JOB_ID') is None
 
     def detect_git_version(self):
         try:
-            commit_sha = git.get_current_commit_hash()
-            if commit_sha:
-                self.set_system_info('git_version', commit_sha)
+            value = git.get_current_commit_hash()
+            if value:
+                self.set_system_info('git_version', value)
 
-            current_branch = git.get_current_branch()
-            if current_branch:
-                self.set_system_info('git_branch', current_branch)
+            value = git.get_current_branch()
+            if value:
+                self.set_system_info('git_branch', value)
+
+            value = git.get_current_commit_message()
+            if value:
+                self.set_system_info('git_commit_message', value)
+
+            value = git.get_current_commit_author()
+            if value:
+                self.set_system_info('git_commit_author', value)
         except:
             pass
 
     def early_stop(self):
         """
-        Stop when a limitatin is reached (like maxEpoch, maxtime)
+        Stop when a limitation is reached (like maxEpoch, maxtime)
         """
         self.in_early_stop = True
-        self.done()
-        os.kill(self.pid, signal.SIGINT)
+        sys.exit(0)
 
     def start_monitoring(self):
         if not self.monitoring_thread:
@@ -1136,7 +1170,7 @@ class JobBackend:
             raise Exception('Can not build Keras callback with active confusion_matrix but with invalid `validation_data` as input.')
 
         from aetros.KerasCallback import KerasCallback
-        self.callback = KerasCallback(self, self.general_logger_stdout, force_insights=insights)
+        self.callback = KerasCallback(self, self.logger, force_insights=insights)
         self.callback.insights_x = insights_x
         self.callback.insight_layer = additional_insights_layer
         self.callback.confusion_matrix = confusion_matrix
@@ -1155,51 +1189,51 @@ class JobBackend:
     def on_shutdown(self):
         if self.stopping:
             return
-
         if self.stop_requested:
             if self.stop_requested_force:
-                self.crash('Force stopped.')
+                self.crash('Force stopped.', force_exit=True)
             else:
-                self.abort()
+                self.abort(force_exit=False)
             return
 
         if not self.ended and hasattr(sys, 'last_value'):
             # sys.last_value contains a exception, when there was an uncaught one
             if isinstance(sys.last_value, KeyboardInterrupt):
-                self.abort()
+                self.abort(force_exit=False)
             else:
-                self.crash(type(sys.last_value).__name__ + ': ' + str(sys.last_value))
+                self.crash(type(sys.last_value).__name__ + ': ' + str(sys.last_value), force_exit=False)
 
         elif self.running:
-            self.done()
+            self.done(force_exit=False)
 
-        if self.ssh_git_file is not None and os.path.exists(self.ssh_git_file):
-            os.unlink(self.ssh_git_file)
-
-        if self.in_early_stop:
-            sys.exit(0)
-
-    def done(self):
+    def done(self, force_exit=True):
         if not self.running:
             return
 
-        self.stop(JOB_STATUS.PROGRESS_STATUS_DONE, True)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_DONE, wait_for_client=True, force_exit=force_exit)
 
-    def stop(self, progress, wait_for_client=False):
+    def send_std_buffer(self):
+        if isinstance(sys.stdout, GeneralLogger):
+            sys.stdout.send_buffer()
+
+        if isinstance(sys.stderr, GeneralLogger):
+            sys.stderr.send_buffer()
+
+    def stop(self, progress, wait_for_client=False, force_exit=True):
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-        # make sure all buffers are sent to the git backend
-        self.general_logger_error.send_buffer()
-        self.general_logger_stdout.send_buffer()
-
-        self.logger.debug("sync weights...")
+        self.send_std_buffer()
         self.sync_weights(push=False)
 
-        self.set_status('STOPPING')
+        self.set_status('STOPPED')
+        self.logger.debug("stop: " + str(progress))
+
+        self.send_std_buffer()
+        if last_exit_code is not None:
+            self.set_system_info('exit_code', last_exit_code)
 
         self.stopping = True
-        self.logger.debug("stopping ...")
         self.ended = True
         self.running = False
 
@@ -1238,39 +1272,45 @@ class JobBackend:
         # remove the index file
         self.git.clean_up()
 
+        if self.ssh_git_file is not None and os.path.exists(self.ssh_git_file):
+            os.unlink(self.ssh_git_file)
+
         self.stopping = False
         self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
-        if progress == JOB_STATUS.PROGRESS_STATUS_CRASHED:
+        if force_exit and progress == JOB_STATUS.PROGRESS_STATUS_CRASHED:
             os._exit(1)
 
-        os._exit(0)
+        if force_exit:
+            os._exit(0)
 
-    def abort(self, wait_for_client_messages=True):
+    def abort(self, wait_for_client_messages=True, force_exit=True):
         if not self.running:
             return
 
         self.set_status('ABORTED')
 
-        self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages, force_exit=force_exit)
 
-    def crash(self, error=None):
+    def crash(self, error=None, force_exit=True):
         with self.git.batch_commit('CRASH'):
             self.set_status('CRASHED')
             self.git.commit_json_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
-            self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', self.general_logger_error.last_messages)
+            if isinstance(sys.stderr, GeneralLogger):
+                self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', sys.stderr.last_messages)
 
         # we need to make sure that the server got the git crash before we report the crash progress
         self.git.push()
 
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
 
-        self.logger.info('Crash report stored : ' + self.git.git_last_commit)
-        self.stop(JOB_STATUS.PROGRESS_STATUS_CRASHED)
+        self.logger.debug('Crash report stored in commit ' + self.git.git_last_commit)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_CRASHED, force_exit=force_exit)
 
     def write_log(self, message):
         if self.stream_log and self.running:
             self.stream_log.write(message)
+            return True
 
     def set_status(self, status):
         self.logger.info('Job status changed to %s ' % (status,))
@@ -1330,7 +1370,6 @@ class JobBackend:
         self.logger.info("Job created " + self.model_name + '/' + self.job_id + " with git ref " + self.git.ref_head)
         return self.job_id
 
-
     def is_simple_model(self):
         if not self.job:
             raise Exception('Job not loaded yet. Use load(id) first.')
@@ -1345,20 +1384,24 @@ class JobBackend:
 
         self.logger.debug('config: ' + json.dumps(self.config))
 
-        if model_name is None and 'model' not in self.config:
-            raise Exception('No AETROS Trainer model name given. Specify it in aetros.backend.start_job("model/name") or in .aetros.yml `model: model/name`.')
+        if model_name is None:
+            model_name = os.getenv('AETROS_MODEL_NAME')
+
+        if model_name is None:
+            if 'model' not in self.config:
+                raise Exception('No AETROS Trainer model name given. Specify it in aetros.backend.start_job("model/name") or in .aetros.yml `model: model/name`.')
+            self.model_name = self.config['model']
+        else:
+            self.model_name = model_name
 
         if 'models' in self.config:
-            if model_name in self.config['models']:
-                self.logger.debug('Merged config values for ' + model_name)
-                self.config.update(self.config['models'][model_name])
+            if self.model_name in self.config['models']:
+                self.logger.debug('Merged config values for ' + self.model_name)
+                self.config.update(self.config['models'][self.model_name])
 
             del self.config['models']
 
         # todo, read parameters from script command arguments
-
-        if not self.model_name and ('model' in self.job or not self.job['model']):
-            raise Exception('No model name given. Specify in .aetros.yml or in aetros.backend.start_job("model/name")')
 
         ssh_command = self.config['ssh']
         ssh_command += ' -o StrictHostKeyChecking=no'
@@ -1440,10 +1483,13 @@ class JobBackend:
         # normally git would create a job_id, but we have already one
         # so download the ref and check it out.
         self.logger.info('Fetch Git ref for refs/aetros/job/' + job_id)
-        self.git.fetch_job(job_id, checkout=True)
+        self.git.fetch_job(job_id, checkout=self.is_standalone())
         self.load_job_from_ref()
 
     def load_job_from_ref(self):
+        """
+        Loads the job.json into self.job
+        """
         if not self.job_id:
             raise Exception('Job not loaded yet. Use load(id) first.')
 
@@ -1459,13 +1505,11 @@ class JobBackend:
         self.logger.debug('job: ' + str(self.job))
 
     def restart(self, job_id):
-        self.git.fetch_job(job_id)
-        self.git.restart_job()
-        self.load_job_from_ref()
+        self.git.fetch_job(job_id, checkout=True)
 
-        if os.path.exists(self.git.work_tree + '/aetros/job/status/progress.json'):
-            with open(self.git.work_tree + '/aetros/job/status/progress.json', 'r') as f:
-                progress = float(f.read())
+        progress = self.git.contents('aetros/job/status/progress.json')
+        if progress is not None:
+            progress = float(progress)
         else:
             progress = 0
 
@@ -1473,6 +1517,9 @@ class JobBackend:
             self.logger.error('You can not restart an existing job that was already running. You need to restart the job through AETROS Trainer.')
             self.logger.error('You can alternatively reset the git reference to the root commit and force push that ref to reset the job.')
             sys.exit(1)
+
+        self.git.restart_job()
+        self.load_job_from_ref()
 
     def get_job_model(self):
         """
@@ -1491,6 +1538,7 @@ class JobBackend:
         if not os.path.exists(self.get_job_model().get_weights_filepath_latest()):
             return
 
+        self.logger.debug("sync weights...")
         self.set_status('SYNC WEIGHTS')
 
         with open(self.get_job_model().get_weights_filepath_latest(), 'rb') as f:
@@ -1530,15 +1578,13 @@ class JobBackend:
         else:
             self.git.commit_json_file('SYSTEM_INFO ' + key, 'aetros/job/system/' + key, value)
 
-    def commit_file(self, path, title=None):
+    def commit_file(self, path, git_path=None, title=None):
         path = os.path.expanduser(path).strip()
 
-        path = os.path.relpath(path, os.getcwd())
-        if path.startswith('..'):
-            raise Exception('Can not commit files that are out of the current working directory.')
-
-        if './' == path[0: 2]:
-            path = path[2:]
+        if not git_path:
+            git_path = os.path.relpath(path, os.getcwd())
+            git_path = git_path.replace('../', '')
+            git_path = git_path.replace('./', '')
 
         with self.git.batch_commit('FILE ' + (title or path)):
             if os.path.isdir(path):
@@ -1552,7 +1598,7 @@ class JobBackend:
             with open(path, 'rb') as f:
                 contents = f.read()
 
-            self.git.commit_file('FILE ' + (title or path), path, contents)
+            self.git.commit_file('FILE ' + (title or git_path), git_path, contents)
 
     def job_add_insight(self, x, images, confusion_matrix):
         converted_images = []
