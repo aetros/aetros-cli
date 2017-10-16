@@ -125,14 +125,25 @@ def start_custom(logger, job_backend):
 
     project_config = read_config(work_tree + '/.aetros.yml')
 
-    if 'command' not in project_config or project_config['command'] == '':
+    job_config = job_backend.job['config']
+
+    if 'command' not in job_config and 'command' not in project_config or project_config['command'] == '':
         logger.error('No "command" specified in .aetros.yml file. See Configuration section in the documentation.')
         sys.exit(1)
 
     if os.path.exists(work_tree + '/.aetros.yml'):
         job_backend.commit_file(work_tree + '/.aetros.yml', '.aetros.yml')
 
-    command = project_config['command']
+    if 'command' in job_config:
+        command = job_config['command']
+    else:
+        command = project_config['command']
+
+    image = None
+    if 'image' in job_config:
+        image = job_config['image']
+    elif 'image' in project_config:
+        image = project_config['image']
 
     logger.info("Model source code checked out.")
     logger.info("Switch working directory to " + work_tree)

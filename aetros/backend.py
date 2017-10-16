@@ -959,6 +959,7 @@ class JobBackend:
                 if self.started is not False:
                     return
 
+                self.step = 0
                 self.started = time.time()
                 self.last_call = time.time()
                 self.store()
@@ -1367,7 +1368,7 @@ class JobBackend:
 
         self.git.create_job_id(self.job)
 
-        self.logger.info("Job created " + self.model_name + '/' + self.job_id + " with git ref " + self.git.ref_head)
+        self.logger.info("Job created with Git ref " + self.git.ref_head)
         return self.job_id
 
     def is_simple_model(self):
@@ -1599,6 +1600,40 @@ class JobBackend:
                 contents = f.read()
 
             self.git.commit_file('FILE ' + (title or git_path), git_path, contents)
+
+    def add_files(self):
+        """
+        Commits all files from limited in .aetros.yml. `files` is a whitelist, `exclude_files` is a blacklist.
+        If both are empty, we commit all files smaller than 10MB.
+        :return:
+        """
+
+        blacklist = ['.git']
+
+        def add_resursiv(path = '.'):
+            if path in blacklist:
+                return 0, 0
+
+            if os.path.isdir(path):
+                files = 0
+                size = 0
+                for file in os.listdir(path):
+                    if path and path != '.':
+                        file = path + '/' + file
+
+                    added_files, added_size = add_resursiv(file)
+                    files += added_files
+                    size += added_size
+
+                return files, size
+            else:
+                self.logger.debug("added file to job " + path)
+                with open(path, 'r') as f:
+                    self.git.add_file(path, f.read())
+                return 1, os.path.getsize(path)
+
+        with self.git.batch_commit('COMMIT FILES'):
+            return add_resursiv()
 
     def job_add_insight(self, x, images, confusion_matrix):
         converted_images = []

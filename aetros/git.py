@@ -350,8 +350,6 @@ class Git:
         if not os.path.exists(self.work_tree):
             os.makedirs(self.work_tree)
 
-        self.logger.info('Working directory in ' + self.work_tree)
-
         # updates index and working tree
         # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
         # of files checked out by start.py (custom models)
@@ -575,6 +573,10 @@ class Git:
         """
         blob_id = self.write_blob(content)
         self.add_index('100644', blob_id, path)
+
+    def add_local_file(self, path):
+        with open(path, 'r') as f:
+            self.add_file(path, f.read())
 
     def commit_file(self, message, path, content):
         """

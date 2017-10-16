@@ -73,7 +73,7 @@ def main(args=None):
         sys.exit(1)
 
     level = 'INFO'
-    if '-v' in args:
+    if '-v' in args or os.getenv('DEBUG') == '1':
         level = 'DEBUG'
 
     atty = None
