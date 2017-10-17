@@ -19,7 +19,7 @@ from aetros.git import Git
 from aetros.logger import GeneralLogger
 
 from aetros.backend import EventListener, BackendClient
-from aetros.utils import read_config, unpack_simple_job_id
+from aetros.utils import unpack_simple_job_id, read_home_config
 import aetros.cuda_gpu
 
 class ServerClient(BackendClient):
@@ -128,7 +128,7 @@ class ServerCommand:
             parser.print_help()
             sys.exit()
 
-        self.config = read_config()
+        self.config = read_home_config()
 
         if parsed_args.max_parallel:
             self.max_parallel_jobs = int(parsed_args.max_parallel)

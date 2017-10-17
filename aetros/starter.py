@@ -8,6 +8,8 @@ import subprocess
 import sys
 import traceback
 
+import six
+
 from aetros import api
 from aetros.utils import read_home_config, unpack_full_job_id, read_config
 from . import keras_model_utils
@@ -68,25 +70,6 @@ def start_custom(logger, job_backend):
     job_model = job_backend.get_job_model()
     config = job_model.config
 
-    custom_git = False
-
-    if 'gitCustom' in config and config['gitCustom']:
-        custom_git = config['gitCustom']
-
-    if custom_git and ('sourceGitUrl' not in config or not config['sourceGitUrl']):
-        raise Exception('Server git url is not configured. Aborted')
-
-    git_tree = 'master'
-
-    if custom_git:
-        git_url = config['sourceGitUrl']
-    else:
-        user_config = read_home_config()
-        git_url = 'git@' + user_config['host'] + ':' + job_backend.model_name + '.git'
-
-    if 'sourceGitTree' in config and config['sourceGitTree']:
-        git_tree = config['sourceGitTree']
-
     work_tree = job_backend.git.work_tree
 
     my_env = os.environ.copy()
@@ -99,35 +82,56 @@ def start_custom(logger, job_backend):
     my_env['AETROS_ATTY'] = '1'
     my_env['AETROS_GIT'] = job_backend.git.get_base_command()
 
-    logger.info("Clone job Git URL %s in %s" % (git_url, work_tree))
-    logger.info("Using Git tree of '%s'" % (git_tree, ))
+    if 'sourceGitDisabled' not in config or not config['sourceGitDisabled']:
+        # "aetros run" sets this to true, so we don't check out (wrong) source
+        # since at the job commit from "aetros run" we have already all necessary files attached.
 
-    try:
-        if os.path.exists(work_tree):
-            shutil.rmtree(work_tree)
+        custom_git = False
 
-        args = ['git', 'clone', git_url, work_tree]
-        code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
-        if code != 0:
-            raise Exception('Could not clone repository %s to %s' % (git_url, work_tree))
+        if 'gitCustom' in config and config['gitCustom']:
+            custom_git = config['gitCustom']
 
-        # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
-        git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
-        git_execute(logger, work_tree, ['reset', '--hard', 'FETCH_HEAD'])
+        if custom_git and ('sourceGitUrl' not in config or not config['sourceGitUrl']):
+            raise Exception('Server git url is not configured. Aborted')
 
-    except GitCommandException as e:
-        logger.error('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
-        raise
+        git_tree = 'master'
 
-    if not os.path.exists(work_tree + '/.aetros.yml'):
-        logger.error('No .aetros.yml file found in your Git repository. See Configuration section in the documentation.')
-        sys.exit(1)
+        if custom_git:
+            git_url = config['sourceGitUrl']
+        else:
+            user_config = read_home_config()
+            git_url = 'git@' + user_config['host'] + ':' + job_backend.model_name + '.git'
+
+        if 'sourceGitTree' in config and config['sourceGitTree']:
+            git_tree = config['sourceGitTree']
+
+        logger.info("Clone job Git URL %s in %s" % (git_url, work_tree))
+        logger.info("Using Git tree of '%s'" % (git_tree, ))
+
+        try:
+            if os.path.exists(work_tree):
+                shutil.rmtree(work_tree)
+
+            args = ['git', 'clone', git_url, work_tree]
+            code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
+            if code != 0:
+                raise Exception('Could not clone repository %s to %s' % (git_url, work_tree))
+
+            # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
+            git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
+            git_execute(logger, work_tree, ['reset', '--hard', 'FETCH_HEAD'])
+
+            logger.info("Model source code checked out.")
+
+        except GitCommandException as e:
+            logger.error('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
+            raise
 
     project_config = read_config(work_tree + '/.aetros.yml')
 
     job_config = job_backend.job['config']
 
-    if 'command' not in job_config and 'command' not in project_config or project_config['command'] == '':
+    if 'command' not in job_config and ('command' not in project_config or project_config['command'] == ''):
         logger.error('No "command" specified in .aetros.yml file. See Configuration section in the documentation.')
         sys.exit(1)
 
@@ -145,22 +149,76 @@ def start_custom(logger, job_backend):
     elif 'image' in project_config:
         image = project_config['image']
 
-    logger.info("Model source code checked out.")
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
     job_backend.detect_git_version()
+
+    job_backend.set_system_info('command', str(command))
+
+    if image is not None:
+        if project_config['dockerfile'] or project_config['install']:
+            dockerfile = project_config['dockerfile']
+
+            if not (isinstance(dockerfile, six.string_types) and os.path.exists(dockerfile)):
+                if isinstance(dockerfile, six.string_types):
+                    dockerfile_content = dockerfile
+                elif isinstance(dockerfile, list) and len(dockerfile) > 0:
+                    if not dockerfile[0].startswith('FROM '):
+                        dockerfile.insert('FROM ' + image, 0)
+
+                    dockerfile_content = "\n".join(dockerfile)
+                else:
+                    dockerfile_content = 'FROM ' + image + '\nRUN '
+
+                    if isinstance(project_config['install'], list):
+                        dockerfile_content += '\n RUN '.join(project_config['install'])
+                    else:
+                        dockerfile_content += project_config['install']
+
+                with open('Dockerfile', 'w') as f:
+                    f.write(dockerfile_content)
+
+                dockerfile = 'Dockerfile'
+                job_backend.commit_file('Dockerfile')
+
+            docker_build = [
+                project_config['docker'],
+                'build',
+                '-t', job_backend.model_name,
+                '-f', dockerfile,
+                '.',
+            ]
+
+            logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
+            p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            if p.returncode:
+                job_backend.crash('Image build error')
+                sys.exit(p.returncode)
+
+            image = job_backend.model_name
+
+        job_backend.set_system_info('image', str(image))
+
+        # make sure old container is removed
+        subprocess.call([project_config['docker'], 'rm', job_backend.job_id])
+
+        docker_command = [project_config['docker'], 'run', '--name', job_backend.job_id]
+        docker_command += project_config['docker_options']
+        docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/exp']
+        docker_command += ['-w', '/exp']
+        docker_command.append(image)
+
+        if isinstance(command, list):
+            docker_command += command
+        else:
+            docker_command += ['sh', '-c', command]
+
+        command = docker_command
+
     logger.warning("$ %s " % str(command))
 
     try:
-        job_backend.set_system_info('command', str(command))
-        p = subprocess.Popen(command, shell=True, env=my_env, stderr=subprocess.PIPE, stdout=subprocess.PIPE, cwd=work_tree)
-
-        wait_stdout = sys.stdout.attach(p.stdout)
-        wait_stderr = sys.stderr.attach(p.stderr)
-        p.wait()
-
-        wait_stdout()
-        wait_stderr()
+        p = execute_command(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         job_backend.set_system_info('exit_code', p.returncode)
 
@@ -174,17 +232,23 @@ def start_custom(logger, job_backend):
         sys.exit(1)
 
 
-def git_execute(logger, repo_path, args):
-    args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
-    logger.info("$ %s" % (' '.join(args), ))
-
-    p = subprocess.Popen(args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+def execute_command(**args):
+    p = subprocess.Popen(**args)
     wait_stdout = sys.stdout.attach(p.stdout)
     wait_stderr = sys.stderr.attach(p.stderr)
     p.wait()
 
     wait_stdout()
     wait_stderr()
+
+    return p
+
+
+def git_execute(logger, repo_path, args):
+    args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
+    logger.info("$ %s" % (' '.join(args), ))
+
+    p = execute_command(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     if p.returncode != 0:
         exception = GitCommandException("Git command returned not 0. " + (' '.join(args)))

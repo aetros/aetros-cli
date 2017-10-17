@@ -59,6 +59,7 @@ class RunCommand:
         if parsed_args.image:
             create_info['config']['image'] = parsed_args.image
 
+        create_info['config']['sourceGitDisabled'] = True
         print(create_info)
         job.create(create_info=create_info, server=parsed_args.server or 'local')
         job.git.push()

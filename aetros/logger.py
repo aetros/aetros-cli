@@ -88,6 +88,7 @@ class GeneralLogger(object):
 
         def wait():
             lock.acquire()
+            self.send_buffer()
             lock.release()
 
         return wait

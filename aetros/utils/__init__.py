@@ -56,7 +56,9 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
         'storage_dir': '~/.aetros',
         'ssh_key': os.getenv('AETROS_SSH_KEY'),
         'ssh': 'ssh',
-        'image': 'host',
+        'image': None,
+        'docker': 'docker',
+        'docker_options': [],
         'ssl_verify': True,
     }
 
@@ -71,7 +73,13 @@ def read_config(path = '.aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
     home_config = read_home_config(logger=logger)
 
-    config = home_config
+    config = {
+        'dockerfile': [],
+        'install': [],
+        'before_command': [],
+    }
+
+    config.update(home_config)
     if os.path.exists(path):
         f = open(path, 'r')
 
