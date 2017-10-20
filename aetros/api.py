@@ -5,6 +5,7 @@ from six.moves.urllib.parse import urlencode
 from aetros.utils import read_config
 import json
 
+
 class ApiError(Exception):
     def __init__(self, message, reason):
         self.message = message
@@ -13,8 +14,10 @@ class ApiError(Exception):
     def __str__(self):
         return self.message + ', Reason: ' + self.reason
 
+
 class ApiConnectionError(ApiError):
     pass
+
 
 def request(path, query=None, body=None, config=None):
     query = query or {}
@@ -39,14 +42,11 @@ def request(path, query=None, body=None, config=None):
         stderr=subprocess.PIPE,
         stdin=subprocess.PIPE if body is not None else None, stdout=subprocess.PIPE)
 
+    input = None
     if body is not None:
-        ssh_stream.stdin.write(json.dumps(body))
-        ssh_stream.stdin.close()
+        input = six.b(json.dumps(body))
 
-    stderr = read(ssh_stream.stderr)
-    stdout = read(ssh_stream.stdout)
-
-    ssh_stream.wait()
+    stdout, stderr = ssh_stream.communicate(input)
 
     if ssh_stream.returncode != 0:
         if 'Connection ' in stderr:
@@ -54,11 +54,10 @@ def request(path, query=None, body=None, config=None):
 
         raise ApiError('Could not request api: ' + path, stderr)
 
-    return stdout
+    return stdout.decode('utf-8')
 
 
 def raise_response_exception(message, response):
-
     content = response.content
     error = 'unknown'
     error_message = ''
@@ -108,6 +107,12 @@ def model(model_name):
 
 
 def create_job_info(model_name, parameters=None, dataset_id=None):
-    content = request('job/create-info', {'id': model_name}, {'parameters': parameters, 'datasetId': dataset_id}).decode('utf-8')
+    content = request('job/create-info', {'id': model_name}, {'parameters': parameters, 'datasetId': dataset_id})
+
+    return parse_json(content)
+
+
+def create_model(model_name):
+    content = request('model/create', {'name': model_name})
 
     return parse_json(content)

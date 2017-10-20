@@ -56,6 +56,7 @@ def main(args=None):
     from aetros.commands.StartCommand import StartCommand
     from aetros.commands.RunCommand import RunCommand
     from aetros.commands.AddCommand import AddCommand
+    from aetros.commands.InitCommand import InitCommand
 
     commands_dict = {
         'start': StartCommand,
@@ -66,6 +67,7 @@ def main(args=None):
         'api': ApiCommand,
         'push-job': PushJobCommand,
         'add': AddCommand,
+        'init': InitCommand,
     }
 
     if cmd_name not in commands_dict:

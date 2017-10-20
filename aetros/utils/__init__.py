@@ -2,8 +2,10 @@ from __future__ import division
 from __future__ import absolute_import
 
 import os
+import re
 import time
 import datetime
+
 import numpy as np
 import six
 import yaml
@@ -68,6 +70,59 @@ def read_home_config(path = '~/.aetros.yml', logger=None):
 
     return config
 
+ignore_pattern_cache = {}
+
+
+def is_ignored(path, ignore_patters):
+    if isinstance(ignore_patters, six.string_types):
+        ignore_patters = ignore_patters.split('\n')
+
+    ignored = None
+
+    for pattern in ignore_patters:
+        if not pattern:
+            continue
+
+        if pattern in ignore_pattern_cache:
+            reobj = ignore_pattern_cache[pattern]
+        else:
+            if pattern[0] == '!':
+                regex = re.escape(pattern[1:])
+            else:
+                regex = re.escape(pattern)
+
+            regex = regex.replace('\\*\\*', '([^/\\\\]+[//\\\\])+([^/\\\\]+)')
+            regex = regex.replace('\\*', '[^/\\\\]+')
+            regex = '(' + regex + ')'
+            if pattern[0] == '/' or (pattern[0] == '!' and pattern[1] == '/'):
+                regex = '^' + regex
+            else:
+                regex = '^.*' + regex
+
+            print(regex)
+            reobj = re.compile(regex)
+            ignore_pattern_cache[pattern] = reobj
+
+        normalized_path = path
+
+        if pattern.startswith('!'):
+            if pattern[1] == '/' and path[0] != '/':
+                normalized_path = '/' + path
+
+            # whitelist begins with !
+            if reobj.match(normalized_path):
+                ignored = False
+        else:
+            if pattern[0] == '/' and path[0] != '/':
+                normalized_path = '/' + path
+
+            if reobj.match(normalized_path):
+                ignored = True
+
+    if ignored is None:
+        return False
+
+    return ignored
 
 def read_config(path = '.aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
@@ -76,6 +131,8 @@ def read_config(path = '.aetros.yml', logger=None):
     config = {
         'dockerfile': [],
         'install': [],
+        'ignore': [],
+        'server': 'local',
         'before_command': [],
     }
 

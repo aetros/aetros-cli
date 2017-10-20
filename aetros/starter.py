@@ -1,6 +1,8 @@
 from __future__ import print_function, division
 
 from __future__ import absolute_import
+
+import json
 import logging
 import os
 import shutil
@@ -42,6 +44,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
         job_backend.restart(id)
     else:
         try:
+            logger.debug("Create job info ...")
             create_info = api.create_job_info(full_id, hyperparameter, dataset_id)
         except api.ApiError as e:
             if 'Connection refused' in e.reason:
@@ -50,6 +53,7 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local',
                          "Use your script directly if its a Python model.")
             raise
 
+        logger.debug(create_info)
         if not create_info:
             raise Exception('Could not fetch model information. Are you online and have access to the given model?')
 
@@ -121,11 +125,17 @@ def start_custom(logger, job_backend):
             git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
             git_execute(logger, work_tree, ['reset', '--hard', 'FETCH_HEAD'])
 
+            job_backend.detect_git_version(work_tree)
             logger.info("Model source code checked out.")
 
         except GitCommandException as e:
             logger.error('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
             raise
+    else:
+        # we use the source from the job commit directly
+        with job_backend.git.batch_commit('Git Version'):
+            job_backend.set_system_info('git_remote_url', job_backend.git.get_remote_url('origin'))
+            job_backend.set_system_info('git_version', job_backend.git.git_last_commit)
 
     project_config = read_config(work_tree + '/.aetros.yml')
 
@@ -151,11 +161,12 @@ def start_custom(logger, job_backend):
 
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
-    job_backend.detect_git_version()
 
     job_backend.set_system_info('command', str(command))
 
     if image is not None:
+        job_backend.set_system_info('image/name', str(image))
+
         if project_config['dockerfile'] or project_config['install']:
             dockerfile = project_config['dockerfile']
 
@@ -190,14 +201,31 @@ def start_custom(logger, job_backend):
             ]
 
             logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
+
             p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
             if p.returncode:
                 job_backend.crash('Image build error')
                 sys.exit(p.returncode)
 
             image = job_backend.model_name
 
-        job_backend.set_system_info('image', str(image))
+        logger.info("Pull docker image: $ " + image)
+        execute_command(args=[project_config['docker'], 'pull', image], bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+        inspections = execute_command_stdout([project_config['docker'], 'inspect', image])
+        inspections = json.loads(inspections.decode('utf-8'))
+        if inspections:
+            inspection = inspections[0]
+            with job_backend.git.batch_commit('Docker image'):
+                job_backend.set_system_info('image/id', inspection['Id'])
+                job_backend.set_system_info('image/docker_version', inspection['DockerVersion'])
+                job_backend.set_system_info('image/created', inspection['Created'])
+                job_backend.set_system_info('image/container', inspection['Container'])
+                job_backend.set_system_info('image/architecture', inspection['Architecture'])
+                job_backend.set_system_info('image/os', inspection['Os'])
+                job_backend.set_system_info('image/size', inspection['Size'])
+                job_backend.set_system_info('image/rootfs', inspection['RootFS'])
 
         # make sure old container is removed
         subprocess.call([project_config['docker'], 'rm', job_backend.job_id])
@@ -215,6 +243,9 @@ def start_custom(logger, job_backend):
 
         command = docker_command
 
+    if not isinstance(command, list):
+        command = ['sh', '-c', command]
+
     logger.warning("$ %s " % str(command))
 
     try:
@@ -231,6 +262,17 @@ def start_custom(logger, job_backend):
         logger.warning("Job aborted.")
         sys.exit(1)
 
+
+def execute_command_stdout(command, input=None):
+    p = subprocess.Popen(command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    out, err = p.communicate(input)
+
+    if p.returncode:
+        sys.stderr.write(out)
+        sys.stderr.write(err)
+        raise Exception('Could not execute command: ' + command)
+
+    return out
 
 def execute_command(**args):
     p = subprocess.Popen(**args)
@@ -259,6 +301,7 @@ def git_execute(logger, repo_path, args):
 def start_keras(logger, job_backend):
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     os.chdir(job_backend.git.work_tree)
+    logger.debug("Start simple model")
 
     # all our shapes are Tensorflow schema. (height, width, channels)
     import keras.backend

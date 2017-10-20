@@ -23,7 +23,7 @@ import msgpack
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
-from aetros.utils import git, invalid_json_values, read_config
+from aetros.utils import git, invalid_json_values, read_config, is_ignored
 
 try:
     from cStringIO import StringIO
@@ -715,7 +715,7 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None, logger=None):
+    def __init__(self, model_name=None, logger=None, config_path = '.aetros.yml'):
         self.event_listener = EventListener()
 
         self.log_file_handle = None
@@ -727,6 +727,7 @@ class JobBackend:
         self.ssh_stream = None
         self.model_name = model_name
         self.logger = logger
+        self.config_path = config_path
 
         self.client = None
         self.stream_log = None
@@ -1122,21 +1123,26 @@ class JobBackend:
 
     def detect_git_version(self):
         try:
-            value = git.get_current_commit_hash()
-            if value:
-                self.set_system_info('git_version', value)
+            with self.git.batch_commit('Git Version'):
+                value = git.get_current_remote_url()
+                if value:
+                    self.set_system_info('git_remote_url', value)
 
-            value = git.get_current_branch()
-            if value:
-                self.set_system_info('git_branch', value)
+                value = git.get_current_commit_hash()
+                if value:
+                    self.set_system_info('git_version', value)
 
-            value = git.get_current_commit_message()
-            if value:
-                self.set_system_info('git_commit_message', value)
+                value = git.get_current_branch()
+                if value:
+                    self.set_system_info('git_branch', value)
 
-            value = git.get_current_commit_author()
-            if value:
-                self.set_system_info('git_commit_author', value)
+                value = git.get_current_commit_message()
+                if value:
+                    self.set_system_info('git_commit_message', value)
+
+                value = git.get_current_commit_author()
+                if value:
+                    self.set_system_info('git_commit_author', value)
         except:
             pass
 
@@ -1381,7 +1387,7 @@ class JobBackend:
         return False
 
     def read_config(self, model_name=None):
-        self.config = read_config(logger=self.logger)
+        self.config = read_config(self.config_path, logger=self.logger)
 
         self.logger.debug('config: ' + json.dumps(self.config))
 
@@ -1627,6 +1633,9 @@ class JobBackend:
 
                 return files, size
             else:
+                if is_ignored(path, self.config['ignore']):
+                    return 0, 0
+
                 self.logger.debug("added file to job " + path)
                 with open(path, 'r') as f:
                     self.git.add_file(path, f.read())
