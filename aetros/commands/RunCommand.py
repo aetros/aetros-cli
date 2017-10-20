@@ -43,7 +43,7 @@ class RunCommand:
         job = JobBackend(parsed_args.model, self.logger, parsed_args.config or '.aetros.yml')
 
         files_added, size_added = job.add_files()
-        self.logger.info("%d files added (%s)" % (files_added, human_size(size_added, 2)))
+        print("%d files added (%s)" % (files_added, human_size(size_added, 2)))
 
         create_info = api.create_job_info(model_name)
         if parsed_args.command:
@@ -61,5 +61,5 @@ class RunCommand:
         job.create(create_info=create_info, server=server)
         job.git.push()
 
-        self.logger.info("Job %s/%s started." % (job.model_name, job.job_id))
-        self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (job.host, job.model_name, job.job_id))
+        print("Job %s/%s created." % (job.model_name, job.job_id))
+        print("Open http://%s/model/%s/job/%s to monitor it." % (job.host, job.model_name, job.job_id))

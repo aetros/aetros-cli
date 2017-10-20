@@ -1396,7 +1396,7 @@ class JobBackend:
 
         self.git.create_job_id(self.job)
 
-        self.logger.info("Job created with Git ref " + self.git.ref_head)
+        self.logger.debug("Job created with Git ref " + self.git.ref_head)
         return self.job_id
 
     def is_simple_model(self):

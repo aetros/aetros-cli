@@ -23,7 +23,7 @@ class InitCommand:
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
             prog=aetros.const.__prog__ + ' run')
-        parser.add_argument('name', nargs='?', help="Model/project name")
+        parser.add_argument('name', nargs='?', help="Model name")
 
         home_config = read_home_config()
         parsed_args = parser.parse_args(args)

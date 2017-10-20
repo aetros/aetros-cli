@@ -106,6 +106,10 @@ def model(model_name):
     return parse_json(content)
 
 
+def user():
+    return parse_json(request('user'))
+
+
 def create_job_info(model_name, parameters=None, dataset_id=None):
     content = request('job/create-info', {'id': model_name}, {'parameters': parameters, 'datasetId': dataset_id})
 
