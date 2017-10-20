@@ -219,7 +219,7 @@ class ServerCommand:
         sys.stderr = self.general_logger_stderr
 
         self.server.configure(parsed_args.name)
-        self.logger.info('Connecting to ' + self.config['host'])
+        self.logger.debug('Connecting to ' + self.config['host'])
         self.server.start()
         self.write_log("\n")
 
@@ -462,7 +462,7 @@ class ServerCommand:
         self.queue = {}
         self.queueMap = {}
 
-        self.logger.info("As server %s under account %s registered." % (params['server'], params['username']))
+        self.logger.info("Server connected to %s as %s under account %s registered." % (self.config['host'], params['server'], params['username']))
         self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
     def collect_system_information(self):

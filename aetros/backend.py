@@ -558,6 +558,28 @@ class JobClient(BackendClient):
         self.logger.error("Registration of job %s failed." % (self.job_id,))
         return False
 
+def context():
+    """
+    Returns a new JobBackend instance which connects to AETROS Trainer
+    based on "model" in .aetros.yml or env:AETROS_MODEL_NAME environment variable.
+
+    If env:AETROS_JOB_ID is not defined, it creates a new job.
+
+    Job is ended either by calling JobBackend.done(), JobBackend.crash() or JobBackend.abort().
+    If the script ends without calling one of the methods above, JobBackend.done is automatically called.
+
+    :return: JobBackend
+    """
+    job = JobBackend()
+
+    if os.getenv('AETROS_JOB_ID'):
+        job.load(os.getenv('AETROS_JOB_ID'))
+    else:
+        job.create()
+
+    job.start()
+
+    return job
 
 def start_job(name=None):
     """
