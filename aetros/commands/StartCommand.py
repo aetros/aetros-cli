@@ -59,5 +59,6 @@ class StartCommand:
         start(self.logger, parsed_args.name,
             hyperparameter=hyperparameter,
             dataset_id=parsed_args.dataset,
+            server='local',
             insights=parsed_args.insights
         )

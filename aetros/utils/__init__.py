@@ -7,6 +7,7 @@ import time
 import datetime
 
 import numpy as np
+import signal
 import six
 import yaml
 
@@ -99,7 +100,6 @@ def is_ignored(path, ignore_patters):
             else:
                 regex = '^.*' + regex
 
-            print(regex)
             reobj = re.compile(regex)
             ignore_pattern_cache[pattern] = reobj
 
@@ -155,6 +155,24 @@ def read_config(path = '.aetros.yml', logger=None):
         config['parameters'] = {}
 
     return config
+
+
+signal_handlers = {}
+
+
+def append_signal_handler(sig, f):
+    if sig not in signal_handlers:
+        signal_handlers[sig] = []
+        if callable(signal.getsignal(sig)):
+            signal_handlers[sig].append(signal.getsignal(sig))
+
+    signal_handlers[sig].append(f)
+
+    def execute_handler_list(*args, **kwargs):
+        for handler in signal_handlers[sig]:
+            handler(*args, **kwargs)
+
+    signal.signal(sig, execute_handler_list)
 
 
 def invalid_json_values(obj):

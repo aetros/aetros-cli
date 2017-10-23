@@ -380,7 +380,6 @@ class ServerCommand:
                 git.fetch_job(job_id)
 
                 if not git.has_file('aetros/job/log.txt'):
-
                     log = six.b('')
                     if id(process.stdout) in self.general_logger_stdout.attach_last_messages:
                         log += self.general_logger_stdout.attach_last_messages[id(process.stdout)]
@@ -401,6 +400,8 @@ class ServerCommand:
 
                 git.push()
                 git.clean_up()
+
+                self.server.send_message({'type': 'job-finished', 'id': job['id']})
 
         # remove dead job processes
         self.job_processes = [x for x in self.job_processes if x.poll() is None]
@@ -473,7 +474,7 @@ class ServerCommand:
         import cpuinfo
         cpu = cpuinfo.get_cpu_info()
         values['cpu_name'] = cpu['brand']
-        values['cpu'] = [cpu['hz_actual_raw'][0], cpu['count']]
+        values['cpu'] = [cpu['hz_advertised_raw'][0], cpu['count']]
         values['nets'] = {}
         values['disks'] = {}
         values['gpus'] = []

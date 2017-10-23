@@ -19,11 +19,12 @@ import six
 import PIL.Image
 import sys
 import msgpack
+from six.moves import _thread
 
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
-from aetros.utils import git, invalid_json_values, read_config, is_ignored
+from aetros.utils import git, invalid_json_values, read_config, is_ignored, append_signal_handler
 
 try:
     from cStringIO import StringIO
@@ -800,10 +801,10 @@ class JobBackend:
         self.event_listener.on('registration_failed', self.on_registration_failed)
         self.event_listener.on('offline', self.on_client_offline)
 
-        signal.signal(signal.SIGINT, self.on_signint)
-        signal.signal(signal.SIGTERM, self.on_signint)
+        append_signal_handler(signal.SIGINT, self.on_sigint)
+        append_signal_handler(signal.SIGTERM, self.on_sigint)
         if hasattr(signal, 'SIGUSR1'):
-            signal.signal(signal.SIGUSR1, self.on_signusr1)
+            append_signal_handler(signal.SIGUSR1, self.on_signusr1)
 
         self.pid = os.getpid()
 
@@ -864,21 +865,24 @@ class JobBackend:
           str(self.git.last_push_time),
         ))
 
-    def on_signint(self, sig, frame):
+    def on_sigint(self, sig, frame):
         if self.stop_requested:
             self.stop_requested_force = True
             self.logger.warning('Force stopped')
             self.crash('Force stopped', force_exit=True)
             return
 
+        self.client.expect_close = True
         self.stop_requested = True
 
-        self.logger.warning('Received SIGINT signal. Press CTRL+C again to force stop. Stopping ...')
+        self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
         sys.exit(1)
 
     def external_aborted(self, params):
         """
-        Immediately abort the job
+        Immediately abort the job by server.
+
+        This runs in the Client:read() thread.
         """
         self.ended = True
         self.running = False
@@ -893,14 +897,11 @@ class JobBackend:
 
     def external_stop(self, params):
         """
-        Stop through GUI
+        Stop signal by server.
         """
-        if self.stop_requested:
-            return
-
-        self.logger.warning("Sent SIGINT through AETROS Trainer.")
+        self.logger.warning("Received stop signal by server.")
         self.stop_requested_force = params
-        sys.exit(1)
+        _thread.interrupt_main()
 
     def batch(self, batch, total, size=None):
         time_diff = time.time() - self.last_batch_time
@@ -1143,8 +1144,13 @@ class JobBackend:
 
         return os.getenv('AETROS_JOB_ID') is None
 
-    def detect_git_version(self):
+    def detect_git_version(self, working_dir=None):
+        current_dir = os.getcwd()
+
         try:
+            if working_dir:
+                os.chdir(working_dir)
+
             with self.git.batch_commit('Git Version'):
                 value = git.get_current_remote_url()
                 if value:
@@ -1165,8 +1171,9 @@ class JobBackend:
                 value = git.get_current_commit_author()
                 if value:
                     self.set_system_info('git_commit_author', value)
-        except:
-            pass
+        finally:
+            if working_dir:
+                os.chdir(current_dir)
 
     def early_stop(self):
         """
@@ -1218,6 +1225,7 @@ class JobBackend:
     def on_shutdown(self):
         if self.stopping:
             return
+
         if self.stop_requested:
             if self.stop_requested_force:
                 self.crash('Force stopped.', force_exit=True)
@@ -1349,7 +1357,7 @@ class JobBackend:
     def job_id(self):
         return self.git.job_id
 
-    def create(self, create_info=None, hyperparameter=None, server='local', insights=None):
+    def create(self, create_info=None, hyperparameter=None, server=None, insights=None):
         """
         Creates a new job in git and pushes it.
 
@@ -1544,7 +1552,6 @@ class JobBackend:
 
         if progress >= 2:
             self.logger.error('You can not restart an existing job that was already running. You need to restart the job through AETROS Trainer.')
-            self.logger.error('You can alternatively reset the git reference to the root commit and force push that ref to reset the job.')
             sys.exit(1)
 
         self.git.restart_job()

@@ -24,6 +24,7 @@ class RunCommand:
         parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in .aetros.yml. If not specified, command is executed on the host.")
         parser.add_argument('-s', '--server', help="On which AETROS server the command should be executed. Default read in .aetros.yml")
         parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in .aetros.yml")
+        parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
         parser.add_argument('-c', '--config', help="Default .aetros.yml in current working directory.")
 
         parsed_args = parser.parse_args(args)
@@ -46,19 +47,23 @@ class RunCommand:
         print("%d files added (%s)" % (files_added, human_size(size_added, 2)))
 
         create_info = api.create_job_info(model_name)
+        config.update(create_info['config'])
         if parsed_args.command:
             create_info['config']['command'] = parsed_args.command
-
 
         if parsed_args.image:
             create_info['config']['image'] = parsed_args.image
 
-        create_info['config']['sourceGitDisabled'] = True
-        server = config['server']
         if parsed_args.server:
-            server = parsed_args.server
+            create_info['config']['server'] = parsed_args.server
 
-        job.create(create_info=create_info, server=server)
+        if parsed_args.local:
+            create_info['config']['server'] = 'local'
+
+        create_info['config']['sourcesAttached'] = True
+        create_info['config'] = config
+
+        job.create(create_info=create_info)
         job.git.push()
 
         print("Job %s/%s created." % (job.model_name, job.job_id))

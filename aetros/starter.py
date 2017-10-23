@@ -23,7 +23,7 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, hyperparameter=None, dataset_id=None, server='local', insights=False):
+def start(logger, full_id, hyperparameter=None, dataset_id=None, server=None, insights=False):
     """
     Starts the training process with all logging of a job_id
     :type id: string : job id or model name
@@ -122,7 +122,7 @@ def start_custom(logger, job_backend):
                 raise Exception('Could not clone repository %s to %s' % (git_url, work_tree))
 
             # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
-            git_execute(logger, work_tree, ['fetch', 'origin', git_tree])
+            git_execute(logger, work_tree, ['fetch', '--depth', '1', 'origin', git_tree])
             git_execute(logger, work_tree, ['reset', '--hard', 'FETCH_HEAD'])
 
             job_backend.detect_git_version(work_tree)
@@ -316,33 +316,13 @@ def start_keras(logger, job_backend):
     keras_logger = KerasCallback(job_backend, job_backend.logger)
 
     try:
-        logger.info("Setup simple job")
         job_backend.progress(0, job_backend.job['config']['epochs'])
 
-        logger.info("Start job")
+        logger.info("Start training")
         keras_model_utils.job_start(job_backend, trainer, keras_logger)
 
         job_backend.sync_weights()
         job_backend.done()
-
-        logger.info("Done.")
-        sys.exit(0)
     except KeyboardInterrupt:
-        if job_backend.running:
-            job_backend.set_status('ABORTED')
-
-            if trainer.model:
-                trainer.model.stop_training = True
-
-            job_backend.sync_weights()
-            job_backend.abort()
-            logger.warning("Aborted.")
-
+        logger.warning("Aborted.")
         sys.exit(1)
-    except Exception as e:
-        if trainer.model:
-            trainer.model.stop_training = True
-
-        logging.error(traceback.format_exc())
-        job_backend.crash(e)
-        raise
