@@ -24,6 +24,7 @@ class InitCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
             prog=aetros.const.__prog__ + ' run')
         parser.add_argument('name', nargs='?', help="Model name")
+        parser.add_argument('--private', action='store_true', help="Make the model private")
 
         home_config = read_home_config()
         parsed_args = parser.parse_args(args)
@@ -34,7 +35,7 @@ class InitCommand:
                 print("failed: .aetros.yml already exists with a linked model to " + config['model'])
                 sys.exit(1)
 
-        name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())))
+        name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.private)
 
         with open('.aetros.yml', 'w') as f:
             f.write('model: ' + name)

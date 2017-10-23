@@ -116,7 +116,7 @@ def create_job_info(model_name, parameters=None, dataset_id=None):
     return parse_json(content)
 
 
-def create_model(model_name):
-    content = request('model/create', {'name': model_name})
+def create_model(model_name, private = False):
+    content = request('model/create', {'name': model_name, 'private': private})
 
     return parse_json(content)
