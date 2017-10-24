@@ -5,26 +5,34 @@ import re
 import os
 
 
-def get_branches():
-    with open(os.devnull, 'r+b', 0) as DEVNULL:
-        branches = subprocess.check_output(['git', 'branch'], stderr=DEVNULL).decode("utf-8").strip().split('\n')
+def silent_execute(args):
+    try:
+        with open(os.devnull, 'r+b', 0) as DEVNULL:
+            return subprocess.check_output(args, stderr=DEVNULL).decode("utf-8").strip()
+    except:
+        return None
 
+
+def get_branches():
+    output = silent_execute(['git', 'branch'])
+    if output:
+        branches = output.split('\n')
+    
         return [x.strip(' *') for x in branches]
 
 
 def get_current_branch():
-    with open(os.devnull, 'r+b', 0) as DEVNULL:
-        branches = subprocess.check_output(['git', 'branch'], stderr=DEVNULL).decode("utf-8")
-        m = re.search('\* ([^\s]+)', branches)
+    output = silent_execute(['git', 'branch'])
+    if output:
+        m = re.search('\* ([^\s]+)', output)
         current_branch = m.group(1) if m else None
 
         return current_branch
 
 
 def get_current_remote_url(origin_name = 'origin'):
-    with open(os.devnull, 'r+b', 0) as DEVNULL:
-        output = subprocess.check_output(['git', 'remote', '-v'], stderr=DEVNULL).decode("utf-8").strip()
-
+    output = silent_execute(['git', 'remote', '-v'])
+    if output:
         import re
         match = re.match('^' + re.escape(origin_name) + '\t([^\s]+)', output)
         if match:
@@ -34,21 +42,12 @@ def get_current_remote_url(origin_name = 'origin'):
 
 
 def get_current_commit_hash():
-    with open(os.devnull, 'r+b', 0) as DEVNULL:
-        output = subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=DEVNULL).decode("utf-8")
-
-        return output.strip()
+    return silent_execute(['git', 'rev-parse', 'HEAD'])
 
 
 def get_current_commit_message():
-    with open(os.devnull, 'r+b', 0) as DEVNULL:
-        output = subprocess.check_output(['git', 'log', '-1', '--pretty=%B', 'HEAD'], stderr=DEVNULL).decode("utf-8")
-
-        return output.strip()
+    return silent_execute(['git', 'log', '-1', '--pretty=%B', 'HEAD'])
 
 
 def get_current_commit_author():
-    with open(os.devnull, 'r+b', 0) as DEVNULL:
-        output = subprocess.check_output(['git', 'log', '-1', '--pretty=%an <%ae>', 'HEAD'], stderr=DEVNULL).decode("utf-8")
-
-        return output.strip()
+    return silent_execute(['git', 'log', '-1', '--pretty=%an <%ae>', 'HEAD'])

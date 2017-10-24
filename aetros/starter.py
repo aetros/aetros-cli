@@ -18,7 +18,6 @@ from . import keras_model_utils
 from .backend import JobBackend
 from .Trainer import Trainer
 
-
 class GitCommandException(Exception):
     cmd = None
 
@@ -37,6 +36,9 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server=None, in
     else:
         logger.error("Invalid id %s given. Supported formats: owner/modelName or owner/modelName/jobId." % (full_id, ))
         sys.exit(1)
+
+    sys.stdout.write("\fstart\n")
+    sys.stdout.flush()
 
     job_backend = JobBackend(model_name=owner + '/' + name)
 
@@ -249,7 +251,11 @@ def start_custom(logger, job_backend):
     logger.warning("$ %s " % str(command))
 
     try:
+        sys.stdout.write("\fcommand\n")
+        sys.stdout.flush()
         p = execute_command(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        sys.stdout.write("\fend\n")
+        sys.stdout.flush()
 
         job_backend.set_system_info('exit_code', p.returncode)
 

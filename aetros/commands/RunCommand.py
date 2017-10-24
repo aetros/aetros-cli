@@ -48,17 +48,18 @@ class RunCommand:
 
         create_info = api.create_job_info(model_name)
         config.update(create_info['config'])
+
         if parsed_args.command:
-            create_info['config']['command'] = parsed_args.command
+            config['command'] = parsed_args.command
 
         if parsed_args.image:
-            create_info['config']['image'] = parsed_args.image
+            config['image'] = parsed_args.image
 
         if parsed_args.server:
-            create_info['config']['server'] = parsed_args.server
+            create_info['server'] = parsed_args.server
 
         if parsed_args.local:
-            create_info['config']['server'] = 'local'
+            create_info['server'] = 'local'
 
         create_info['config']['sourcesAttached'] = True
         create_info['config'] = config

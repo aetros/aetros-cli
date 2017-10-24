@@ -1106,13 +1106,14 @@ class JobBackend:
             self.logger.debug('Job backend not started, since being online not detected.')
 
         if self.is_standalone():
-            self.git.commit_file('JOB', 'aetros/job/times/started.json', str(time.time()))
+            self.git.commit_file('JOB_STARTED', 'aetros/job/times/started.json', str(time.time()))
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
             self.set_system_info('command', str(sys.argv))
             self.git.store_file('aetros/job/times/elapsed.json', str(0))
             self.collect_system_information()
             self.collect_environment()
             self.start_monitoring()
+            self.git.push()
 
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
@@ -1345,7 +1346,7 @@ class JobBackend:
         self.stop(JOB_STATUS.PROGRESS_STATUS_CRASHED, force_exit=force_exit)
 
     def write_log(self, message):
-        if self.stream_log and self.running:
+        if self.stream_log:
             self.stream_log.write(message)
             return True
 
