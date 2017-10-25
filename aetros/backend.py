@@ -825,6 +825,11 @@ class JobBackend:
     def host(self):
         return self.config['host']
 
+    def section(self, title):
+        title = title.replace("\t", "  ")
+        sys.stdout.write("\f" + title+ "\t" + str(time.time() - self.start_time) + "\n")
+        sys.stdout.flush()
+
     def on_registration_failed(self, params):
         self.logger.warning("Connecting to AETROS Trainer at %s failed. Reasons: %s" % (self.host, params['reason'],))
         if 'Permission denied' in params['reason']:
@@ -1623,7 +1628,7 @@ class JobBackend:
             git_path = git_path.replace('../', '')
             git_path = git_path.replace('./', '')
 
-        with self.git.batch_commit('FILE ' + (title or path)):
+        with self.git.batch_commit('FILE ' + (title or git_path)):
             if os.path.isdir(path):
                 for file in os.listdir(path):
                     self.commit_file(path + '/' + file)

@@ -37,10 +37,8 @@ def start(logger, full_id, hyperparameter=None, dataset_id=None, server=None, in
         logger.error("Invalid id %s given. Supported formats: owner/modelName or owner/modelName/jobId." % (full_id, ))
         sys.exit(1)
 
-    sys.stdout.write("\fstart\n")
-    sys.stdout.flush()
-
     job_backend = JobBackend(model_name=owner + '/' + name)
+    job_backend.section('start')
 
     if id:
         job_backend.restart(id)
@@ -88,7 +86,7 @@ def start_custom(logger, job_backend):
     my_env['AETROS_ATTY'] = '1'
     my_env['AETROS_GIT'] = job_backend.git.get_base_command()
 
-    if 'sourceGitDisabled' not in config or not config['sourceGitDisabled']:
+    if 'sourcesAttached' not in config or not config['sourcesAttached']:
         # "aetros run" sets this to true, so we don't check out (wrong) source
         # since at the job commit from "aetros run" we have already all necessary files attached.
 
@@ -137,7 +135,7 @@ def start_custom(logger, job_backend):
         # we use the source from the job commit directly
         with job_backend.git.batch_commit('Git Version'):
             job_backend.set_system_info('git_remote_url', job_backend.git.get_remote_url('origin'))
-            job_backend.set_system_info('git_version', job_backend.git.git_last_commit)
+            job_backend.set_system_info('git_version', job_backend.git.job_id)
 
     project_config = read_config(work_tree + '/.aetros.yml')
 
@@ -147,9 +145,6 @@ def start_custom(logger, job_backend):
         logger.error('No "command" specified in .aetros.yml file. See Configuration section in the documentation.')
         sys.exit(1)
 
-    if os.path.exists(work_tree + '/.aetros.yml'):
-        job_backend.commit_file(work_tree + '/.aetros.yml', '.aetros.yml')
-
     if 'command' in job_config:
         command = job_config['command']
     else:
@@ -158,8 +153,6 @@ def start_custom(logger, job_backend):
     image = None
     if 'image' in job_config:
         image = job_config['image']
-    elif 'image' in project_config:
-        image = project_config['image']
 
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
@@ -187,6 +180,9 @@ def start_custom(logger, job_backend):
                         dockerfile_content += '\n RUN '.join(project_config['install'])
                     else:
                         dockerfile_content += project_config['install']
+
+                dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in .aetros.yml.\n' \
+                                     + dockerfile_content
 
                 with open('Dockerfile', 'w') as f:
                     f.write(dockerfile_content)
@@ -236,6 +232,12 @@ def start_custom(logger, job_backend):
         docker_command += project_config['docker_options']
         docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/exp']
         docker_command += ['-w', '/exp']
+
+        if 'resources' in job_backend.job:
+            assigned_resources = job_backend.job['resources']
+            # todo, limit the docker container
+            # todo, assign GPU to nvidia docker and set env for tensorflow
+
         docker_command.append(image)
 
         if isinstance(command, list):
@@ -251,11 +253,9 @@ def start_custom(logger, job_backend):
     logger.warning("$ %s " % str(command))
 
     try:
-        sys.stdout.write("\fcommand\n")
-        sys.stdout.flush()
+        job_backend.section('command')
         p = execute_command(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-        sys.stdout.write("\fend\n")
-        sys.stdout.flush()
+        job_backend.section('end')
 
         job_backend.set_system_info('exit_code', p.returncode)
 

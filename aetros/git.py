@@ -333,7 +333,7 @@ class Git:
         root commit is the actual job id. A reference is then created to the newest (head) commit of this commit history.
         The reference will always be updated once a new commit is added.
         """
-        self.add_file('aetros/job.json', json.dumps(data))
+        self.add_file('aetros/job.json', json.dumps(data, indent=4))
         tree_id = self.write_tree()
 
         self.job_id = self.command_exec(['commit-tree', '-m', "JOB_CREATED", tree_id])[0].decode('utf-8').strip()
