@@ -23,6 +23,9 @@ class GeneralLogger(object):
         self.buffer_disabled = True
         self.buffer = ''
 
+    def clear_buffer(self):
+        self.buffer = ''
+
     def fileno(self):
         return self.logger.fileno()
 

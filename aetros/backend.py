@@ -43,9 +43,9 @@ last_exit_code = None
 original_exit = sys.exit
 
 
-def patched_exit(code):
-    last_exit_code = code
-    original_exit(code)
+def patched_exit(status=None):
+    last_exit_code = status
+    original_exit(status)
 
 sys.exit = patched_exit
 
@@ -358,11 +358,11 @@ class BackendClient:
                         self.logger.debug('Closed write thread: exception. %d messages left' % (len(self.queue), ))
                         self.connection_error(e)
 
-                if not self.connected and not self.expect_close:
+                if self.active and not self.connected and not self.expect_close:
                     if not self.connect():
                         time.sleep(5)
 
-            time.sleep(0.01)
+            time.sleep(0.1)
 
         self.logger.debug('Closed write thread: ended. %d messages left' % (len(self.queue), ))
 
@@ -837,7 +837,7 @@ class JobBackend:
 
     def on_client_offline(self, params):
         self.logger.warning("Could not establish a connection. We stopped automatic syncing.")
-        self.logger.warning("You can publish later this job to AETROS Trainer using following command in this folder.")
+        self.logger.warning("You can publish later this job to AETROS Trainer executing following command.")
         self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
         self.git.online = False
 
@@ -871,14 +871,14 @@ class JobBackend:
         ))
 
     def on_sigint(self, sig, frame):
+        self.client.expect_close = True
+        self.stop_requested = True
+
         if self.stop_requested:
             self.stop_requested_force = True
             self.logger.warning('Force stopped')
             self.crash('Force stopped', force_exit=True)
             return
-
-        self.client.expect_close = True
-        self.stop_requested = True
 
         self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
         sys.exit(1)
@@ -898,6 +898,7 @@ class JobBackend:
         self.git.stop()
         self.client.close()
 
+        _thread.interrupt_main()
         os._exit(1)
 
     def external_stop(self, params):
@@ -906,7 +907,25 @@ class JobBackend:
         """
         self.logger.warning("Received stop signal by server.")
         self.stop_requested_force = params
+        self.client.expect_close = True
+        self.stop_requested = True
+
         _thread.interrupt_main()
+        os.kill(os.getpid(), signal.SIGINT)
+
+        if self.stop_requested_force:
+            self.git.stop()
+            self.client.close()
+
+            os._exit(1)
+
+    def early_stop(self):
+        """
+        Stop when a limitation is reached (like maxEpoch, maxtime)
+        """
+        self.in_early_stop = True
+        _thread.interrupt_main()
+        os.kill(os.getpid(), signal.SIGINT)
 
     def batch(self, batch, total, size=None):
         time_diff = time.time() - self.last_batch_time
@@ -1181,13 +1200,6 @@ class JobBackend:
             if working_dir:
                 os.chdir(current_dir)
 
-    def early_stop(self):
-        """
-        Stop when a limitation is reached (like maxEpoch, maxtime)
-        """
-        self.in_early_stop = True
-        sys.exit(0)
-
     def start_monitoring(self):
         if not self.monitoring_thread:
             self.monitoring_thread = MonitoringThread(self)
@@ -1331,13 +1343,16 @@ class JobBackend:
         if not self.running:
             return
 
-        self.set_status('ABORTED')
+        self.set_status('ABORTED', add_section=False)
 
         self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages, force_exit=force_exit)
 
     def crash(self, error=None, force_exit=True):
+        if not last_exit_code:
+            last_exit_code = 1
+
         with self.git.batch_commit('CRASH'):
-            self.set_status('CRASHED')
+            self.set_status('CRASHED', add_section=False)
             self.git.commit_json_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
             if isinstance(sys.stderr, GeneralLogger):
                 self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', sys.stderr.last_messages)
@@ -1355,7 +1370,10 @@ class JobBackend:
             self.stream_log.write(message)
             return True
 
-    def set_status(self, status):
+    def set_status(self, status, add_section=True):
+        if add_section:
+            self.section(status)
+
         self.logger.info('Job status changed to %s ' % (status,))
         self.job_add_status('status', status)
 
@@ -1372,32 +1390,16 @@ class JobBackend:
         :param server:
         :param insights: whether you want to activate insights
         """
+        self.job = create_info
         self.job['server'] = server
-        self.job['config'] = copy.deepcopy(self.config)
         self.job['optimization'] = None
-        self.job['type'] = 'python'
+        self.job['type'] = 'custom'
+
+        if 'config' not in self.job:
+            self.job['config'] = {}
 
         if 'parameters' not in self.job['config']:
             self.job['config']['parameters'] = {}
-
-        if create_info is not None:
-            if 'config' not in create_info:
-                self.logger.debug('create_info: ' + str(create_info))
-                raise Exception('Given create_info is not valid.')
-
-            self.job['type'] = create_info['type']
-            self.job['config'].update(create_info['config'])
-
-            if 'simple' == self.job['type']:
-                for k, v in six.iteritems(create_info['datasets']):
-                    if 'python' == v['type']:
-                        self.git.add_file('aetros/dataset/' + k + '.py', v['code'])
-                        del v['code']
-
-                    self.git.add_file('aetros/dataset/' + k + '.json', json.dumps(v))
-
-                self.git.add_file('model.py', create_info['code'])
-                self.git.add_file('aetros/layer.json', json.dumps(create_info['layer']))
 
         if insights is not None:
             self.job['config']['insights'] = insights
@@ -1411,6 +1413,7 @@ class JobBackend:
         self.git.create_job_id(self.job)
 
         self.logger.debug("Job created with Git ref " + self.git.ref_head)
+
         return self.job_id
 
     def is_simple_model(self):
@@ -1432,7 +1435,8 @@ class JobBackend:
 
         if model_name is None:
             if 'model' not in self.config:
-                raise Exception('No AETROS Trainer model name given. Specify it in aetros.backend.start_job("model/name") or in .aetros.yml `model: model/name`.')
+                raise Exception('No AETROS Trainer model name given. Specify it in .aetros.yml `model: model/name`.')
+
             self.model_name = self.config['model']
         else:
             self.model_name = model_name
@@ -1516,9 +1520,15 @@ class JobBackend:
 
             return current
 
+    def fetch(self, job_id):
+        """
+        Fetches the job from the server updating the job ref.
+        """
+        self.git.fetch_job(job_id)
+
     def load(self, job_id):
         """
-        Loads job, restart its ref and sets as current.
+        Loads job into index and work-tree, restart its ref and sets as current.
 
         :param job_id: int
         """
@@ -1526,7 +1536,7 @@ class JobBackend:
         # normally git would create a job_id, but we have already one
         # so download the ref and check it out.
         self.logger.info('Fetch Git ref for refs/aetros/job/' + job_id)
-        self.git.fetch_job(job_id, checkout=self.is_standalone())
+        self.git.read_job(job_id, checkout=self.is_standalone())
         self.load_job_from_ref()
 
     def load_job_from_ref(self):
@@ -1548,7 +1558,7 @@ class JobBackend:
         self.logger.debug('job: ' + str(self.job))
 
     def restart(self, job_id):
-        self.git.fetch_job(job_id, checkout=True)
+        self.git.read_job(job_id, checkout=True)
 
         progress = self.git.contents('aetros/job/status/progress.json')
         if progress is not None:
@@ -1560,7 +1570,6 @@ class JobBackend:
             self.logger.error('You can not restart an existing job that was already running. You need to restart the job through AETROS Trainer.')
             sys.exit(1)
 
-        self.git.restart_job()
         self.load_job_from_ref()
 
     def get_job_model(self):
@@ -1648,11 +1657,10 @@ class JobBackend:
         If both are empty, we commit all files smaller than 10MB.
         :return:
         """
-
-        blacklist = ['.git']
+        blacklist = ['.git', '.aetros']
 
         def add_resursiv(path = '.'):
-            if path in blacklist:
+            if os.path.basename(path) in blacklist:
                 return 0, 0
 
             if os.path.isdir(path):

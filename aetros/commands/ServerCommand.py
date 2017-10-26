@@ -101,9 +101,11 @@ class ServerCommand:
         self.general_logger_stderr = None
 
         self.executed_jobs = 0
-        self.max_parallel_jobs = 2
         self.max_jobs = 0
         self.ssh_key_path = None
+
+        self.resources_limit = {}
+        self.disabled_gpus = []
 
         self.job_processes = []
         self.registered = False
@@ -116,7 +118,13 @@ class ServerCommand:
                                          prog=aetros.const.__prog__ + ' server')
         parser.add_argument('name', nargs='?', help="Server name")
         parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in your account, and delete them when the command exits.")
-        parser.add_argument('--max-parallel', help="How many jobs should be run at the same time.")
+        parser.add_argument('--max-memory',
+            help="How many RAM is available. In gigabyte. Per default all available memory.")
+        parser.add_argument('--max-cpus',
+            help="How many cores are available. Per default all available CPU cores.")
+        parser.add_argument('--max-gpus',
+            help="How many GPUs are available. Comma separate list of device ids. Starting at 0. Per default all available GPU cards.")
+        parser.add_argument('--no-gpus', action='store_true', help="Disable all GPUs")
         parser.add_argument('--max-jobs', help="How many jobs are allowed to run in total.")
         parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
         parser.add_argument('--port', help="Default 8051. Read from environment variable API_PORT.")
@@ -130,10 +138,33 @@ class ServerCommand:
 
         self.config = read_home_config()
 
-        if parsed_args.max_parallel:
-            self.max_parallel_jobs = int(parsed_args.max_parallel)
         if parsed_args.max_jobs:
             self.max_jobs = int(parsed_args.max_jobs)
+
+        if parsed_args.max_memory:
+            self.resources_limit['memory'] = int(parsed_args.max_memory)
+
+        if parsed_args.max_cpus:
+            self.resources_limit['cpus'] = int(parsed_args.max_cpus)
+
+        if parsed_args.max_gpus or parsed_args.no_gpus:
+            gpus = 0
+            try:
+                gpus = aetros.cuda_gpu.get_installed_devices()
+            except:
+                pass
+
+            if parsed_args.max_gpus:
+                for i in parsed_args.max_gpus.split(','):
+                    if i > gpus or i < 0:
+                        raise Exception('--resources-max-gpus ' + str(i) + ' not available on the system. Max ' + str(gpus)+ ' GPUs detected.')
+
+                    self.disabled_gpus.append(i)
+
+            elif parsed_args.no_gpus:
+                for i in range(0, gpus):
+                    self.disabled_gpus.append(i)
+
         if parsed_args.show_stdout:
             self.show_stdout = True
 
@@ -235,12 +266,11 @@ class ServerCommand:
             self.stop()
 
     def on_signusr1(self, signal, frame):
-        self.logger.info("ending=%s, active=%s, %d queued, %d running, %d max-parallel" % (
+        self.logger.info("ending=%s, active=%s, %d queued, %d running" % (
             str(self.ending),
             str(self.active),
             self.queued_count(),
-            len(self.job_processes),
-            self.max_parallel_jobs
+            len(self.job_processes)
         ))
 
     def on_client_close(self, params):
@@ -377,7 +407,7 @@ class ServerCommand:
                     del self.queuedMap[job['id']]
 
                 git = Git(self.logger, None, self.config, model)
-                git.fetch_job(job_id)
+                git.read_job(job_id)
 
                 if not git.has_file('aetros/job/log.txt'):
                     log = six.b('')
@@ -410,9 +440,6 @@ class ServerCommand:
         self.check_finished_jobs()
 
         if self.ending:
-            return
-
-        if len(self.job_processes) >= self.max_parallel_jobs:
             return
 
         if self.max_jobs and self.executed_jobs >= self.max_jobs:
@@ -473,6 +500,7 @@ class ServerCommand:
 
         import cpuinfo
         cpu = cpuinfo.get_cpu_info()
+        values['resources_limit'] = self.resources_limit
         values['cpu_name'] = cpu['brand']
         values['cpu'] = [cpu['hz_advertised_raw'][0], cpu['count']]
         values['nets'] = {}
@@ -482,7 +510,9 @@ class ServerCommand:
 
         try:
             for i in range(0, aetros.cuda_gpu.get_installed_devices()):
-                values['gpus'].append(aetros.cuda_gpu.get_device_properties(i))
+                gpu = aetros.cuda_gpu.get_device_properties(i)
+                gpu['available'] = i not in self.disabled_gpus
+                values['gpus'].append(gpu)
         except:
             pass
 
@@ -519,7 +549,7 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
-        values['jobs'] = {'parallel': self.max_parallel_jobs, 'enqueued': self.queued_count(), 'running': len(self.job_processes)}
+        values['jobs'] = {'enqueued': self.queued_count(), 'running': len(self.job_processes)}
         values['nets'] = {}
         values['processes'] = []
         values['gpus'] = []

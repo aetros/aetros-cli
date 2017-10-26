@@ -46,6 +46,7 @@ class Git:
 
         self.git_path = os.path.normpath(self.storage_dir + '/' + model_name + '.git')
 
+        self.command_lock = Lock()
         self.debug = False
         self.last_push_time = 0
         self.active_push = False
@@ -193,12 +194,15 @@ class Git:
             signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         try:
+            self.command_lock.acquire()
+
             p = subprocess.Popen(
                 command, preexec_fn=preexec_fn, bufsize=0,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
             )
 
             stdoutdata, stderrdata = p.communicate(inputdata)
+
         except KeyboardInterrupt:
             try:
                 if p is not None:
@@ -207,6 +211,8 @@ class Git:
             except:
                 pass
             interrupted = True
+        finally:
+            self.command_lock.release()
 
         try:
             stderrdata = stderrdata.decode('utf-8')
@@ -280,6 +286,17 @@ class Git:
         except:
             self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
             raise
+
+        self.read_job(job_id, checkout)
+
+    def read_job(self, job_id, checkout=False):
+        """
+        Reads head and sets self.git_last_commit, reads the tree into index,
+        and checkout the work-tree when checkout=True.
+
+        This does not fetch the job from the actual server. It needs to be in the local git already.
+        """
+        self.job_id = job_id
 
         self.git_last_commit = self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
         self.logger.debug('Job ref points to ' + self.git_last_commit)

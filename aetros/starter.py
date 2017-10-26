@@ -13,6 +13,7 @@ import traceback
 import six
 
 from aetros import api
+from aetros.logger import GeneralLogger
 from aetros.utils import read_home_config, unpack_full_job_id, read_config
 from . import keras_model_utils
 from .backend import JobBackend
@@ -22,46 +23,25 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, hyperparameter=None, dataset_id=None, server=None, insights=False):
+def start(logger, full_id, fetch=True):
     """
     Starts the training process with all logging of a job_id
     :type id: string : job id or model name
     """
-    id = None
 
-    if full_id.count('/') == 1:
-        owner, name = full_id.split('/')
-    elif full_id.count('/') >= 2:
-        owner, name, id = unpack_full_job_id(full_id)
-    else:
-        logger.error("Invalid id %s given. Supported formats: owner/modelName or owner/modelName/jobId." % (full_id, ))
-        sys.exit(1)
+    owner, name, id = unpack_full_job_id(full_id)
+
+    if isinstance(sys.stdout, GeneralLogger):
+        # we don't want to have stuff written to stdout before in job's log
+        sys.stdout.clear_buffer()
 
     job_backend = JobBackend(model_name=owner + '/' + name)
-    job_backend.section('start')
+    job_backend.section('checkout')
 
-    if id:
-        job_backend.restart(id)
-    else:
-        try:
-            logger.debug("Create job info ...")
-            create_info = api.create_job_info(full_id, hyperparameter, dataset_id)
-        except api.ApiError as e:
-            if 'Connection refused' in e.reason:
-                logger.error("You are offline")
-            logger.error("Can not start new job without knowing what model type it is. "
-                         "Use your script directly if its a Python model.")
-            raise
+    if fetch:
+        job_backend.fetch(id)
 
-        logger.debug(create_info)
-        if not create_info:
-            raise Exception('Could not fetch model information. Are you online and have access to the given model?')
-
-        job_backend.create(create_info=create_info, hyperparameter=hyperparameter, server=server, insights=insights)
-
-    if not len(job_backend.get_job_model().config):
-        raise Exception('Job does not have a configuration. Make sure you created the job via AETROS Trainer.')
-
+    job_backend.restart(id)
     job_backend.start()
 
     if job_backend.is_simple_model():
@@ -86,57 +66,6 @@ def start_custom(logger, job_backend):
     my_env['AETROS_ATTY'] = '1'
     my_env['AETROS_GIT'] = job_backend.git.get_base_command()
 
-    if 'sourcesAttached' not in config or not config['sourcesAttached']:
-        # "aetros run" sets this to true, so we don't check out (wrong) source
-        # since at the job commit from "aetros run" we have already all necessary files attached.
-
-        custom_git = False
-
-        if 'gitCustom' in config and config['gitCustom']:
-            custom_git = config['gitCustom']
-
-        if custom_git and ('sourceGitUrl' not in config or not config['sourceGitUrl']):
-            raise Exception('Server git url is not configured. Aborted')
-
-        git_tree = 'master'
-
-        if custom_git:
-            git_url = config['sourceGitUrl']
-        else:
-            user_config = read_home_config()
-            git_url = 'git@' + user_config['host'] + ':' + job_backend.model_name + '.git'
-
-        if 'sourceGitTree' in config and config['sourceGitTree']:
-            git_tree = config['sourceGitTree']
-
-        logger.info("Clone job Git URL %s in %s" % (git_url, work_tree))
-        logger.info("Using Git tree of '%s'" % (git_tree, ))
-
-        try:
-            if os.path.exists(work_tree):
-                shutil.rmtree(work_tree)
-
-            args = ['git', 'clone', git_url, work_tree]
-            code = subprocess.call(args, stderr=sys.stderr, stdout=sys.stdout)
-            if code != 0:
-                raise Exception('Could not clone repository %s to %s' % (git_url, work_tree))
-
-            # make sure the requested branch is existent in local git. Target FETCH_HEAD to this branch.
-            git_execute(logger, work_tree, ['fetch', '--depth', '1', 'origin', git_tree])
-            git_execute(logger, work_tree, ['reset', '--hard', 'FETCH_HEAD'])
-
-            job_backend.detect_git_version(work_tree)
-            logger.info("Model source code checked out.")
-
-        except GitCommandException as e:
-            logger.error('Could not run "%s" for repository %s in %s. Look at previous output.' %(e.cmd, git_url, work_tree))
-            raise
-    else:
-        # we use the source from the job commit directly
-        with job_backend.git.batch_commit('Git Version'):
-            job_backend.set_system_info('git_remote_url', job_backend.git.get_remote_url('origin'))
-            job_backend.set_system_info('git_version', job_backend.git.job_id)
-
     project_config = read_config(work_tree + '/.aetros.yml')
 
     job_config = job_backend.job['config']
@@ -156,8 +85,6 @@ def start_custom(logger, job_backend):
 
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
-
-    job_backend.set_system_info('command', str(command))
 
     if image is not None:
         job_backend.set_system_info('image/name', str(image))
@@ -254,8 +181,7 @@ def start_custom(logger, job_backend):
 
     try:
         job_backend.section('command')
-        p = execute_command(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-        job_backend.section('end')
+        p = execute_command(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
 
         job_backend.set_system_info('exit_code', p.returncode)
 
@@ -266,6 +192,7 @@ def start_custom(logger, job_backend):
 
     except KeyboardInterrupt:
         logger.warning("Job aborted.")
+        job_backend.abort()
         sys.exit(1)
 
 
@@ -309,6 +236,11 @@ def start_keras(logger, job_backend):
     os.chdir(job_backend.git.work_tree)
     logger.debug("Start simple model")
 
+    # we use the source from the job commit directly
+    with job_backend.git.batch_commit('Git Version'):
+        job_backend.set_system_info('git_remote_url', job_backend.git.get_remote_url('origin'))
+        job_backend.set_system_info('git_version', job_backend.git.job_id)
+
     # all our shapes are Tensorflow schema. (height, width, channels)
     import keras.backend
     if hasattr(keras.backend, 'set_image_dim_ordering'):
@@ -327,7 +259,6 @@ def start_keras(logger, job_backend):
         logger.info("Start training")
         keras_model_utils.job_start(job_backend, trainer, keras_logger)
 
-        job_backend.sync_weights()
         job_backend.done()
     except KeyboardInterrupt:
         logger.warning("Aborted.")

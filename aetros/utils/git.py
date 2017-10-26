@@ -34,11 +34,12 @@ def get_current_remote_url(origin_name = 'origin'):
     output = silent_execute(['git', 'remote', '-v'])
     if output:
         import re
-        match = re.match('^' + re.escape(origin_name) + '\t([^\s]+)', output)
-        if match:
-            return match.group(1)
+        regex = re.compile('^' + re.escape(origin_name) + '\t([^\s]+)', re.MULTILINE)
+        matches = [m.groups() for m in regex.finditer(output)]
+        if matches:
+            return matches[0][0]
 
-        return output.strip()
+        return None
 
 
 def get_current_commit_hash():

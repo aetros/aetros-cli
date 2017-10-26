@@ -2,8 +2,9 @@ import subprocess
 
 import six
 from six.moves.urllib.parse import urlencode
-from aetros.utils import read_config
 import json
+
+from aetros.utils import read_home_config
 
 
 class ApiError(Exception):
@@ -19,7 +20,7 @@ class ApiConnectionError(ApiError):
     pass
 
 
-def request(path, query=None, body=None, config=None):
+def request(path, query=None, body=None, method='get', config=None):
     query = query or {}
 
     if isinstance(query, dict):
@@ -30,7 +31,7 @@ def request(path, query=None, body=None, config=None):
     else:
         path += '?' + query
 
-    config = read_config() if config is None else config
+    config = read_home_config() if config is None else config
 
     args = [config['ssh']] if isinstance(config['ssh'], six.string_types) else config['ssh']
     args += ['-o', 'StrictHostKeyChecking no']
@@ -38,7 +39,10 @@ def request(path, query=None, body=None, config=None):
     if config['ssh_key']:
         args += ['-i', config['ssh_key']]
 
-    ssh_stream = subprocess.Popen(args + ['git@' + config['host'], 'api', path],
+    if method == 'get' and body is not None:
+        method = 'post'
+
+    ssh_stream = subprocess.Popen(args + ['git@' + config['host'], 'api', method, path],
         stderr=subprocess.PIPE,
         stdin=subprocess.PIPE if body is not None else None, stdout=subprocess.PIPE)
 
@@ -110,13 +114,17 @@ def user():
     return parse_json(request('user'))
 
 
-def create_job_info(model_name, parameters=None, dataset_id=None):
-    content = request('job/create-info', {'id': model_name}, {'parameters': parameters, 'datasetId': dataset_id})
-
+def create_job(model_name, server=None, parameters=None, dataset_id=None, config=None):
+    content = request(
+        'job',
+        {'modelId': model_name},
+        {'server': server, 'parameters': parameters, 'datasetId': dataset_id, 'config': config},
+        'put'
+    )
     return parse_json(content)
 
 
 def create_model(model_name, private = False):
-    content = request('model/create', {'name': model_name, 'private': private})
+    content = request('model/create', {'name': model_name, 'private': private}, None, 'put')
 
     return parse_json(content)
