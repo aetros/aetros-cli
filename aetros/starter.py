@@ -1,23 +1,17 @@
 from __future__ import print_function, division
-
 from __future__ import absolute_import
 
 import json
-import logging
 import os
-import shutil
 import subprocess
 import sys
-import traceback
-
 import six
 
-from aetros import api
 from aetros.logger import GeneralLogger
-from aetros.utils import read_home_config, unpack_full_job_id, read_config
-from . import keras_model_utils
+from aetros.utils import unpack_full_job_id, read_config
 from .backend import JobBackend
 from .Trainer import Trainer
+
 
 class GitCommandException(Exception):
     cmd = None
@@ -51,7 +45,6 @@ def start(logger, full_id, fetch=True):
 
 def start_custom(logger, job_backend):
     job_model = job_backend.get_job_model()
-    config = job_model.config
 
     work_tree = job_backend.git.work_tree
 
@@ -126,17 +119,17 @@ def start_custom(logger, job_backend):
 
             logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
 
-            p = execute_command(kwargs=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
             if p.returncode:
-                job_backend.crash('Image build error')
+                job_backend.fail('Image build error')
                 sys.exit(p.returncode)
 
             image = job_backend.model_name
 
         logger.info("Pull docker image: $ " + image)
-        execute_command(
-            kwargs=[project_config['docker'], 'pull', image], bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        execute_command(args=[project_config['docker'], 'pull', image], bufsize=1,
+            stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         inspections = execute_command_stdout([project_config['docker'], 'inspect', image])
         inspections = json.loads(inspections.decode('utf-8'))
@@ -195,7 +188,7 @@ def start_custom(logger, job_backend):
         job_backend.set_system_info('exit_code', p.returncode)
 
         if p.returncode:
-            job_backend.crash()
+            job_backend.fail()
 
         sys.exit(p.returncode)
     except KeyboardInterrupt:
@@ -246,7 +239,7 @@ def git_execute(logger, repo_path, args):
     args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
     logger.info("$ %s" % (' '.join(args), ))
 
-    p = execute_command(kwargs=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    p = execute_command(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     if p.returncode != 0:
         exception = GitCommandException("Git command returned not 0. " + (' '.join(args)))
@@ -255,6 +248,11 @@ def git_execute(logger, repo_path, args):
 
 
 def start_keras(logger, job_backend):
+    if 'KERAS_BACKEND' not in os.environ:
+        os.environ['KERAS_BACKEND'] = 'tensorflow'
+
+    from . import keras_model_utils
+
     # we need to import keras here, so we know which backend is used (and whether GPU is used)
     os.chdir(job_backend.git.work_tree)
     logger.debug("Start simple model")

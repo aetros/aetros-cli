@@ -117,18 +117,24 @@ class ServerCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' server')
         parser.add_argument('name', nargs='?', help="Server name")
-        parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in your account, and delete them when the command exits.")
+        parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in your account, and delete them when the server exits.")
+
+        parser.add_argument('--allow-host-execution', action='store_true', help="Whether a job can run on this server "
+            "directly, without a virtual (docker) container.\nSecurity risk and makes resource limitation useless.")
+
         parser.add_argument('--max-memory',
             help="How many RAM is available. In gigabyte. Per default all available memory.")
         parser.add_argument('--max-cpus',
             help="How many cores are available. Per default all available CPU cores.")
         parser.add_argument('--max-gpus',
-            help="How many GPUs are available. Comma separate list of device ids. Starting at 0. Per default all available GPU cards.")
+            help="How many GPUs are available. Comma separate list of device ids. Starting at 0. "
+                 "Per default all available GPU cards.")
+
         parser.add_argument('--no-gpus', action='store_true', help="Disable all GPUs")
-        parser.add_argument('--max-jobs', help="How many jobs are allowed to run in total.")
-        parser.add_argument('--host', help="Default trainer.aetros.com. Read from environment variable API_HOST.")
-        parser.add_argument('--port', help="Default 8051. Read from environment variable API_PORT.")
-        parser.add_argument('--show-stdout', action='store_true', help="Show all stdout of all jobs")
+
+        parser.add_argument('--max-jobs', help="How many jobs are allowed to run in total until the process exists automatically.")
+        parser.add_argument('--host', help="Default trainer.aetros.com. Read from the global configuration ~/.aetros.yml.")
+        parser.add_argument('--show-stdout', action='store_true', help="Show all stdout of all jobs. Only for debugging necessary.")
 
         parsed_args = parser.parse_args(args)
 
@@ -146,6 +152,8 @@ class ServerCommand:
 
         if parsed_args.max_cpus:
             self.resources_limit['cpus'] = int(parsed_args.max_cpus)
+
+        self.resources_limit['host_execution'] = parsed_args.allow_host_execution
 
         if parsed_args.max_gpus or parsed_args.no_gpus:
             gpus = 0

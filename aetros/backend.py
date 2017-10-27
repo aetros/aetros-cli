@@ -601,7 +601,7 @@ def context():
 
     If env:AETROS_JOB_ID is not defined, it creates a new job.
 
-    Job is ended either by calling JobBackend.done(), JobBackend.crash() or JobBackend.abort().
+    Job is ended either by calling JobBackend.done(), JobBackend.fail() or JobBackend.abort().
     If the script ends without calling one of the methods above, JobBackend.done is automatically called.
 
     :return: JobBackend
@@ -802,7 +802,7 @@ class JobBackend:
         # This flag stops exiting with > 0, since the reach of a limitation is a valid exit.
         self.in_early_stop = False
 
-        # ended means: done, abort or crash method has been called.
+        # ended means: done, abort or fail method has been called.
         self.ended = False
 
         # when stop(wait_for_client=True) is called, we sync last messages.
@@ -920,7 +920,7 @@ class JobBackend:
             self.logger.warning('Force stopped')
 
             # with force_exit we really close the process, killing it in unknown state
-            self.crash('Force stopped', force_exit=True)
+            self.fail('Force stopped', force_exit=True)
             return
 
         if self.is_master_process():
@@ -1298,7 +1298,7 @@ class JobBackend:
 
     def on_shutdown(self):
         """
-        Shutdown routine. Sets the last progress (done, aborted, crashed) and tries to send last logs and git commits.
+        Shutdown routine. Sets the last progress (done, aborted, errored) and tries to send last logs and git commits.
         Also makes sure the ssh connection is closed (thus, the job marked as offline).
 
         Is triggered by atexit.register().
@@ -1310,7 +1310,7 @@ class JobBackend:
 
         if self.stop_requested:
             if self.stop_requested_force:
-                self.crash('Force stopped.', force_exit=True)
+                self.fail('Force stopped.', force_exit=True)
             else:
                 self.abort(force_exit=False)
             return
@@ -1320,7 +1320,7 @@ class JobBackend:
             if isinstance(sys.last_value, KeyboardInterrupt):
                 self.abort(force_exit=False)
             else:
-                self.crash(type(sys.last_value).__name__ + ': ' + str(sys.last_value), force_exit=False)
+                self.fail(type(sys.last_value).__name__ + ': ' + str(sys.last_value), force_exit=False)
 
         elif self.running:
             self.done(force_exit=False)
@@ -1425,23 +1425,20 @@ class JobBackend:
 
         self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages, force_exit=force_exit)
 
-    def crash(self, error=None, force_exit=True):
+    def fail(self, message=None, force_exit=True):
         """
-        Marks the job as crashed, saves the given error and force exists the process when force_exit=True.
+        Marks the job as failed, saves the given error message and force exists the process when force_exit=True.
         """
         global last_exit_code
 
         if not last_exit_code:
             last_exit_code = 1
 
-        with self.git.batch_commit('CRASH'):
-            self.set_status('CRASHED', add_section=False)
-            self.git.commit_json_file('CRASH_REPORT_ERROR', 'aetros/job/crash/error', str(error) if error else '')
+        with self.git.batch_commit('FAILED'):
+            self.set_status('FAILED', add_section=False)
+            self.git.commit_json_file('FAIL_MESSAGE', 'aetros/job/crash/error', str(message) if message else '')
             if isinstance(sys.stderr, GeneralLogger):
-                self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', sys.stderr.last_messages)
-
-        # # we need to make sure that the server got the git crash before we report the crash progress
-        # self.git.push()
+                self.git.commit_json_file('FAIL_MESSAGE_LAST_LOG', 'aetros/job/crash/last_message', sys.stderr.last_messages)
 
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
 
