@@ -295,6 +295,13 @@ class Git:
 
         self.read_job(job_id, checkout)
 
+    def is_job_fetched(self, job_id):
+        try:
+            self.command_exec(['rev-parse', 'refs/aetros/job/' + job_id])[0].decode('utf-8').strip()
+            return True
+        except:
+            return False
+
     def read_job(self, job_id, checkout=False):
         """
         Reads head and sets self.git_last_commit, reads the tree into index,

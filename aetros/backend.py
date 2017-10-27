@@ -229,8 +229,21 @@ class BackendClient:
             args = args + ['git@' + self.host, 'stream']
             self.logger.debug('Open ssh: ' + (' '.join(args)))
 
+
+            # Since a CTRL+C or SIGINT to process group would kill all children too, our SSH connection will die first.
+            # We need that connection to indicate whether the process is still alive, so we create
+            # it in a different process group.
+            # We need to make sure, we kill it when the process dies, otherwise it would run forever.
+            kwargs = {}
+            if os.name == 'nt':
+                kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs['preexec_fn'] = os.setsid
+
             self.ssh_stream = subprocess.Popen(args, bufsize=0,
-                                               stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                **kwargs
+            )
 
             self.logger.debug('Done: pid=' + str(self.ssh_stream.pid))
             messages = self.wait_for_at_least_one_message()
@@ -298,10 +311,10 @@ class BackendClient:
 
         # ssh process is dead
         if self.ssh_stream.poll() is not None:
-            # since the ssh process can receive a SIGINT first
-            # we need to wait a bit to make sure we receive one as well.
+            # since the ssh process can receive a SIGINT first (CTRL+C on terminal, instead of sending SIGINT to
+            # this process only) we need to wait a bit to make sure we receive one as well.
             # if so, we close anything and don't reconnect (self.expect_close will be True automatically)
-            time.sleep(1)
+            time.sleep(0.3)
 
         if self.expect_close:
             # we expected the close, so ignore the error
@@ -426,10 +439,19 @@ class BackendClient:
         self.active = False
         self.connected = False
 
-        self.event_listener.fire('close')
-
         if self.ssh_stream:
-            self.ssh_stream.kill()
+            try:
+                self.ssh_stream.kill()
+                if self.ssh_stream and self.ssh_stream.pool() is None:
+                    # well, we have to kill you, because it's in a different
+                    # process group, and we really need to make sure, it is killed when our
+                    # process dies
+                    time.sleep(0.1)
+                    self.ssh_stream.terminate()
+            except: pass
+
+        if self.online:
+            self.event_listener.fire('close')
 
         self.online = False
 
@@ -904,12 +926,12 @@ class JobBackend:
         if self.is_master_process():
             self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
         else:
-            print("Child: Got sigint")
+            sys.__stdout__.write("Got child sigint")
 
         self.stop_requested = True
 
         # we do not do any action yet, since we have a shutdown listener attached
-        # which will be executed once the script _really_ ends
+        # which will be executed once the script _really_ ends, after a exception for example has been printed
 
     def external_aborted(self, params):
         """
@@ -1166,8 +1188,12 @@ class JobBackend:
             self.git.store_file('aetros/job/times/elapsed.json', str(0))
             self.collect_system_information()
             self.collect_environment()
-            self.start_monitoring()
+
+            # make sure we get the process first, before monitoring sends elapses and
+            # updates the job cache
             self.git.push()
+
+            self.start_monitoring()
 
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
@@ -1271,7 +1297,15 @@ class JobBackend:
             self.set_graph(graph)
 
     def on_shutdown(self):
+        """
+        Shutdown routine. Sets the last progress (done, aborted, crashed) and tries to send last logs and git commits.
+        Also makes sure the ssh connection is closed (thus, the job marked as offline).
+
+        Is triggered by atexit.register().
+        """
         if self.stopped:
+            # make really sure, ssh connection closed
+            self.client.close()
             return
 
         if self.stop_requested:
@@ -1316,7 +1350,6 @@ class JobBackend:
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-        self.send_std_buffer()
         self.sync_weights(push=False)
 
         if self.is_master_process():
@@ -1352,6 +1385,8 @@ class JobBackend:
             # the server received all git streaming files.
             self.logger.debug("client stopping ...")
             self.client.end()
+
+        self.client.close()
 
         # everything stopped. Server has all blobs, so we add the last progress
         # and do last git push.

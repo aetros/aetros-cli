@@ -407,29 +407,30 @@ class ServerCommand:
                     del self.queuedMap[job['id']]
 
                 git = Git(self.logger, None, self.config, model)
-                git.read_job(job_id)
+                if git.is_job_fetched(job_id):
+                    git.read_job(job_id)
 
-                if not git.has_file('aetros/job/log.txt'):
-                    log = six.b('')
-                    if id(process.stdout) in self.general_logger_stdout.attach_last_messages:
-                        log += self.general_logger_stdout.attach_last_messages[id(process.stdout)]
+                    if not git.has_file('aetros/job/log.txt'):
+                        log = six.b('')
+                        if id(process.stdout) in self.general_logger_stdout.attach_last_messages:
+                            log += self.general_logger_stdout.attach_last_messages[id(process.stdout)]
 
-                    if id(process.stderr) in self.general_logger_stderr.attach_last_messages:
-                        log += self.general_logger_stderr.attach_last_messages[id(process.stderr)]
+                        if id(process.stderr) in self.general_logger_stderr.attach_last_messages:
+                            log += self.general_logger_stderr.attach_last_messages[id(process.stderr)]
 
-                    git.commit_file('LOGS', 'aetros/job/log.txt', log)
+                        git.commit_file('LOGS', 'aetros/job/log.txt', log)
 
-                from aetros.const import JOB_STATUS
-                if exit_code > 0 or not git.has_file('aetros/job/status/progress.json'):
-                    self.logger.info("Set progress to " + ('CRASHED' if exit_code > 0 else 'DONE'))
-                    git.commit_file(
-                        'STOP',
-                        'aetros/job/status/progress.json',
-                        str(JOB_STATUS.PROGRESS_STATUS_CRASHED) if exit_code > 0 else str(JOB_STATUS.PROGRESS_STATUS_DONE)
-                    )
+                    from aetros.const import JOB_STATUS
+                    if exit_code > 0 or not git.has_file('aetros/job/status/progress.json'):
+                        self.logger.info("Set progress to " + ('CRASHED' if exit_code > 0 else 'DONE'))
+                        git.commit_file(
+                            'STOP',
+                            'aetros/job/status/progress.json',
+                            str(JOB_STATUS.PROGRESS_STATUS_CRASHED) if exit_code > 0 else str(JOB_STATUS.PROGRESS_STATUS_DONE)
+                        )
 
-                git.push()
-                git.clean_up()
+                    git.push()
+                    git.clean_up()
 
                 self.server.send_message({'type': 'job-finished', 'id': job['id']})
 
@@ -472,8 +473,17 @@ class ServerCommand:
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': job['id']})
 
+            # Since JobBackend sends SIGINT to its current process group to send the signal also to all its children
+            # we need to change the process group of the process.
+            # If we don't this, the process of ServerCommand receives the SIGINT as well.
+            kwargs = {}
+            if os.name == 'nt':
+                kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs['preexec_fn'] = os.setsid
+
             process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
-                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE, **kwargs)
 
             if self.show_stdout:
                 self.general_logger_stdout.attach(process.stdout)

@@ -41,10 +41,11 @@ class MonitoringThread(Thread):
     def run(self):
         while self.running:
             self.monitor()
-            time.sleep(0.05)
+            time.sleep(0.01)
 
     def monitor(self):
-        cpu_util = np.mean(psutil.cpu_percent(interval=1, percpu=True))
+
+        cpu_util = np.mean(psutil.cpu_percent(interval=1, percpu=True)) #blocks 1sec
         mem = psutil.virtual_memory()
 
         minutes_run = (time.time() - self.started) / 60

@@ -126,7 +126,7 @@ def start_custom(logger, job_backend):
 
             logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
 
-            p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            p = execute_command(kwargs=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
             if p.returncode:
                 job_backend.crash('Image build error')
@@ -135,7 +135,8 @@ def start_custom(logger, job_backend):
             image = job_backend.model_name
 
         logger.info("Pull docker image: $ " + image)
-        execute_command(args=[project_config['docker'], 'pull', image], bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        execute_command(
+            kwargs=[project_config['docker'], 'pull', image], bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         inspections = execute_command_stdout([project_config['docker'], 'inspect', image])
         inspections = json.loads(inspections.decode('utf-8'))
@@ -198,6 +199,10 @@ def start_custom(logger, job_backend):
 
         sys.exit(p.returncode)
     except KeyboardInterrupt:
+        # We can not send a SIGINT to the child process
+        # as we don't know whether it received it already (pressing CTRL+C) or not (sending SIGINT to this process only
+        # instead of to the group), so we assume it received it. A second signal would force the exit.
+
         if p and p.poll() is None:
             p.wait()
             if wait_stdout: wait_stdout()
@@ -225,8 +230,8 @@ def execute_command_stdout(command, input=None):
     return out
 
 
-def execute_command(**args):
-    p = subprocess.Popen(**args)
+def execute_command(**kwargs):
+    p = subprocess.Popen(**kwargs)
     wait_stdout = sys.stdout.attach(p.stdout)
     wait_stderr = sys.stderr.attach(p.stderr)
 
@@ -241,7 +246,7 @@ def git_execute(logger, repo_path, args):
     args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
     logger.info("$ %s" % (' '.join(args), ))
 
-    p = execute_command(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+    p = execute_command(kwargs=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     if p.returncode != 0:
         exception = GitCommandException("Git command returned not 0. " + (' '.join(args)))
