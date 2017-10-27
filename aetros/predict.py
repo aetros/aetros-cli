@@ -13,6 +13,7 @@ def predict(logger, job_id, file_paths, weights_path=None):
     owner, name, id = unpack_full_job_id(job_id)
 
     job_backend = JobBackend(model_name=owner+'/'+name)
+    job_backend.fetch(id)
     job_backend.load(id)
 
     job_model = job_backend.get_job_model()

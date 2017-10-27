@@ -90,7 +90,11 @@ class StartCommand:
             if server == 'local':
                 start(self.logger, model_name + '/' + created['id'])
             else:
-                print("Open http://%s/model/%s/job/%s to monitor it." % (config.host, model_name, created['id']))
+                print("Open http://%s/model/%s/job/%s to monitor it." % (config['host'], model_name, created['id']))
 
         else:
+            if not parsed_args.local:
+                sys.stderr.write("Fatal: You can only start existing jobs locally. Use --local argument.\n")
+                sys.exit()
+
             start(self.logger, model_name)

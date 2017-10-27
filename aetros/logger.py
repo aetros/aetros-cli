@@ -106,6 +106,7 @@ class GeneralLogger(object):
                 message = message.decode('utf-8')
 
             self.logger.write(message)
+            self.logger.flush()
 
             self.last_messages += message
             if len(self.last_messages) > 20 * 1024:

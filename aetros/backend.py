@@ -24,7 +24,7 @@ from six.moves import _thread
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
-from aetros.utils import git, invalid_json_values, read_config, is_ignored, append_signal_handler
+from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint
 
 try:
     from cStringIO import StringIO
@@ -44,10 +44,12 @@ original_exit = sys.exit
 
 
 def patched_exit(status=None):
+    global last_exit_code
     last_exit_code = status
     original_exit(status)
 
 sys.exit = patched_exit
+
 
 def on_shutdown():
     for job in on_shutdown.started_jobs:
@@ -150,7 +152,7 @@ class BackendClient:
         self.in_connecting = False
         self.stop_on_empty_queue = False
 
-        # indicates whether we are offline or not, means not connection to the internet and
+        # indicates whether we are offline or not, means not connected to the internet and
         # should not establish a connection to Aetros.
         self.online = True
 
@@ -158,13 +160,24 @@ class BackendClient:
         self.active = False
         self.expect_close = False
         self.external_stopped = False
+
+        # the connection is authenticated against the server and ready to send stuff
         self.registered = False
+
+        # the actual connection is established
         self.connected = False
+
         self.was_connected_once = False
         self.read_unpacker = msgpack.Unpacker(encoding='utf-8')
 
+    def on_sigint(self, sig, frame):
+        # when connections breaks, we do not reconnect
+        self.expect_close = True
+
     def start(self):
         self.active = True
+
+        prepend_signal_handler(signal.SIGINT, self.on_sigint)
 
         if not self.thread_read_instance:
             self.thread_read_instance = Thread(target=self.thread_read)
@@ -207,11 +220,6 @@ class BackendClient:
             if self.connected or not self.online:
                 return True
 
-            def preexec_fn():
-                # Ignore the SIGINT signal by setting the handler to the standard
-                # signal handler SIG_IGN.
-                signal.signal(signal.SIGINT, signal.SIG_IGN)
-
             args = [self.ssh_command] if isinstance(self.ssh_command, six.string_types) else self.ssh_command
             args += ['-o', 'StrictHostKeyChecking no']
 
@@ -221,7 +229,7 @@ class BackendClient:
             args = args + ['git@' + self.host, 'stream']
             self.logger.debug('Open ssh: ' + (' '.join(args)))
 
-            self.ssh_stream = subprocess.Popen(args, preexec_fn=preexec_fn, bufsize=0,
+            self.ssh_stream = subprocess.Popen(args, bufsize=0,
                                                stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
             self.logger.debug('Done: pid=' + str(self.ssh_stream.pid))
@@ -237,7 +245,11 @@ class BackendClient:
             if not self.registered:
                 self.logger.debug("Client: registration failed. stderrdata: " + stderrdata)
                 self.connected = False
-                self.ssh_stream.kill()
+
+                try:
+                    self.ssh_stream.kill()
+                except: pass
+
                 self.connection_tries += 1
                 self.go_offline()
 
@@ -278,12 +290,21 @@ class BackendClient:
 
     def connection_error(self, error=None):
         if not self.active:
+            # we don't care when we're not active
             return
+
+        # give is some free time
+        time.sleep(0.1)
+
+        # ssh process is dead
+        if self.ssh_stream.poll() is not None:
+            # since the ssh process can receive a SIGINT first
+            # we need to wait a bit to make sure we receive one as well.
+            # if so, we close anything and don't reconnect (self.expect_close will be True automatically)
+            time.sleep(1)
 
         if self.expect_close:
-            return
-
-        if not self.connected:
+            # we expected the close, so ignore the error
             return
 
         # needs to be set before logger.error, since they can call send_message again
@@ -295,6 +316,8 @@ class BackendClient:
             return
 
         message = "Connection error"
+        if self.ssh_stream.poll() is None:
+            message = " (active ssh) "
 
         if error:
             self.logger.error(message + ": " + str(error))
@@ -347,13 +370,6 @@ class BackendClient:
                         if self.stop_on_empty_queue:
                             self.logger.debug('Client sent %d / %d messages' % (len(sent), len(self.queue)))
                             return
-
-                    except SystemExit:
-                        self.logger.debug('Closed write thread: SystemExit. %d messages left' % (len(self.queue), ))
-                        return
-                    except KeyboardInterrupt:
-                        self.logger.debug('Closed write thread: KeyboardInterrupt. %d messages left' % (len(self.queue), ))
-                        pass
                     except Exception as e:
                         self.logger.debug('Closed write thread: exception. %d messages left' % (len(self.queue), ))
                         self.connection_error(e)
@@ -377,12 +393,6 @@ class BackendClient:
                             self.handle_messages(messages)
 
                         continue
-                    except SystemExit:
-                        self.logger.debug('Closed read thread: SystemExit')
-                        return
-                    except KeyboardInterrupt:
-                        self.logger.debug('Closed read thread: KeyboardInterrupt')
-                        pass
                     except Exception as e:
                         self.logger.debug('Closed read thread: exception')
                         self.connection_error(e)
@@ -392,18 +402,16 @@ class BackendClient:
         self.logger.debug('Closed read thread: ended')
 
     def wait_sending_last_messages(self):
-        # send all missing messages
-        self.stop_on_empty_queue = True
-        self.thread_write_instance.join()
+        if self.active and self.online and self.connected and self.registered:
+            # send all missing messages
+            self.stop_on_empty_queue = True
+            self.thread_write_instance.join()
 
     def wait_for_close(self):
+        if not (self.active and self.online and self.connected and self.registered):
+            return
+
         self.active = False
-
-        if not self.online:
-            return
-
-        if not self.ssh_stream:
-            return
 
         i = 0
         while self.ssh_stream.poll() is None:
@@ -426,9 +434,10 @@ class BackendClient:
         self.online = False
 
     def send(self, message):
-        if not self.active:
+        if not (self.active and self.online):
+            # It's important to queue anything when active and online
+            # as we would lose information in git streams.
             return
-            # raise Exception("Requested to send messages, but client is inactive.")
 
         self.message_id += 1
         message['_id'] = self.message_id
@@ -438,6 +447,9 @@ class BackendClient:
         self.queue.append(message)
 
     def send_message(self, message):
+        """
+        Internal. Sends the actual message from a queue entry.
+        """
         if not self.connected:
             self.logger.debug("Client wanted to send, but not connected.")
             return False
@@ -523,12 +535,13 @@ class BackendClient:
 
 
 class JobClient(BackendClient):
-    def configure(self, model_name, job_id):
+    def configure(self, model_name, job_id, master=True):
         self.model_name = model_name
         self.job_id = job_id
+        self.master = master
 
     def on_connect(self, reconnect=False):
-        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id, 'reconnect': reconnect})
+        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id, 'reconnect': reconnect, 'master': self.master})
         self.logger.debug("Wait for one client registration")
         messages = self.wait_for_at_least_one_message()
         self.logger.debug("Got " + str(messages))
@@ -767,14 +780,19 @@ class JobBackend:
         # This flag stops exiting with > 0, since the reach of a limitation is a valid exit.
         self.in_early_stop = False
 
-        # done means: done, abort or crash method has been called.
+        # ended means: done, abort or crash method has been called.
         self.ended = False
 
         # when stop(wait_for_client=True) is called, we sync last messages.
-        # this flag indicates that we are not yet ended completely but in the progress
-        self.stopping = False
+        # this flag indicates that end() hasn't been called yet
+        self.stopped = False
+
         # running means: the syncer client is running.
         self.running = False
+
+        # whether it has started once
+        self.started = False
+
         self.monitoring_thread = None
 
         if not self.logger:
@@ -801,10 +819,8 @@ class JobBackend:
         self.event_listener.on('registration_failed', self.on_registration_failed)
         self.event_listener.on('offline', self.on_client_offline)
 
-        append_signal_handler(signal.SIGINT, self.on_sigint)
-        append_signal_handler(signal.SIGTERM, self.on_sigint)
         if hasattr(signal, 'SIGUSR1'):
-            append_signal_handler(signal.SIGUSR1, self.on_signusr1)
+            prepend_signal_handler(signal.SIGUSR1, self.on_signusr1)
 
         self.pid = os.getpid()
 
@@ -845,7 +861,7 @@ class JobBackend:
         if not self.registered:
             self.registered = True
 
-            if self.is_standalone():
+            if self.is_master_process():
                 self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
                 self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
 
@@ -871,17 +887,29 @@ class JobBackend:
         ))
 
     def on_sigint(self, sig, frame):
-        self.client.expect_close = True
-        self.stop_requested = True
+        """
+        We got SIGINT signal.
+        """
 
-        if self.stop_requested:
+        if self.stop_requested or self.stop_requested_force:
+            # signal has already been sent or we force a shutdown.
+            # handles the keystroke 2x CTRL+C to force an exit.
             self.stop_requested_force = True
             self.logger.warning('Force stopped')
+
+            # with force_exit we really close the process, killing it in unknown state
             self.crash('Force stopped', force_exit=True)
             return
 
-        self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
-        sys.exit(1)
+        if self.is_master_process():
+            self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
+        else:
+            print("Child: Got sigint")
+
+        self.stop_requested = True
+
+        # we do not do any action yet, since we have a shutdown listener attached
+        # which will be executed once the script _really_ ends
 
     def external_aborted(self, params):
         """
@@ -892,40 +920,34 @@ class JobBackend:
         self.ended = True
         self.running = False
 
-        if self.monitoring_thread:
-            self.monitoring_thread.stop()
-
-        self.git.stop()
-        self.client.close()
-
-        _thread.interrupt_main()
+        # When the server sends an abort signal, we really have to close immediately,
+        # since for example the job has been already deleted.
+        # without touching the git and client any further
         os._exit(1)
 
-    def external_stop(self, params):
+    def external_stop(self, force):
         """
         Stop signal by server.
         """
+
+        # only the master processes handles the regular stop signal from the server, sending a SIGINT to
+        # all its child (means to us, non-master process)
+        if not self.is_master_process():
+            return
+
         self.logger.warning("Received stop signal by server.")
-        self.stop_requested_force = params
-        self.client.expect_close = True
-        self.stop_requested = True
+        if not self.stop_requested_force:
+            self.stop_requested_force = force
 
-        _thread.interrupt_main()
-        os.kill(os.getpid(), signal.SIGINT)
-
-        if self.stop_requested_force:
-            self.git.stop()
-            self.client.close()
-
-            os._exit(1)
+        raise_sigint()
 
     def early_stop(self):
         """
         Stop when a limitation is reached (like maxEpoch, maxtime)
         """
         self.in_early_stop = True
-        _thread.interrupt_main()
-        os.kill(os.getpid(), signal.SIGINT)
+
+        raise_sigint()
 
     def batch(self, batch, total, size=None):
         time_diff = time.time() - self.last_batch_time
@@ -1106,6 +1128,9 @@ class JobBackend:
         return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
     def start(self):
+        if self.started:
+            raise Exception('Job was already started.')
+
         if self.running:
             raise Exception('Job already running.')
 
@@ -1115,12 +1140,15 @@ class JobBackend:
         if not self.job:
             raise Exception('Job not loaded')
 
+        prepend_signal_handler(signal.SIGINT, self.on_sigint)
+
+        self.started = True
         self.running = True
         self.ended = False
 
         on_shutdown.started_jobs.append(self)
 
-        self.client.configure(self.model_name, self.job_id)
+        self.client.configure(self.model_name, self.job_id, self.is_master_process())
         self.git.prepare_git_user()
 
         if self.git.online:
@@ -1129,7 +1157,9 @@ class JobBackend:
         else:
             self.logger.debug('Job backend not started, since being online not detected.')
 
-        if self.is_standalone():
+        if self.is_master_process():
+            # this is the process that actually starts the job.
+            # other sub-processes may only modify other data.
             self.git.commit_file('JOB_STARTED', 'aetros/job/times/started.json', str(time.time()))
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
             self.set_system_info('command', str(sys.argv))
@@ -1151,7 +1181,7 @@ class JobBackend:
 
             self.detect_git_version()
         else:
-            # if this process has been called within another process that is already using JobBackend
+            # if this process has been called within another process that is already using JobBackend.
             # we disable some stuff
             if isinstance(sys.stdout, GeneralLogger) and not sys.stderr.job_backend:
                 sys.stdout.disable_buffer()
@@ -1159,11 +1189,11 @@ class JobBackend:
             if isinstance(sys.stderr, GeneralLogger) and not sys.stderr.job_backend:
                 sys.stderr.disable_buffer()
 
-
-    def is_standalone(self):
+    def is_master_process(self):
         """
-        Standalone means that aetros.backend.start_job() has been called without using the command `aetros start`.
-        If standalone is true, we collect and track some data that usually `aetros start` would do.
+        Master means that aetros.backend.start_job() has been called without using the command `aetros start`.
+        If master is true, we collect and track some data that usually `aetros start` would do and reset the job's
+        temp files on the server.
         :return:
         """
 
@@ -1241,7 +1271,7 @@ class JobBackend:
             self.set_graph(graph)
 
     def on_shutdown(self):
-        if self.stopping:
+        if self.stopped:
             return
 
         if self.stop_requested:
@@ -1274,21 +1304,31 @@ class JobBackend:
         if isinstance(sys.stderr, GeneralLogger):
             sys.stderr.send_buffer()
 
-    def stop(self, progress, wait_for_client=False, force_exit=True):
+    def stop(self, progress=None, wait_for_client=False, force_exit=True):
+        global last_exit_code
+
+        if self.stopped:
+            return
+
+        if self.is_master_process():
+            self.section('end')
+
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
         self.send_std_buffer()
         self.sync_weights(push=False)
 
-        self.set_status('STOPPED')
+        if self.is_master_process():
+            self.set_status('STOPPED', add_section=False)
+
         self.logger.debug("stop: " + str(progress))
 
         self.send_std_buffer()
         if last_exit_code is not None:
             self.set_system_info('exit_code', last_exit_code)
 
-        self.stopping = True
+        self.stopped = True
         self.ended = True
         self.running = False
 
@@ -1307,13 +1347,16 @@ class JobBackend:
 
         if self.client.online:
             # server stores now all store_file and stream_file as blob as well,
-            # wait for connection close to make sure server stored their files in server's git
+            # wait for connection close to make sure server stored the files in server's git.
+            # This happens after self.client.wait_sending_last_message() because it makes sure,
+            # the server received all git streaming files.
             self.logger.debug("client stopping ...")
             self.client.end()
 
         # everything stopped. Server has all blobs, so we add the last progress
         # and do last git push.
-        self.git.commit_file('STOP', 'aetros/job/status/progress.json', json.dumps(progress, default=invalid_json_values))
+        if progress is not None:
+            self.git.commit_file('STOP', 'aetros/job/status/progress.json', json.dumps(progress, default=invalid_json_values))
 
         # both sides should have same blobs, so we do now our final push
         self.logger.debug("git last push ...")
@@ -1330,8 +1373,8 @@ class JobBackend:
         if self.ssh_git_file is not None and os.path.exists(self.ssh_git_file):
             os.unlink(self.ssh_git_file)
 
-        self.stopping = False
-        self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
+        if self.is_master_process():
+            self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
         if force_exit and progress == JOB_STATUS.PROGRESS_STATUS_CRASHED:
             os._exit(1)
@@ -1348,6 +1391,11 @@ class JobBackend:
         self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages, force_exit=force_exit)
 
     def crash(self, error=None, force_exit=True):
+        """
+        Marks the job as crashed, saves the given error and force exists the process when force_exit=True.
+        """
+        global last_exit_code
+
         if not last_exit_code:
             last_exit_code = 1
 
@@ -1357,8 +1405,8 @@ class JobBackend:
             if isinstance(sys.stderr, GeneralLogger):
                 self.git.commit_json_file('CRASH_REPORT_LAST_MESSAGE', 'aetros/job/crash/last_message', sys.stderr.last_messages)
 
-        # we need to make sure that the server got the git crash before we report the crash progress
-        self.git.push()
+        # # we need to make sure that the server got the git crash before we report the crash progress
+        # self.git.push()
 
         self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
 
@@ -1366,11 +1414,17 @@ class JobBackend:
         self.stop(JOB_STATUS.PROGRESS_STATUS_CRASHED, force_exit=force_exit)
 
     def write_log(self, message):
+        """
+        Proxy method for GeneralLogger.
+        """
         if self.stream_log:
             self.stream_log.write(message)
             return True
 
     def set_status(self, status, add_section=True):
+        """
+        Set an arbitrary status, visible in the big wheel of the job view.
+        """
         if add_section:
             self.section(status)
 
@@ -1381,7 +1435,7 @@ class JobBackend:
     def job_id(self):
         return self.git.job_id
 
-    def create(self, create_info=None, hyperparameter=None, server=None, insights=None):
+    def create(self, create_info=None, hyperparameter=None, server='local', insights=None):
         """
         Creates a new job in git and pushes it.
 
@@ -1390,6 +1444,9 @@ class JobBackend:
         :param server:
         :param insights: whether you want to activate insights
         """
+        if not create_info:
+            create_info = {}
+
         self.job = create_info
         self.job['server'] = server
         self.job['optimization'] = None
@@ -1532,11 +1589,7 @@ class JobBackend:
 
         :param job_id: int
         """
-
-        # normally git would create a job_id, but we have already one
-        # so download the ref and check it out.
-        self.logger.info('Fetch Git ref for refs/aetros/job/' + job_id)
-        self.git.read_job(job_id, checkout=self.is_standalone())
+        self.git.read_job(job_id, checkout=self.is_master_process())
         self.load_job_from_ref()
 
     def load_job_from_ref(self):
@@ -1590,7 +1643,7 @@ class JobBackend:
             return
 
         self.logger.debug("sync weights...")
-        self.set_status('SYNC WEIGHTS')
+        self.set_status('SYNC WEIGHTS', add_section=False)
 
         with open(self.get_job_model().get_weights_filepath_latest(), 'rb') as f:
             import keras.backend
@@ -1612,7 +1665,7 @@ class JobBackend:
         # todo, implement optional saving of self.get_job_model().get_weights_filepath_best()
 
     def job_add_status(self, key, value):
-        self.git.store_file('aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))
+        self.git.commit_file('STATUS ' + str(value), 'aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))
 
     def set_info(self, key, value, commit_end_of_job=False):
         if commit_end_of_job:

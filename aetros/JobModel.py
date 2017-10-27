@@ -36,7 +36,7 @@ class JobModel:
 
     @property
     def insights_enabled(self):
-        return self.config['insights']
+        return 'insights' in self.config and self.config['insights']
 
     def get_model_node(self, name):
         if not isinstance(self.layers, list):

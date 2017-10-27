@@ -60,9 +60,10 @@ class RunCommand:
         if parsed_args.server:
             create_info['servers'] = [parsed_args.server]
 
+        server = None
         if parsed_args.local:
             # disables server assigment
-            create_info['server'] = 'local'
+            server = 'local'
 
         create_info['config']['sourcesAttached'] = True
 
@@ -75,10 +76,12 @@ class RunCommand:
                 'commit': aetros.utils.git.get_current_commit_hash(),
             }
 
-        job.create(create_info=create_info)
+        job.create(create_info=create_info, server=server)
 
         print("Job %s/%s created." % (job.model_name, job.job_id))
+
         if parsed_args.local:
             start(self.logger, job.model_name + '/' + job.job_id, fetch=False)
         else:
+            job.git.push()
             print("Open http://%s/model/%s/job/%s to monitor it." % (job.host, job.model_name, job.job_id))

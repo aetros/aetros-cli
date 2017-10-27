@@ -9,6 +9,7 @@ import datetime
 import numpy as np
 import signal
 import six
+import sys
 import yaml
 
 
@@ -157,22 +158,35 @@ def read_config(path = '.aetros.yml', logger=None):
     return config
 
 
-signal_handlers = {}
+def raise_sigint():
+    """
+    Raising the SIGINT signal in the current process and all sub-processes.
+
+    os.kill() only issues a signal in the current process (without subprocesses).
+    CTRL+C on the console sends the signal to the process group (which we need).
+    """
+    if hasattr(signal, 'CTRL_C_EVENT'):
+        # windows. Need CTRL_C_EVENT to raise the signal in the whole process group
+        os.kill(os.getpid(), signal.CTRL_C_EVENT)
+    else:
+        # unix.
+        os.killpg(os.getpgid(os.getpid()), signal.SIGINT)
 
 
-def append_signal_handler(sig, f):
-    if sig not in signal_handlers:
-        signal_handlers[sig] = []
-        if callable(signal.getsignal(sig)):
-            signal_handlers[sig].append(signal.getsignal(sig))
+def prepend_signal_handler(sig, f):
 
-    signal_handlers[sig].append(f)
+    previous_handler = None
+    if callable(signal.getsignal(sig)):
+        previous_handler = signal.getsignal(sig)
 
-    def execute_handler_list(*args, **kwargs):
-        for handler in signal_handlers[sig]:
-            handler(*args, **kwargs)
+    def execute_signal_handler(*args, **kwargs):
+        f(*args, **kwargs)
 
-    signal.signal(sig, execute_handler_list)
+        # previous handles comes after this, so we actually prepend
+        if previous_handler:
+            previous_handler(*args, **kwargs)
+
+    signal.signal(sig, execute_signal_handler)
 
 
 def invalid_json_values(obj):

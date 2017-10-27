@@ -274,13 +274,13 @@ class KerasCallback(Callback):
         self.send_optimizer_info(log['epoch'])
 
         if self.log_epoch:
-            #todo, multiple outputs
+            # todo, multiple outputs
             line = "Epoch %d: loss=%f, acc=%f, val_loss=%f, val_acc=%f\n" % (
                 log['epoch'], log['loss'], log.get('acc', 0), log.get('val_loss', 0), total_accuracy_validation, )
             self.logger.write(line)
 
-        if self.force_insights or self.job_model.config['insights']:
-            # Todo, support multiple inputs
+        if self.force_insights or self.job_model.insights_enabled:
+            # todo, support multiple inputs
             first_input_layer = self.model.input_layers[0]
 
             if first_input_layer is not None:

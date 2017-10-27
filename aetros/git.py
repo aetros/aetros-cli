@@ -47,6 +47,7 @@ class Git:
         self.git_path = os.path.normpath(self.storage_dir + '/' + model_name + '.git')
 
         self.command_lock = Lock()
+        self.stream_files_lock = Lock()
         self.debug = False
         self.last_push_time = 0
         self.active_push = False
@@ -64,6 +65,8 @@ class Git:
 
         self.git_batch_commit_messages = []
         self.git_last_commit = None
+
+        self.keep_stream_files = False
 
         self.streamed_files = {}
         self.store_files = {}
@@ -113,7 +116,7 @@ class Git:
             self.git_name = user['name']
             self.git_email = user['email']
         except ApiConnectionError as e:
-            self.online = False
+            self.go_offline()
 
 
     def get_remote_url(self, origin_name):
@@ -187,17 +190,11 @@ class Git:
         stdoutdata = ''
         stderrdata = ''
 
-        def preexec_fn():
-            # Ignore the SIGINT signal by setting the handler to the standard
-            # signal handler SIG_IGN.
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-
         try:
             self.command_lock.acquire()
 
             p = subprocess.Popen(
-                command, preexec_fn=preexec_fn, bufsize=0,
+                command, bufsize=0,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
             )
 
@@ -240,14 +237,23 @@ class Git:
             if 'Permission denied' in stderrdata:
                 self.logger.warning("You have no permission to push to that model.")
 
-            self.online = False
+            self.go_offline()
             self.logger.error(stderrdata)
             return '', 1, ''
 
         if not interrupted and not allowed_to_fail and p is not None and p.returncode != 0:
             raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstdout: '" + str(stdoutdata)+"',\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
 
-        return stdoutdata, p.returncode, stderrdata
+        return stdoutdata, p.returncode if p is not None else None, stderrdata
+
+    def go_offline(self):
+        """
+        Go offline means disable all online communication and just store the data in local git.
+        """
+        if self.client:
+            self.client.go_offline()
+
+        self.online = False
 
     def prepare_index_file(self):
         """
@@ -394,35 +400,45 @@ class Git:
         Stops the `git push` thread and commits all streamed files (Git.store_file and Git.stream_file), followed
         by a final git push.
         
-        This removes also the current git index file. You can not start the process again.
+        You can not start the process again.
         """
         self.active_thread = False
-        self.thread_push_instance.join()
 
-        with self.batch_commit('STREAM_END'):
-            for path, handle in six.iteritems(self.streamed_files.copy()):
-                # make sure its written to the disk
-                handle.flush()
-                handle.close()
+        if self.thread_push_instance:
+            self.thread_push_instance.join()
 
-                # open again and read full content
-                full_path = os.path.normpath(self.temp_path + '/stream-blob/' + self.job_id + '/' + path)
-                self.logger.debug('Git stream end for file: ' + full_path)
-                with open(full_path, 'r') as f:
-                    self.commit_file(path, path, f.read())
+        self.stream_files_lock.acquire()
+        try:
+            with self.batch_commit('STREAM_END'):
+                for path, handle in six.iteritems(self.streamed_files.copy()):
+                    # make sure its written to the disk
+                    handle.flush()
+                    handle.close()
 
-                os.unlink(full_path)
-            self.streamed_files = {}
+                    # open again and read full content
+                    full_path = os.path.normpath(self.temp_path + '/stream-blob/' + self.job_id + '/' + path)
+                    self.logger.debug('Git stream end for file: ' + full_path)
+                    with open(full_path, 'r') as f:
+                        self.commit_file(path, path, f.read())
 
-        with self.batch_commit('STORE_END'):
-            for path, bar in six.iteritems(self.store_files.copy()):
-                full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
+                    if not self.keep_stream_files:
+                        os.unlink(full_path)
 
-                self.logger.debug('Git store end for file: ' + full_path)
-                self.commit_file(path, path, open(full_path, 'r').read())
+                    del self.streamed_files[path]
 
-                os.unlink(full_path)
-            self.store_files = {}
+            with self.batch_commit('STORE_END'):
+                for path, bar in six.iteritems(self.store_files.copy()):
+                    full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
+
+                    self.logger.debug('Git store end for file: ' + full_path)
+                    self.commit_file(path, path, open(full_path, 'r').read())
+
+                    if not self.keep_stream_files:
+                        os.unlink(full_path)
+
+                    del self.store_files[path]
+        finally:
+            self.stream_files_lock.release()
 
     def clean_up(self):
         if os.path.exists(self.index_path):
@@ -433,11 +449,11 @@ class Git:
         Instead of committing a lot of small commits you can batch it together using this controller.
         
         Example:
-        
+
         with git.batch_commit('BATCHED'):
             git.commit_file('my commit 1', 'path/to/file', 'content from file')
             git.commit_json_file('[1, 2, 3]', 'path/to/file2', 'json array') 
-            
+
         Withing the `with` block you can use group the method calls of `commit_file` and `commit_json_file`, and every other
         method calling this two methods.
         
@@ -445,25 +461,28 @@ class Git:
         :return: with controller to be used with Python's `with git.batch_commit():`
         """
         class controlled_execution:
-            def __init__(self, job, message):
-                self.job = job
+            def __init__(self, git, message):
+                self.git = git
                 self.message = message
 
             def __enter__(self):
-                self.job.git_batch_commit = True
+                self.git.git_batch_commit = True
+                if self.git.job_id:
+                    # make sure we're always on the tip tree
+                    self.git.read_tree(self.git.ref_head)
 
             def __exit__(self, type, value, traceback):
-                self.job.git_batch_commit = False
+                self.git.git_batch_commit = False
 
                 # if nothing committed, we return early
-                if not self.job.git_batch_commit_messages: return
+                if not self.git.git_batch_commit_messages: return
 
                 commit_message = self.message
-                if self.job.git_batch_commit_messages:
-                    commit_message = commit_message + "\n\n" + "\n".join(self.job.git_batch_commit_messages)
-                self.job.git_batch_commit_messages = []
+                if self.git.git_batch_commit_messages:
+                    commit_message = commit_message + "\n\n" + "\n".join(self.git.git_batch_commit_messages)
+                self.git.git_batch_commit_messages = []
 
-                self.job.commit_index(commit_message)
+                self.git.commit_index(commit_message)
 
         return controlled_execution(self, message)
 
@@ -492,16 +511,20 @@ class Git:
         :param content: 
         :return: 
         """
+        try:
+            self.stream_files_lock.acquire()
 
-        full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
-        if not os.path.exists(os.path.dirname(full_path)):
-            os.makedirs(os.path.dirname(full_path))
+            full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
+            if not os.path.exists(os.path.dirname(full_path)):
+                os.makedirs(os.path.dirname(full_path))
 
-        open(full_path, 'w+').write(data)
-        self.store_files[path] = True
+            open(full_path, 'w+').write(data)
+            self.store_files[path] = True
 
-        if self.online:
-            self.client.send({'type': 'store-blob', 'path': path, 'data': data})
+            if self.online:
+                self.client.send({'type': 'store-blob', 'path': path, 'data': data})
+        finally:
+            self.stream_files_lock.release()
 
     def stream_file(self, path):
         """
@@ -528,12 +551,15 @@ class Git:
         # open temp file
 
         # register stream file and write locally
-        # on end() git_commit that file
+        # on end() git_commit that file locally
 
         # create socket connection to server
         # stream file to server
-        # on end() send server end signal, so he can store its content in git as blob as well. A git push would detect
-        # that both sides have the same content already, except when server connection broke between start() and end().
+        # on end() send server end signal, so he can store its content in git as blob as well.
+        # A git push would detect that both sides have the same content already,
+        # except when server connection broke between start() and end().
+        # Result -> already transmitted logs/channel data (probably many MBs) won't transfered twice
+        # when doing a git-push.
 
         # return handler to write to this file
 
@@ -545,20 +571,27 @@ class Git:
         self.streamed_files[path] = handle
 
         class Stream():
-            def __init__(self, handle, git):
-                self.handle = handle
+            def __init__(self, git):
                 self.git = git
 
             def write(self, data):
                 try:
+                    self.git.stream_files_lock.acquire()
+
+                    if path not in self.git.streamed_files:
+                        # already committed to server
+                        return
+
                     handle.write(data)
                     handle.flush()
+
                     if self.git.online:
                         self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})
-                except:
-                    pass
 
-        return Stream(handle, self)
+                finally:
+                    self.git.stream_files_lock.release()
+
+        return Stream(self)
 
     def write_blob(self, content):
         return self.command_exec(['hash-object', '-w', "--stdin"], content)[0].decode('utf-8').strip()
@@ -599,16 +632,20 @@ class Git:
         """
         Add a new file as blob in the storage, add its tree entry into the index and commit the index.
          
-        :param message: str 
+        :param message: str
         :param path: str
         :param content: str
         :return: 
         """
-        self.add_file(path, content)
-
         if not self.git_batch_commit:
+            if self.job_id:
+                self.read_tree(self.ref_head)
+
+            self.add_file(path, content)
+
             return self.commit_index(message)
         else:
+            self.add_file(path, content)
             self.git_batch_commit_messages.append(message)
 
     def push(self):
@@ -619,10 +656,7 @@ class Git:
             self.command_exec(['push', 'origin', '-f', self.ref_head])
             return True
         except Exception as e:
-            # this may fail due the fact that we have a thread already that pushes when changes occur
-            # git is not "thread safe" in this regard.
-            # e.g.
-            #
+            # this may fail due to:
             #     stderr: 'remote: error: cannot lock ref 'refs/aetros/job/cc3114813659d443c8e4f9682517067a1e9ec9ff':
             #     is at 31785d1c126b24cabd1948cba2e126912393b8e6 but expected 3f7186391884bd097c09c31567ef49718fc271a5
             #
@@ -637,15 +671,10 @@ class Git:
         """
         tree_id = self.write_tree()
 
-        args = ['commit-tree', tree_id]
+        args = ['commit-tree', tree_id, '-p', self.ref_head]
 
-        if self.git_last_commit:
-            # if not define, it creates a new root commit
-            args += ['-p', self.git_last_commit]
-
+        # todo, this can end in a race-condition with other processes adding commits
         self.git_last_commit = self.command_exec(args, message)[0].decode('utf-8').strip()
-
-        # update ref
         self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
         self.dirty = True
 

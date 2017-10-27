@@ -26,7 +26,6 @@ class GitCommandException(Exception):
 def start(logger, full_id, fetch=True):
     """
     Starts the training process with all logging of a job_id
-    :type id: string : job id or model name
     """
 
     owner, name, id = unpack_full_job_id(full_id)
@@ -179,9 +178,18 @@ def start_custom(logger, job_backend):
 
     logger.warning("$ %s " % str(command))
 
+    p = None
+    wait_stdout = None
+    wait_stderr = None
     try:
         job_backend.section('command')
-        p = execute_command(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
+        p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
+        wait_stdout = sys.stdout.attach(p.stdout)
+        wait_stderr = sys.stderr.attach(p.stderr)
+
+        p.wait()
+        wait_stdout()
+        wait_stderr()
 
         job_backend.set_system_info('exit_code', p.returncode)
 
@@ -189,11 +197,20 @@ def start_custom(logger, job_backend):
             job_backend.crash()
 
         sys.exit(p.returncode)
-
     except KeyboardInterrupt:
-        logger.warning("Job aborted.")
-        job_backend.abort()
-        sys.exit(1)
+        if p and p.poll() is None:
+            p.wait()
+            if wait_stdout: wait_stdout()
+            if wait_stderr: wait_stderr()
+
+        # check if there was a JobBackend in the command
+        # if so, we do not add any further stuff to the git
+        if job_backend.git.has_file('aetros/job/status/progress.json'):
+            # make sure, we do not overwrite their stuff
+            job_backend.stop()
+        else:
+            logger.warning("Job aborted.")
+            job_backend.abort()
 
 
 def execute_command_stdout(command, input=None):
@@ -207,12 +224,13 @@ def execute_command_stdout(command, input=None):
 
     return out
 
+
 def execute_command(**args):
     p = subprocess.Popen(**args)
     wait_stdout = sys.stdout.attach(p.stdout)
     wait_stderr = sys.stderr.attach(p.stderr)
-    p.wait()
 
+    p.wait()
     wait_stdout()
     wait_stderr()
 
