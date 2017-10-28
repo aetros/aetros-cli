@@ -1,6 +1,9 @@
 from __future__ import print_function, division
 from __future__ import absolute_import
 
+import time
+start_time = time.time()
+
 import json
 import os
 import subprocess
@@ -8,7 +11,7 @@ import sys
 import six
 
 from aetros.logger import GeneralLogger
-from aetros.utils import unpack_full_job_id, read_config
+from aetros.utils import unpack_full_job_id, read_config, read_home_config
 from .backend import JobBackend
 from .Trainer import Trainer
 
@@ -35,7 +38,7 @@ def start(logger, full_id, fetch=True):
         job_backend.fetch(id)
 
     job_backend.restart(id)
-    job_backend.start()
+    job_backend.start(start_time=start_time)
 
     if job_backend.is_simple_model():
         start_keras(logger, job_backend)
@@ -58,80 +61,74 @@ def start_custom(logger, job_backend):
     my_env['AETROS_ATTY'] = '1'
     my_env['AETROS_GIT'] = job_backend.git.get_base_command()
 
-    project_config = read_config(work_tree + '/.aetros.yml')
-
     job_config = job_backend.job['config']
 
-    if 'command' not in job_config and ('command' not in project_config or project_config['command'] == ''):
-        logger.error('No "command" specified in .aetros.yml file. See Configuration section in the documentation.')
-        sys.exit(1)
+    home_config = read_home_config()
 
-    if 'command' in job_config:
-        command = job_config['command']
-    else:
-        command = project_config['command']
+    if 'command' not in job_config :
+        job_backend.fail('No "command" given. See Configuration section in the documentation.')
 
-    image = None
-    if 'image' in job_config:
-        image = job_config['image']
+    command = job_config['command']
+    image = job_config['image']
 
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
 
-    if image is not None:
-        job_backend.set_system_info('image/name', str(image))
+    docker_image_built = False
+    if job_config['dockerfile'] or job_config['install']:
+        dockerfile = job_config['dockerfile']
+        if isinstance(dockerfile, six.string_types) and os.path.exists(dockerfile):
+            pass
+        else:
+            if isinstance(dockerfile, six.string_types):
+                dockerfile_content = dockerfile
+            elif isinstance(dockerfile, list) and len(dockerfile) > 0:
+                dockerfile_content = "\n".join(dockerfile)
+            else:
+                if image is None:
+                    job_backend.fail("Image name missing, since install is defined in .aetros.yml")
+                dockerfile_content = 'FROM ' + image + '\nRUN '
 
-        if project_config['dockerfile'] or project_config['install']:
-            dockerfile = project_config['dockerfile']
-
-            if not (isinstance(dockerfile, six.string_types) and os.path.exists(dockerfile)):
-                if isinstance(dockerfile, six.string_types):
-                    dockerfile_content = dockerfile
-                elif isinstance(dockerfile, list) and len(dockerfile) > 0:
-                    if not dockerfile[0].startswith('FROM '):
-                        dockerfile.insert('FROM ' + image, 0)
-
-                    dockerfile_content = "\n".join(dockerfile)
+                if isinstance(job_config['install'], list):
+                    dockerfile_content += '\n RUN '.join(job_config['install'])
                 else:
-                    dockerfile_content = 'FROM ' + image + '\nRUN '
+                    dockerfile_content += job_config['install']
 
-                    if isinstance(project_config['install'], list):
-                        dockerfile_content += '\n RUN '.join(project_config['install'])
-                    else:
-                        dockerfile_content += project_config['install']
+            dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in .aetros.yml.\n' \
+                                 + dockerfile_content
 
-                dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in .aetros.yml.\n' \
-                                     + dockerfile_content
+            with open('Dockerfile-aetros', 'w') as f:
+                f.write(dockerfile_content)
 
-                with open('Dockerfile', 'w') as f:
-                    f.write(dockerfile_content)
+            dockerfile = 'Dockerfile-aetros'
+            job_backend.commit_file('Dockerfile-aetros')
 
-                dockerfile = 'Dockerfile'
-                job_backend.commit_file('Dockerfile')
+        docker_build = [
+            home_config['docker'],
+            'build',
+            '-t', job_backend.model_name,
+            '-f', dockerfile,
+            '.',
+        ]
 
-            docker_build = [
-                project_config['docker'],
-                'build',
-                '-t', job_backend.model_name,
-                '-f', dockerfile,
-                '.',
-            ]
+        logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
 
-            logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
+        p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
-            p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        if p.returncode:
+            job_backend.fail('Image build error')
+            sys.exit(p.returncode)
 
-            if p.returncode:
-                job_backend.fail('Image build error')
-                sys.exit(p.returncode)
+        docker_image_built = True
+        image = job_backend.model_name
 
-            image = job_backend.model_name
+    if image is not None:
+        if not docker_image_built:
+            logger.info("Pull docker image: $ " + image)
+            execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
-        logger.info("Pull docker image: $ " + image)
-        execute_command(args=[project_config['docker'], 'pull', image], bufsize=1,
-            stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        inspections = execute_command_stdout([project_config['docker'], 'inspect', image])
+        inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
         inspections = json.loads(inspections.decode('utf-8'))
         if inspections:
             inspection = inspections[0]
@@ -146,10 +143,10 @@ def start_custom(logger, job_backend):
                 job_backend.set_system_info('image/rootfs', inspection['RootFS'])
 
         # make sure old container is removed
-        subprocess.call([project_config['docker'], 'rm', job_backend.job_id])
+        subprocess.Popen([home_config['docker'], 'rm', job_backend.job_id], stderr=subprocess.PIPE).wait()
 
-        docker_command = [project_config['docker'], 'run', '--name', job_backend.job_id]
-        docker_command += project_config['docker_options']
+        docker_command = [home_config['docker'], 'run', '--name', job_backend.job_id]
+        docker_command += home_config['docker_options']
         docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/exp']
         docker_command += ['-w', '/exp']
 
@@ -167,16 +164,18 @@ def start_custom(logger, job_backend):
 
         command = docker_command
 
+    job_backend.set_system_info('image/name', str(image))
+
     if not isinstance(command, list):
         command = ['sh', '-c', command]
 
-    logger.warning("$ %s " % str(command))
 
     p = None
     wait_stdout = None
     wait_stderr = None
     try:
         job_backend.section('command')
+        logger.warning("$ %s " % (str(command)[1:-1]))
         p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
         wait_stdout = sys.stdout.attach(p.stdout)
         wait_stderr = sys.stderr.attach(p.stderr)

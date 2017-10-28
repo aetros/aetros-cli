@@ -35,7 +35,6 @@ class RunCommand:
         parsed_args = parser.parse_args(args)
 
         config = read_config(parsed_args.config or '.aetros.yml')
-        model_name = parsed_args.model
 
         if 'command' not in config and not parsed_args.command:
             self.logger.error('No "command" given in .aetros.yml or as argument.')
@@ -48,7 +47,7 @@ class RunCommand:
 
         create_info = {
             'type': 'custom',
-            'config': {}
+            'config': config
         }
 
         if parsed_args.command:

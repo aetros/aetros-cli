@@ -1,7 +1,6 @@
 import platform
 import ctypes
 
-
 class CUDADeviceProperties(ctypes.Structure):
     # See $CUDA_HOME/include/cuda_runtime_api.h for the definition of
     # the cudaDeviceProp structypes.
@@ -103,7 +102,7 @@ def get_memory(device):
         return None
 
 
-def get_device_properties(device):
+def get_device_properties(device, all=False):
     try:
         libcudart = get_libcudart()
 
@@ -113,6 +112,15 @@ def get_device_properties(device):
             return None
     except:
         return None
+
+    if all:
+        values = {}
+        for field in properties._fields_:
+            values[field[0]] = getattr(properties, field[0])
+            if '_Array_' in type(values[field[0]]).__name__:
+                values[field[0]] = [x for x in values[field[0]]]
+
+        return values
 
     return {
         'device': device,

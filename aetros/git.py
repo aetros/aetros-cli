@@ -2,12 +2,9 @@ import json
 import os
 import subprocess
 
-import signal
 import six
 from threading import Thread, Lock
-
 import time
-
 import sys
 
 from aetros.api import ApiConnectionError
@@ -316,7 +313,7 @@ class Git:
         self.command_exec(['read-tree', self.ref_head])
 
         if checkout:
-            self.logger.info('Working directory in ' + self.work_tree)
+            self.logger.debug('Working directory in ' + self.work_tree)
 
             # make sure we have checked out all files we have added until now. Important for simple models,
             # so we have the actual model.py and dataset scripts.
@@ -414,38 +411,45 @@ class Git:
         if self.thread_push_instance:
             self.thread_push_instance.join()
 
-        self.stream_files_lock.acquire()
-        try:
-            with self.batch_commit('STREAM_END'):
-                for path, handle in six.iteritems(self.streamed_files.copy()):
-                    # make sure its written to the disk
-                    handle.flush()
-                    handle.close()
+        with self.batch_commit('STREAM_END'):
+            for path, handle in six.iteritems(self.streamed_files.copy()):
+                # open again and read full content
+                full_path = os.path.normpath(self.temp_path + '/stream-blob/' + self.job_id + '/' + path)
+                self.logger.debug('Git stream end for file: ' + full_path)
 
-                    # open again and read full content
-                    full_path = os.path.normpath(self.temp_path + '/stream-blob/' + self.job_id + '/' + path)
-                    self.logger.debug('Git stream end for file: ' + full_path)
-                    with open(full_path, 'r') as f:
-                        self.commit_file(path, path, f.read())
+                del self.streamed_files[path]
 
-                    if not self.keep_stream_files:
-                        os.unlink(full_path)
+                # make sure its written to the disk
+                try:
+                    self.stream_files_lock.acquire()
+                    if not handle.closed:
+                        handle.flush()
+                        handle.close()
+                finally:
+                    self.stream_files_lock.release()
 
-                    del self.streamed_files[path]
+                with open(full_path, 'r') as f:
+                    self.commit_file(path, path, f.read())
 
-            with self.batch_commit('STORE_END'):
-                for path, bar in six.iteritems(self.store_files.copy()):
-                    full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
+                if not self.keep_stream_files:
+                    os.unlink(full_path)
 
-                    self.logger.debug('Git store end for file: ' + full_path)
+        with self.batch_commit('STORE_END'):
+            for path, bar in six.iteritems(self.store_files.copy()):
+                full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
+                self.logger.debug('Git store end for file: ' + full_path)
+
+                del self.store_files[path]
+
+                try:
+                    self.stream_files_lock.acquire()
                     self.commit_file(path, path, open(full_path, 'r').read())
+                finally:
+                    self.stream_files_lock.release()
 
-                    if not self.keep_stream_files:
-                        os.unlink(full_path)
+                if not self.keep_stream_files:
+                    os.unlink(full_path)
 
-                    del self.store_files[path]
-        finally:
-            self.stream_files_lock.release()
 
     def clean_up(self):
         if os.path.exists(self.index_path):
@@ -582,21 +586,21 @@ class Git:
                 self.git = git
 
             def write(self, data):
+                if path not in self.git.streamed_files:
+                    # already committed to server
+                    return
+
                 try:
                     self.git.stream_files_lock.acquire()
-
-                    if path not in self.git.streamed_files:
-                        # already committed to server
-                        return
-
-                    handle.write(data)
-                    handle.flush()
-
-                    if self.git.online:
-                        self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})
-
+                    if not handle.closed:
+                        handle.write(data)
+                        handle.flush()
                 finally:
                     self.git.stream_files_lock.release()
+
+
+                if self.git.online:
+                    self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})
 
         return Stream(self)
 

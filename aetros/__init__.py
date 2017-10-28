@@ -21,6 +21,7 @@ command_summaries = [
     ['add', 'Adds a local file to a job tree.'],
     ['init', 'Creates a new model and places a .aetros.yml in current working directory pointing to this model.'],
     ['id', 'Shows under which account the machine is authenticated.'],
+    ['gpu', 'Shows information about installed GPUs'],
 ]
 
 def parseopts(args):
@@ -60,6 +61,7 @@ def main(args=None):
     from aetros.commands.AddCommand import AddCommand
     from aetros.commands.InitCommand import InitCommand
     from aetros.commands.IdCommand import IdCommand
+    from aetros.commands.GPUCommand import GPUCommand
 
     commands_dict = {
         'start': StartCommand,
@@ -71,7 +73,7 @@ def main(args=None):
         'push-job': PushJobCommand,
         'add': AddCommand,
         'init': InitCommand,
-        'id': IdCommand,
+        'gpu': GPUCommand,
     }
 
     if cmd_name not in commands_dict:

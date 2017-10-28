@@ -11,7 +11,7 @@ import signal
 
 
 class MonitoringThread(Thread):
-    def __init__(self, job_backend):
+    def __init__(self, job_backend, start_time=None):
         Thread.__init__(self)
 
         self.job_backend = job_backend
@@ -32,7 +32,7 @@ class MonitoringThread(Thread):
         self.stream = self.job_backend.git.stream_file('aetros/job/monitoring.csv')
         self.stream.write(json.dumps(["second", "cpu", "memory", "memory_gpu"])[1:-1] + "\n")
         self.second = 0
-        self.started = time.time()
+        self.started = start_time or time.time()
         self.running = True
 
     def stop(self):

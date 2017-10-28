@@ -1149,7 +1149,7 @@ class JobBackend:
         """
         return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
-    def start(self):
+    def start(self, start_time=None):
         if self.started:
             raise Exception('Job was already started.')
 
@@ -1193,7 +1193,7 @@ class JobBackend:
             # updates the job cache
             self.git.push()
 
-            self.start_monitoring()
+            self.start_monitoring(start_time)
 
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
@@ -1256,9 +1256,9 @@ class JobBackend:
             if working_dir:
                 os.chdir(current_dir)
 
-    def start_monitoring(self):
+    def start_monitoring(self, start_time=None):
         if not self.monitoring_thread:
-            self.monitoring_thread = MonitoringThread(self)
+            self.monitoring_thread = MonitoringThread(self, start_time)
             self.monitoring_thread.daemon = True
             self.monitoring_thread.start()
 
