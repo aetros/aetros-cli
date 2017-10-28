@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import time
+
+import paramiko as paramiko
 import psutil
 import subprocess
 
@@ -195,7 +197,12 @@ class ServerCommand:
             self.ssh_key_path = os.path.normpath(os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa'))
             if not os.path.exists(self.ssh_key_path):
                 self.logger.info('Generate SSH key')
-                subprocess.check_output(['ssh-keygen', '-q', '-N', '', '-t', 'rsa', '-b', '4048', '-f', self.ssh_key_path])
+
+                key = paramiko.RSAKey.generate(4096)
+                key.write_private_key_file(self.ssh_key_path)
+
+                with open(self.ssh_key_path + '.pub', 'w+') as f:
+                    f.write('rsa ' + key.get_base64() + ' ' + parsed_args.name)
 
             self.logger.info('Register SSH key at ' + self.config['host'])
             url = 'https://' + self.config['host'] + '/api/server/ssh-key'

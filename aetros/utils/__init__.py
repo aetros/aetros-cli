@@ -81,6 +81,9 @@ def is_ignored(path, ignore_patters):
 
     ignored = None
 
+    if not ignore_patters:
+        return False
+
     for pattern in ignore_patters:
         if not pattern:
             continue
@@ -125,15 +128,19 @@ def is_ignored(path, ignore_patters):
 
     return ignored
 
+
 def read_config(path = '.aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
     home_config = read_home_config(logger=logger)
 
     config = {
-        'dockerfile': [],
-        'install': [],
-        'ignore': [],
-        'server': 'local',
+        'dockerfile': None,
+        'command': None,
+        'install': None,
+        'ignore': None,
+        'server': None,
+        'parameters': {},
+        'servers': None,
         'before_command': [],
     }
 

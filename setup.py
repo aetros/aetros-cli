@@ -23,6 +23,7 @@ setup(name='aetros',
                         'pyyaml>=3.0',
                         'cherrypy>=7.1.0',
                         'Pillow>=4.0.0',
+                        'paramiko>=2.3.1',
                         'py-cpuinfo>=3.3.0',
                         'msgpack-python>=0.4.8'),
       packages=find_packages())
