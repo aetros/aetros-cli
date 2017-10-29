@@ -25,22 +25,24 @@ class RunCommand:
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' run')
-        parser.add_argument('command', nargs='?', help="The command to run. Default read in .aetros.yml")
-        parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in .aetros.yml. If not specified, command is executed on the host.")
-        parser.add_argument('-s', '--server', help="Limits the server pool to this server. Default not limitation or read in .aetros.yml.")
-        parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in .aetros.yml")
+        parser.add_argument('command', nargs='?', help="The command to run. Default read in aetros.yml")
+        parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in aetros.yml. If not specified, command is executed on the host.")
+        parser.add_argument('-s', '--server', help="Limits the server pool to this server. Default not limitation or read in aetros.yml.")
+        parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in aetros.yml")
         parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
-        parser.add_argument('-c', '--config', help="Default .aetros.yml in current working directory.")
+        parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
+
+        parser.add_argument('-p', '--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
 
         parsed_args = parser.parse_args(args)
 
-        config = read_config(parsed_args.config or '.aetros.yml')
+        config = read_config(parsed_args.config or 'aetros.yml')
 
         if 'command' not in config and not parsed_args.command:
-            self.logger.error('No "command" given in .aetros.yml or as argument.')
+            self.logger.error('No "command" given in aetros.yml or as argument.')
             sys.exit(1)
 
-        job = JobBackend(parsed_args.model, self.logger, parsed_args.config or '.aetros.yml')
+        job = JobBackend(parsed_args.model, self.logger, parsed_args.config or 'aetros.yml')
 
         files_added, size_added = job.add_files()
         print("%d files added (%s)" % (files_added, human_size(size_added, 2)))
@@ -49,6 +51,20 @@ class RunCommand:
             'type': 'custom',
             'config': config
         }
+
+        hyperparameter = {}
+
+        # todo, read paramters from aetros.yml and make it flat
+
+        if parsed_args.param:
+            for param in parsed_args.param:
+                if '=' not in param:
+                    raise Exception('--param ' + param + ' does not contain a `=`. Please use "--param name=value"')
+
+                name, value = param.split('=')
+                hyperparameter[name] = value
+
+        create_info['config']['parameters'] = hyperparameter
 
         if parsed_args.command:
             create_info['config']['command'] = parsed_args.command
@@ -59,10 +75,8 @@ class RunCommand:
         if parsed_args.server:
             create_info['servers'] = [parsed_args.server]
 
-        server = None
         if parsed_args.local:
-            # disables server assigment
-            server = 'local'
+            create_info['config']['server'] = 'local'
 
         create_info['config']['sourcesAttached'] = True
 
@@ -75,12 +89,13 @@ class RunCommand:
                 'commit': aetros.utils.git.get_current_commit_hash(),
             }
 
-        job.create(create_info=create_info, server=server)
+        job.create(create_info=create_info, server=None)
 
         print("Job %s/%s created." % (job.model_name, job.job_id))
 
         if parsed_args.local:
             start(self.logger, job.model_name + '/' + job.job_id, fetch=False)
         else:
+            #todo, make it visible
             job.git.push()
             print("Open http://%s/model/%s/job/%s to monitor it." % (job.host, job.model_name, job.job_id))

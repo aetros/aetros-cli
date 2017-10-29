@@ -40,7 +40,7 @@ def unpack_full_job_id(full_id):
     return [owner, model, id]
 
 
-def read_home_config(path = '~/.aetros.yml', logger=None):
+def read_home_config(path = '~/aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
     custom_config = {}
 
@@ -129,7 +129,7 @@ def is_ignored(path, ignore_patters):
     return ignored
 
 
-def read_config(path = '.aetros.yml', logger=None):
+def read_config(path = 'aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
     home_config = read_home_config(logger=logger)
 

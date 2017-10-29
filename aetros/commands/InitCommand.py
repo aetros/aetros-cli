@@ -29,16 +29,16 @@ class InitCommand:
         home_config = read_home_config()
         parsed_args = parser.parse_args(args)
 
-        if os.path.exists('.aetros.yml'):
-            config = yaml.load(open('.aetros.yml', 'r'))
+        if os.path.exists('aetros.yml'):
+            config = yaml.load(open('aetros.yml', 'r'))
             if isinstance(config, dict) and 'model' in config:
-                print("failed: .aetros.yml already exists with a linked model to " + config['model'])
+                print("failed: aetros.yml already exists with a linked model to " + config['model'])
                 sys.exit(1)
 
         name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.private)
 
-        with open('.aetros.yml', 'w') as f:
+        with open('aetros.yml', 'w') as f:
             f.write('model: ' + name)
 
-        print(".aetros.yml created linked with model " + name + ' in ' + os.getcwd())
+        print("aetros.yml created linked with model " + name + ' in ' + os.getcwd())
         print("Open AETROS Trainer to see the model at https://" + home_config['host'] + '/model/' + name)

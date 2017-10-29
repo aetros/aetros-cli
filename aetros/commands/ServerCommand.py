@@ -135,7 +135,7 @@ class ServerCommand:
         parser.add_argument('--no-gpus', action='store_true', help="Disable all GPUs")
 
         parser.add_argument('--max-jobs', help="How many jobs are allowed to run in total until the process exists automatically.")
-        parser.add_argument('--host', help="Default trainer.aetros.com. Read from the global configuration ~/.aetros.yml.")
+        parser.add_argument('--host', help="Default trainer.aetros.com. Read from the global configuration ~/aetros.yml.")
         parser.add_argument('--show-stdout', action='store_true', help="Show all stdout of all jobs. Only for debugging necessary.")
 
         parsed_args = parser.parse_args(args)

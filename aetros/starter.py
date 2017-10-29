@@ -86,7 +86,7 @@ def start_custom(logger, job_backend):
                 dockerfile_content = "\n".join(dockerfile)
             else:
                 if image is None:
-                    job_backend.fail("Image name missing, since install is defined in .aetros.yml")
+                    job_backend.fail("Image name missing, since install is defined in aetros.yml")
                 dockerfile_content = 'FROM ' + image + '\nRUN '
 
                 if isinstance(job_config['install'], list):
@@ -94,7 +94,7 @@ def start_custom(logger, job_backend):
                 else:
                     dockerfile_content += job_config['install']
 
-            dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in .aetros.yml.\n' \
+            dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in aetros.yml.\n' \
                                  + dockerfile_content
 
             with open('Dockerfile-aetros', 'w') as f:

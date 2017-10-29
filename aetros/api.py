@@ -114,11 +114,11 @@ def user():
     return parse_json(request('user'))
 
 
-def create_job(model_name, server=None, parameters=None, dataset_id=None, config=None):
+def create_job(model_name, parameters=None, dataset_id=None, config=None):
     content = request(
         'job',
         {'modelId': model_name},
-        {'server': server, 'parameters': parameters, 'datasetId': dataset_id, 'config': config},
+        {'parameters': parameters, 'datasetId': dataset_id, 'config': config},
         'put'
     )
     return parse_json(content)

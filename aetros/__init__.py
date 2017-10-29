@@ -19,7 +19,7 @@ command_summaries = [
     ['api', 'Executes a API call through SSH connection.'],
     ['push-job', 'Pushes a local job to AETROS Trainer.'],
     ['add', 'Adds a local file to a job tree.'],
-    ['init', 'Creates a new model and places a .aetros.yml in current working directory pointing to this model.'],
+    ['init', 'Creates a new model and places a aetros.yml in current working directory pointing to this model.'],
     ['id', 'Shows under which account the machine is authenticated.'],
     ['gpu', 'Shows information about installed GPUs'],
 ]

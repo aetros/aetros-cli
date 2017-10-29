@@ -597,7 +597,7 @@ class JobClient(BackendClient):
 def context():
     """
     Returns a new JobBackend instance which connects to AETROS Trainer
-    based on "model" in .aetros.yml or env:AETROS_MODEL_NAME environment variable.
+    based on "model" in aetros.yml or env:AETROS_MODEL_NAME environment variable.
 
     If env:AETROS_JOB_ID is not defined, it creates a new job.
 
@@ -773,7 +773,7 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None, logger=None, config_path = '.aetros.yml'):
+    def __init__(self, model_name=None, logger=None, config_path = 'aetros.yml'):
         self.event_listener = EventListener()
 
         self.log_file_handle = None
@@ -1480,7 +1480,9 @@ class JobBackend:
             create_info = {}
 
         self.job = create_info
-        self.job['server'] = server
+        if 'server' not in self.job:
+            self.job['server'] = server
+
         self.job['optimization'] = None
         self.job['type'] = 'custom'
 
@@ -1524,7 +1526,7 @@ class JobBackend:
 
         if model_name is None:
             if 'model' not in self.config:
-                raise Exception('No AETROS Trainer model name given. Specify it in .aetros.yml `model: model/name`.')
+                raise Exception('No AETROS Trainer model name given. Specify it in aetros.yml `model: model/name`.')
 
             self.model_name = self.config['model']
         else:
@@ -1557,7 +1559,7 @@ class JobBackend:
 
     def get_parameter(self, path, default=None):
         """
-        Reads hyper parameter from job configuration. If nothing found, fallback to user config in .aetros.yml
+        Reads hyper parameter from job configuration. If nothing found, fallback to user config in aetros.yml
         :param path: str 
         :param default: *
         :return: *
@@ -1738,7 +1740,7 @@ class JobBackend:
 
     def add_files(self):
         """
-        Commits all files from limited in .aetros.yml. `files` is a whitelist, `exclude_files` is a blacklist.
+        Commits all files from limited in aetros.yml. `files` is a whitelist, `exclude_files` is a blacklist.
         If both are empty, we commit all files smaller than 10MB.
         :return:
         """
