@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from threading import Lock
 
 import paramiko as paramiko
 import psutil
@@ -28,12 +29,13 @@ class ServerClient(BackendClient):
     def __init__(self, config, event_listener, logger):
         BackendClient.__init__(self, config, event_listener, logger)
         self.server_name = None
+        self.go_offline_on_first_failed_attempt = False
 
     def configure(self, server_name):
         self.server_name = server_name
 
     def on_connect(self, reconnect=False):
-        self.send_message({'type': 'register_server', 'server': self.server_name})
+        self.send_message({'type': 'register_server', 'server': self.server_name, 'reconnect': reconnect})
         messages = self.wait_for_at_least_one_message()
 
         if not messages:
@@ -73,14 +75,8 @@ class ServerClient(BackendClient):
                 self.event_listener.fire('stop')
 
             if 'type' in message:
-                if message['type'] == 'queue-jobs':
-                    self.event_listener.fire('queue-jobs', message['jobs'])
-
-                if message['type'] == 'unqueue-jobs':
-                    self.event_listener.fire('unqueue-jobs', message['jobs'])
-
-                if message['type'] == 'stop-job':
-                    self.event_listener.fire('stop-job', message['id'])
+                if message['type'] == 'jobs':
+                    self.event_listener.fire('jobs', message['jobs'])
 
 
 class ServerCommand:
@@ -96,20 +92,20 @@ class ServerCommand:
         self.ending = False
         self.active = True
         self.config = {}
-        self.queue = {}
-        self.queuedMap = {}
+        self.lock = Lock()
 
         self.general_logger_stdout = None
         self.general_logger_stderr = None
 
         self.executed_jobs = 0
+        self.started_jobs = {}
         self.max_jobs = 0
         self.ssh_key_path = None
 
         self.resources_limit = {}
         self.disabled_gpus = []
 
-        self.job_processes = []
+        self.job_processes = {}
         self.registered = False
         self.show_stdout = False
 
@@ -182,10 +178,7 @@ class ServerCommand:
 
         event_listener.on('registration', self.registration_complete)
         event_listener.on('failed', self.connection_failed)
-        event_listener.on('queue-jobs', self.queue_jobs)
-        event_listener.on('unqueue-jobs', self.unqueue_jobs)
-        event_listener.on('queue-ok', self.queue_ok)
-        event_listener.on('stop-job', self.stop_job)
+        event_listener.on('jobs', self.sync_jobs)
         event_listener.on('close', self.on_client_close)
 
         if hasattr(signal, 'SIGUSR1'):
@@ -193,7 +186,6 @@ class ServerCommand:
 
         ssh_key_registered = False
         if parsed_args.generate_ssh_key:
-
             self.ssh_key_path = os.path.normpath(os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa'))
             if not os.path.exists(self.ssh_key_path):
                 self.logger.info('Generate SSH key')
@@ -273,7 +265,7 @@ class ServerCommand:
             while self.active:
                 if self.registered:
                     self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
-                    self.process_queue()
+                    self.check_finished_jobs()
 
                 time.sleep(1)
         except KeyboardInterrupt:
@@ -281,12 +273,17 @@ class ServerCommand:
             self.stop()
 
     def on_signusr1(self, signal, frame):
-        self.logger.info("ending=%s, active=%s, %d queued, %d running" % (
+        self.logger.info("ending=%s, active=%s, registered=%s, %d running, %d messages, %d connection_tries" % (
             str(self.ending),
             str(self.active),
-            self.queued_count(),
-            len(self.job_processes)
+            str(self.registered),
+            len(self.job_processes),
+            len(self.server.queue),
+            self.server.connection_tries,
         ))
+
+        for full_id in six.iterkeys(self.job_processes):
+            self.logger.info("Running " + full_id)
 
     def on_client_close(self, params):
         self.active = False
@@ -319,107 +316,39 @@ class ServerCommand:
         self.active = False
         sys.exit(1)
 
-    def stop_job(self, id):
-        if id in self.queuedMap:
-            job = self.queuedMap[id]
-            self.logger.info("Queued job removed %s (priority: %s) " % (job['id'], job['priority']))
+    def sync_jobs(self, jobs):
+        self.lock.acquire()
 
-            # removing from the queue is enough, since the job process itself terminates it when job is aborted.
-            if job in self.queue:
-                self.queue[job['priority']].remove(job)
+        # make sure we started all ids from "jobs".
+        # if we have still active jobs not in jobs_ids, stop them
+        for full_id, job in six.iteritems(jobs):
+            started_id = full_id + '-' + str(job['time'])
 
-            del self.queuedMap[id]
+            if started_id in self.started_jobs:
+                # we got the same job id + timestamp twice, just ignore it
+                continue
 
-    def unqueue_jobs(self, jobs):
-        for id in jobs:
-            if id in self.queuedMap:
-                self.logger.info('Removed job %s from queue.' % (id, ))
+            self.started_jobs[started_id] = True
+            self.execute_job(full_id)
 
-                for priority in self.queue:
-                    if self.queuedMap[id] in self.queue[priority]:
-                        self.queue[priority].remove(self.queuedMap[id])
-
-                del self.queuedMap[id]
-
-    def queue_jobs(self, jobs):
-        self.logger.debug('Got queue list with %d items.' % (len(jobs), ))
-
-        for id in jobs.keys():
-            self.check_finished_jobs()
-
-            job = jobs[id]
-            priority = job['priority']
-            job['id'] = id
-
-            if self.is_job_queued(id):
-                self.logger.debug("Requested job %s is already known. Exclude that one." % (id, ))
-                return
-
-            self.logger.info("Queued job %s (priority:%d) in %s ..." % (
-               job['id'], job['priority'],os.getcwd()
-            ))
-
-            self.queuedMap[job['id']] = job
-
-            # add the job into the wait list
-            if job['priority'] not in self.queue:
-                self.queue[priority] = []
-
-            self.queue[priority].append(job)
-
-    def is_job_queued(self, id):
-        return id in self.queuedMap
-
-    def queued_count(self):
-        i = 0
-        for jobs in six.itervalues(self.queue):
-            i += len(jobs)
-
-        return i
-
-    def is_job_running(self, id):
-        for process in self.job_processes:
-            job = getattr(process, 'job')
-            if job['id'] == id:
-                return True
-
-        return False
-
-    def queue_ok(self, id):
-        """
-        We queued the job, told the server so and server said we're ok to start the job now.
-
-        :param id: 
-        :return: 
-        """
-        job = self.queuedMap[id]
-        priority = job['priority']
-
-        self.logger.debug("Queued job confirmed %s (priority: %s) " % (job['id'], priority))
-
-        # add the job into the wait list
-        if job['priority'] not in self.queue:
-            self.queue[priority] = []
-
-        self.queue[priority].append(job)
+        self.lock.release()
 
     def check_finished_jobs(self):
-        for process in self.job_processes:
-            job = getattr(process, 'job')
+        self.lock.acquire()
+
+        delete_finished = []
+
+        for full_job_id, process in six.iteritems(self.job_processes):
             exit_code = process.poll()
-            model, job_id = unpack_simple_job_id(job['id'])
+            model, job_id = unpack_simple_job_id(full_job_id)
 
             if exit_code is not None:
                 # command ended
-
                 if exit_code == 0:
-                    self.logger.info('Finished job %s. Exit status: %s' % (job['id'], str(exit_code)))
+                    self.logger.info('Finished job %s. Exit status: %s' % (full_job_id, str(exit_code)))
                 if exit_code > 0:
-                    reason = 'Failed job %s. Exit status: %s' % (job['id'], str(exit_code))
+                    reason = 'Failed job %s. Exit status: %s' % (full_job_id, str(exit_code))
                     self.logger.error(reason)
-
-                if job['id'] in self.queuedMap:
-                    del self.queuedMap[job['id']]
 
                 git = Git(self.logger, None, self.config, model)
                 if git.is_job_fetched(job_id):
@@ -437,44 +366,26 @@ class ServerCommand:
 
                     from aetros.const import JOB_STATUS
                     if exit_code > 0 or not git.has_file('aetros/job/status/progress.json'):
-                        self.logger.info("Set progress to " + ('CRASHED' if exit_code > 0 else 'DONE'))
+                        self.logger.info("Set progress to " + ('FAILED' if exit_code > 0 else 'DONE'))
                         git.commit_file(
                             'STOP',
                             'aetros/job/status/progress.json',
-                            str(JOB_STATUS.PROGRESS_STATUS_CRASHED) if exit_code > 0 else str(JOB_STATUS.PROGRESS_STATUS_DONE)
+                            str(JOB_STATUS.PROGRESS_STATUS_FAILED) if exit_code > 0 else str(JOB_STATUS.PROGRESS_STATUS_DONE)
                         )
 
                     git.push()
                     git.clean_up()
 
-                self.server.send_message({'type': 'job-finished', 'id': job['id']})
+                self.server.send_message({'type': 'job-finished', 'id': full_job_id})
+                delete_finished.append(full_job_id)
 
-        # remove dead job processes
-        self.job_processes = [x for x in self.job_processes if x.poll() is None]
+        for full_job_id in delete_finished:
+            del self.job_processes[full_job_id]
 
-    def process_queue(self):
-        self.check_finished_jobs()
+        self.lock.release()
 
-        if self.ending:
-            return
-
-        if self.max_jobs and self.executed_jobs >= self.max_jobs:
-            self.logger.warning('Limit of max jobs %d/%d reached. Waiting for active jobs to finish ...' % (self.executed_jobs, self.max_jobs))
-            self.end()
-            return
-
-        # sort by priority: The higher the sooner the job starts
-        for priority in sorted(self.queue, reverse=True):
-            q = self.queue[priority]
-
-            if len(q) > 0:
-                # registered and free space for new jobs, so execute another one
-                self.execute_job(q.pop(0))
-                break
-
-    def execute_job(self, job):
-        self.logger.info("Execute job %s (priority=%s) in %s ..." % (job['id'], job['priority'], os.getcwd()))
-
+    def execute_job(self, full_id):
+        self.logger.info("Execute job %s ..." % (full_id, ))
         self.executed_jobs += 1
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
@@ -484,9 +395,9 @@ class ServerCommand:
             if self.ssh_key_path is not None:
                 my_env['AETROS_SSH_KEY'] = self.ssh_key_path
 
-            args = [sys.executable, '-m', 'aetros', 'start', job['id']]
+            args = [sys.executable, '-m', 'aetros', 'start', full_id]
             self.logger.info('$ ' + ' '.join(args))
-            self.server.send_message({'type': 'job-executed', 'id': job['id']})
+            self.server.send_message({'type': 'job-executed', 'id': full_id})
 
             # Since JobBackend sends SIGINT to its current process group to send the signal also to all its children
             # we need to change the process group of the process.
@@ -504,17 +415,10 @@ class ServerCommand:
                 self.general_logger_stdout.attach(process.stdout)
                 self.general_logger_stderr.attach(process.stderr)
 
-            setattr(process, 'job', job)
-            self.job_processes.append(process)
+            self.job_processes[full_id] = process
 
     def registration_complete(self, params):
         self.registered = True
-
-        # upon registration, we need to clear the queue, since the server sends us immediately
-        # all to be enqueued jobs after registration/re-connection
-        self.queue = {}
-        self.queueMap = {}
-
         self.logger.info("Server connected to %s as %s under account %s registered." % (self.config['host'], params['server'], params['username']))
         self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
 
@@ -574,7 +478,7 @@ class ServerCommand:
         mem = psutil.virtual_memory()
         values['memory'] = mem.percent
         values['disks'] = {}
-        values['jobs'] = {'enqueued': self.queued_count(), 'running': len(self.job_processes)}
+        values['jobs'] = {'running': len(self.job_processes)}
         values['nets'] = {}
         values['processes'] = []
         values['gpus'] = []

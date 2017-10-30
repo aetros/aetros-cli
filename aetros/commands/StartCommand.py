@@ -23,6 +23,11 @@ class StartCommand:
         parser.add_argument('-s', '--server', help="Limits the server pool to this server. Default not limitation or read in aetros.yml.")
         parser.add_argument('-b', '--branch', help="This overwrites the Git branch used when new job should be started.")
 
+        parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
+        parser.add_argument('--memory', help="How much moery should be assigned to job")
+        parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
+        parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
+
         parser.add_argument('--insights', action='store_true', help="activates insights. Only for simple models.")
         parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for simple models with placeholders as input/output.")
 
@@ -51,6 +56,13 @@ class StartCommand:
 
         if parsed_args.branch:
             job_config['sourceGitTree'] = parsed_args.branch
+
+        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
+            job_config['require'] = {}
+            if parsed_args.cpu: job_config['require']['cpu'] = float(parsed_args.cpu)
+            if parsed_args.memory: job_config['require']['memory'] = float(parsed_args.memory)
+            if parsed_args.gpu: job_config['require']['gpu'] = float(parsed_args.gpu)
+            if parsed_args.gpu_memory: job_config['require']['gpu_memory'] = float(parsed_args.gpu_memory)
 
         model_name = parsed_args.name
 

@@ -70,6 +70,21 @@ class Git:
 
         self.prepare_index_file()
 
+        ssh_command = self.config['ssh']
+        ssh_command += ' -o StrictHostKeyChecking=no'
+        if self.config['ssh_key']:
+            ssh_command += ' -i "' + os.path.expanduser(self.config['ssh_key']) + '"'
+
+        import tempfile
+        f = tempfile.NamedTemporaryFile(delete=False)
+        f.write(six.b(ssh_command + ' "$@"'))
+        f.close()
+        self.ssh_git_file = f.name
+        os.environ['GIT_SSH'] = f.name
+        os.chmod(f.name, 0o700)
+
+        self.logger.debug('SSH_COMMAND:'+ssh_command)
+
         self.logger.debug("GIT_SSH='" + str(os.getenv('GIT_SSH'))+"'")
         self.git_name = None
         self.git_email = None
@@ -133,6 +148,8 @@ class Git:
         my_env = os.environ.copy()
         if self.index_path:
             my_env['GIT_INDEX_FILE'] = self.index_path
+
+        my_env['GIT_SSH'] = self.ssh_git_file
 
         return my_env
 

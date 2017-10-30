@@ -25,7 +25,7 @@ from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
-    read_parameter_by_path, stop_time, read_home_config
+    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters
 
 try:
     from cStringIO import StringIO
@@ -135,6 +135,7 @@ class BackendClient:
         self.ssh_stream = None
         self.ssh_command = config['ssh']
         self.ssh_key_path = config['ssh_key']
+        self.go_offline_on_first_failed_attempt = True
 
         self.event_listener = event_listener
         self.logger = logger
@@ -204,11 +205,10 @@ class BackendClient:
         """
         In the write-thread we detect that no connection is living anymore and try always again.
         Up to the 3 connection try, we report to user. We keep trying but in silence.
-        Also, when more than 10 connection tries are detected, we delay extra 60 seconds.
+        Also, when more than 10 connection tries are detected, we delay extra 15 seconds.
         """
         if self.connection_tries > 10:
-            # We only try in 1 minute again
-            time.sleep(60)
+            time.sleep(15)
 
         if self.in_connecting:
             return False
@@ -229,7 +229,6 @@ class BackendClient:
 
             args = args + ['git@' + self.host, 'stream']
             self.logger.debug('Open ssh: ' + (' '.join(args)))
-
 
             # Since a CTRL+C or SIGINT to process group would kill all children too, our SSH connection will die first.
             # We need that connection to indicate whether the process is still alive, so we create
@@ -261,11 +260,14 @@ class BackendClient:
                 self.connected = False
 
                 try:
-                    self.ssh_stream.kill()
+                    if self.ssh_stream.poll() is None:
+                        self.ssh_stream.kill()
                 except: pass
 
                 self.connection_tries += 1
-                self.go_offline()
+                if not self.was_connected_once and self.go_offline_on_first_failed_attempt:
+                    # initial try needs to be online, otherwise we go offline
+                    self.go_offline()
 
                 if stderrdata:
                     if 'Connection refused' not in stderrdata and 'Permission denied' not in stderrdata:
@@ -277,15 +279,13 @@ class BackendClient:
 
                     self.close()
                     sys.exit(1)
+
+                self.connection_error("Connection error during connecting to %s: %s" % (self.host, str(stderrdata)))
             else:
                 self.was_connected_once = True
 
         except Exception as error:
-            self.connected = False
-            self.registered = False
-            if self.connection_tries < 3:
-                self.logger.error("Connection error during connecting to %s: %s" % (self.host, str(error)))
-            raise
+            self.connection_error("Connection error during connecting to %s: %s" % (self.host, str(error)))
         finally:
             self.in_connecting = False
 
@@ -331,7 +331,7 @@ class BackendClient:
 
         message = "Connection error"
         if self.ssh_stream.poll() is None:
-            message = " (active ssh) "
+            message += " (active ssh)"
 
         if error:
             self.logger.error(message + ": " + str(error))
@@ -474,7 +474,6 @@ class BackendClient:
         Internal. Sends the actual message from a queue entry.
         """
         if not self.connected:
-            self.logger.debug("Client wanted to send, but not connected.")
             return False
 
         message['_sending'] = True
@@ -595,6 +594,7 @@ class JobClient(BackendClient):
         self.logger.error("Registration of job %s failed." % (self.job_id,))
         return False
 
+
 def context():
     """
     Returns a new JobBackend instance which connects to AETROS Trainer
@@ -618,6 +618,7 @@ def context():
 
     return job
 
+
 def start_job(name=None):
     """
     Tries to load the job defined in the AETROS_JOB_ID environment variable.
@@ -638,6 +639,7 @@ def start_job(name=None):
     job.start()
 
     return job
+
 
 class JobLossChannel:
     """
@@ -778,7 +780,6 @@ class JobBackend:
         self.event_listener = EventListener()
 
         self.log_file_handle = None
-        self.config = {}
         self.job = {'parameters': {}}
 
         self.git = None
@@ -847,8 +848,8 @@ class JobBackend:
 
         self.pid = os.getpid()
 
+        self.ensure_model_name()
         self.home_config = read_home_config()
-        self.read_config(model_name)
         self.client = JobClient(self.home_config, self.event_listener, self.logger)
         self.git = Git(self.logger, self.client, self.home_config, self.model_name)
 
@@ -1413,7 +1414,7 @@ class JobBackend:
         if self.is_master_process():
             self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
-        if force_exit and progress == JOB_STATUS.PROGRESS_STATUS_CRASHED:
+        if force_exit and progress == JOB_STATUS.PROGRESS_STATUS_FAILED:
             os._exit(1)
 
         if force_exit:
@@ -1442,10 +1443,10 @@ class JobBackend:
             if isinstance(sys.stderr, GeneralLogger):
                 self.git.commit_json_file('FAIL_MESSAGE_LAST_LOG', 'aetros/job/crash/last_message', sys.stderr.last_messages)
 
-        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_CRASHED)
+        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_FAILED)
 
         self.logger.debug('Crash report stored in commit ' + self.git.git_last_commit)
-        self.stop(JOB_STATUS.PROGRESS_STATUS_CRASHED, force_exit=force_exit)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_FAILED, force_exit=force_exit)
 
     def write_log(self, message):
         """
@@ -1469,39 +1470,51 @@ class JobBackend:
     def job_id(self):
         return self.git.job_id
 
-    def create(self, create_info=None, hyperparameter=None, server='local', insights=None):
+    @property
+    def config(self):
+        return self.job['config']
+
+    def create(self, create_info=None, hyperparameter=None, server='local', insights=False):
         """
         Creates a new job in git and pushes it.
 
-        :param create_info: from the api.create_job_info(id). Contains e.g. code, layer information for simple models
-        :param hyperparameter: simple nested dict with key->value.
-        :param server:
-        :param insights: whether you want to activate insights
+        :param create_info: from the api.create_job_info(id). Contains the config and job info (type, server)
+        :param hyperparameter: simple nested dict with key->value, which overwrites stuff from aetros.yml
+        :param server: if None, the the job will be assigned to a server.
+        :param insights: whether you want to activate insights (for simple models)
         """
         if not create_info:
-            create_info = {}
+            create_info = {
+                'server': server,
+                'config': {
+                    'insights': insights
+                }
+            }
+            config = read_config(self.config_path, logger=self.logger)
+
+            # first transform simple format in the full definition with parameter types
+            # (string, number, group, choice_group, etc)
+            full_hyperparameters = lose_parameters_to_full(config['parameters'])
+
+            # now extract hyperparameters from full definition, and overwrite stuff using
+            # incoming_hyperparameter if available
+            hyperparameter = extract_parameters(full_hyperparameters, hyperparameter)
+            create_info['config']['parameters'] = hyperparameter
 
         self.job = create_info
-        if 'server' not in self.job:
+
+        if 'server' not in self.job and server:
+            # setting this disables server assignment
             self.job['server'] = server
 
         self.job['optimization'] = None
         self.job['type'] = 'custom'
 
-        if 'config' not in self.job:
-            self.job['config'] = {}
-
         if 'parameters' not in self.job['config']:
             self.job['config']['parameters'] = {}
 
-        if insights is not None:
-            self.job['config']['insights'] = insights
-
-        if hyperparameter is not None:
-            self.job['config']['parameters'].update(hyperparameter)
-
         if 'insights' not in self.job['config']:
-            self.job['config']['insights'] = False
+            self.job['config']['insights'] = insights
 
         self.git.create_job_id(self.job)
 
@@ -1518,44 +1531,26 @@ class JobBackend:
 
         return False
 
-    def read_config(self, model_name=None):
-        self.config = read_config(self.config_path, logger=self.logger)
+    def ensure_model_name(self, model_name=None):
+        if self.model_name:
+            return
 
-        self.logger.debug('config: ' + json.dumps(self.config))
+        if self.job and 'model' in self.job:
+            return self.job['model']
+
+        config = read_config(self.config_path, logger=self.logger)
+        self.logger.debug('config: ' + json.dumps(config))
 
         if model_name is None:
             model_name = os.getenv('AETROS_MODEL_NAME')
 
         if model_name is None:
-            if 'model' not in self.config:
+            if 'model' not in config:
                 raise Exception('No AETROS Trainer model name given. Specify it in aetros.yml `model: model/name`.')
 
-            self.model_name = self.config['model']
+            self.model_name = config['model']
         else:
             self.model_name = model_name
-
-        if 'models' in self.config:
-            if self.model_name in self.config['models']:
-                self.logger.debug('Merged config values for ' + self.model_name)
-                self.config.update(self.config['models'][self.model_name])
-
-            del self.config['models']
-
-        ssh_command = self.home_config['ssh']
-        ssh_command += ' -o StrictHostKeyChecking=no'
-
-        if self.home_config['ssh_key']:
-            ssh_command += ' -i "' + os.path.expanduser(self.home_config['ssh_key']) + '"'
-
-        import tempfile
-        f = tempfile.NamedTemporaryFile(delete=False)
-        f.write(six.b(ssh_command + ' "$@"'))
-        f.close()
-        self.ssh_git_file = f.name
-        os.environ['GIT_SSH'] = f.name
-        os.chmod(f.name, 0o700)
-
-        self.logger.debug('SSH_COMMAND:'+ssh_command)
 
     def get_parameter(self, path, default=None, return_group=False):
         """

@@ -18,6 +18,7 @@ command_summaries = [
     ['run', 'Executes a command on an AETROS server.'],
     ['api', 'Executes a API call through SSH connection.'],
     ['push-job', 'Pushes a local job to AETROS Trainer.'],
+    ['pull-job', 'Pulls a job to local Git repository.'],
     ['add', 'Adds a local file to a job tree.'],
     ['init', 'Creates a new model and places a aetros.yml in current working directory pointing to this model.'],
     ['id', 'Shows under which account the machine is authenticated.'],
@@ -53,6 +54,7 @@ def main(args=None):
 
     from aetros.commands.ApiCommand import ApiCommand
     from aetros.commands.PushJobCommand import PushJobCommand
+    from aetros.commands.PullJobCommand import PullJobCommand
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.PredictCommand import PredictCommand
     from aetros.commands.PredictionServerCommand import PredictionServerCommand
@@ -71,6 +73,7 @@ def main(args=None):
         'run': RunCommand,
         'api': ApiCommand,
         'push-job': PushJobCommand,
+        'pull-job': PullJobCommand,
         'add': AddCommand,
         'init': InitCommand,
         'gpu': GPUCommand,

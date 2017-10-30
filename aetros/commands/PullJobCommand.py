@@ -10,7 +10,7 @@ import os
 from aetros.utils import read_home_config
 
 
-class PushJobCommand:
+class PullJobCommand:
     def __init__(self, logger):
         self.logger = logger
         self.client = None
@@ -20,7 +20,7 @@ class PushJobCommand:
     def main(self, args):
         import aetros.const
 
-        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' push-job')
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' pull-job')
         parser.add_argument('id', nargs='?', help="Model name like peter/mnist/ef8009d83a9892968097cec05b9467c685d45453")
 
         parsed_args = parser.parse_args(args)
@@ -39,5 +39,5 @@ class PushJobCommand:
             self.logger.error("Git repository for model %s in %s not found." % (parsed_args.id, git_dir))
             self.logger.error("Are you in the correct directory?")
 
-        print('Pushing ' + ref + ' from ' + git_dir)
-        subprocess.call(['git', '--bare', '--git-dir', git_dir, 'push', 'origin', ref])
+        print('Pull ' + ref + ' into ' + git_dir)
+        subprocess.call(['git', '--bare', '--git-dir', git_dir, 'fetch', 'origin', ref+':'+ref])

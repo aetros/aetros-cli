@@ -112,6 +112,7 @@ def start_custom(logger, job_backend):
             dockerfile = 'Dockerfile.aetros'
             job_backend.commit_file('Dockerfile.aetros')
 
+        job_backend.set_system_info('image/dockerfile', dockerfile)
         docker_build = [
             home_config['docker'],
             'build',

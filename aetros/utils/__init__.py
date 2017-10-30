@@ -85,8 +85,12 @@ def read_home_config(path = '~/aetros.yml', logger=None):
 ignore_pattern_cache = {}
 
 
-def extract_parameters(full_definitions, overwritten = {}, incoming_path = ''):
+def extract_parameters(full_definitions, overwritten = None, incoming_path = ''):
     container = {}
+
+    if overwritten is None:
+        overwritten = {}
+
     for parameter in full_definitions:
         param_type = parameter['type']
 
@@ -247,13 +251,12 @@ def read_parameter_by_path(dictionary, path, return_group=False):
 
     current_group = None
 
-    path = path.split('.')
     current = dictionary
 
-    for item in path:
+    for item in path.split('.'):
         current_group = None
         if item not in current:
-            raise Exception('Parameter ' + path + ' not found and no default value given.')
+            raise Exception('Parameter ' + str(path) + ' not found and no default value given.')
 
         current = current[item]
 

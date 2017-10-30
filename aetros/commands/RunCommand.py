@@ -33,6 +33,11 @@ class RunCommand:
         parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
 
+        parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
+        parser.add_argument('--memory', help="How much moery should be assigned to job")
+        parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
+        parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
+
         parser.add_argument('-p', '--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
 
         parsed_args = parser.parse_args(args)
@@ -44,6 +49,10 @@ class RunCommand:
             sys.exit(1)
 
         job = JobBackend(parsed_args.model, self.logger, parsed_args.config or 'aetros.yml')
+        ignore = []
+        if 'ignore' in config:
+            ignore = config['ignore']
+        job.job = {'config': {'ignore': ignore}}
 
         files_added, size_added = job.add_files()
 
@@ -63,10 +72,12 @@ class RunCommand:
                 name, value = param.split('=')
                 incoming_hyperparameter[name] = value
 
-        # first transform simple format in the full definition with parameter types (string, number, group, choice_group, etc)
+        # first transform simple format in the full definition with parameter types
+        # (string, number, group, choice_group, etc)
         full_hyperparameters = lose_parameters_to_full(config['parameters'])
 
-        # now extract hyperparameters from full definition, and overwrite stuff using incoming_hyperparameter if available
+        # now extract hyperparameters from full definition, and overwrite stuff using
+        # incoming_hyperparameter if available
         hyperparameter = extract_parameters(full_hyperparameters, incoming_hyperparameter)
 
         create_info['config']['parameters'] = hyperparameter
@@ -79,6 +90,15 @@ class RunCommand:
 
         if parsed_args.server:
             create_info['config']['servers'] = [parsed_args.server]
+
+        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
+            if 'require' not in create_info['config']:
+                create_info['config']['require'] = {}
+
+            if parsed_args.cpu: create_info['config']['require']['cpu'] = float(parsed_args.cpu)
+            if parsed_args.memory: create_info['config']['require']['memory'] = float(parsed_args.memory)
+            if parsed_args.gpu: create_info['config']['require']['gpu'] = float(parsed_args.gpu)
+            if parsed_args.gpu_memory: create_info['config']['require']['gpu_memory'] = float(parsed_args.gpu_memory)
 
         if parsed_args.local:
             create_info['server'] = 'local'
