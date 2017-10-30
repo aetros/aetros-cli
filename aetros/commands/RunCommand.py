@@ -11,7 +11,8 @@ from aetros.starter import start
 
 from aetros.backend import JobBackend
 from aetros import api
-from aetros.utils import read_config, human_size
+from aetros.utils import read_config, human_size, lose_parameters_to_full, extract_parameters, stop_time
+
 
 class RunCommand:
     def __init__(self, logger):
@@ -45,6 +46,7 @@ class RunCommand:
         job = JobBackend(parsed_args.model, self.logger, parsed_args.config or 'aetros.yml')
 
         files_added, size_added = job.add_files()
+
         print("%d files added (%s)" % (files_added, human_size(size_added, 2)))
 
         create_info = {
@@ -52,17 +54,20 @@ class RunCommand:
             'config': config
         }
 
-        hyperparameter = {}
-
-        # todo, read paramters from aetros.yml and make it flat
-
+        incoming_hyperparameter = {}
         if parsed_args.param:
             for param in parsed_args.param:
                 if '=' not in param:
                     raise Exception('--param ' + param + ' does not contain a `=`. Please use "--param name=value"')
 
                 name, value = param.split('=')
-                hyperparameter[name] = value
+                incoming_hyperparameter[name] = value
+
+        # first transform simple format in the full definition with parameter types (string, number, group, choice_group, etc)
+        full_hyperparameters = lose_parameters_to_full(config['parameters'])
+
+        # now extract hyperparameters from full definition, and overwrite stuff using incoming_hyperparameter if available
+        hyperparameter = extract_parameters(full_hyperparameters, incoming_hyperparameter)
 
         create_info['config']['parameters'] = hyperparameter
 
@@ -73,10 +78,10 @@ class RunCommand:
             create_info['config']['image'] = parsed_args.image
 
         if parsed_args.server:
-            create_info['servers'] = [parsed_args.server]
+            create_info['config']['servers'] = [parsed_args.server]
 
         if parsed_args.local:
-            create_info['config']['server'] = 'local'
+            create_info['server'] = 'local'
 
         create_info['config']['sourcesAttached'] = True
 

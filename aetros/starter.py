@@ -11,7 +11,7 @@ import sys
 import six
 
 from aetros.logger import GeneralLogger
-from aetros.utils import unpack_full_job_id, read_config, read_home_config
+from aetros.utils import unpack_full_job_id, read_config, read_home_config, flatten_parameters, stop_time
 from .backend import JobBackend
 from .Trainer import Trainer
 
@@ -47,8 +47,6 @@ def start(logger, full_id, fetch=True):
 
 
 def start_custom(logger, job_backend):
-    job_model = job_backend.get_job_model()
-
     work_tree = job_backend.git.work_tree
 
     my_env = os.environ.copy()
@@ -70,6 +68,17 @@ def start_custom(logger, job_backend):
 
     command = job_config['command']
     image = job_config['image']
+
+    # replace {{batch_size}} parameters
+    if isinstance(job_config['parameters'], dict):
+        print(flatten_parameters(job_config['parameters']))
+        for key, value in six.iteritems(flatten_parameters(job_config['parameters'])):
+            if isinstance(command, list):
+                for pos in command:
+                    if isinstance(command[pos], six.string_types):
+                        command[pos] = command[pos].replace('{{' + key + '}}', json.dumps(value))
+            else:
+                command = command.replace('{{' + key + '}}', json.dumps(value))
 
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
@@ -97,11 +106,11 @@ def start_custom(logger, job_backend):
             dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in aetros.yml.\n' \
                                  + dockerfile_content
 
-            with open('Dockerfile-aetros', 'w') as f:
+            with open('Dockerfile.aetros', 'w') as f:
                 f.write(dockerfile_content)
 
-            dockerfile = 'Dockerfile-aetros'
-            job_backend.commit_file('Dockerfile-aetros')
+            dockerfile = 'Dockerfile.aetros'
+            job_backend.commit_file('Dockerfile.aetros')
 
         docker_build = [
             home_config['docker'],
@@ -168,7 +177,6 @@ def start_custom(logger, job_backend):
 
     if not isinstance(command, list):
         command = ['sh', '-c', command]
-
 
     p = None
     wait_stdout = None

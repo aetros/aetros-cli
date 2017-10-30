@@ -1,6 +1,7 @@
 from __future__ import division
 from __future__ import absolute_import
 
+import json
 import os
 import re
 import time
@@ -11,6 +12,15 @@ import signal
 import six
 import sys
 import yaml
+
+start_time = time.time()
+last_time = None
+
+def stop_time(title=''):
+    global last_time
+    diff = ("{0:.10f}".format(time.time() - last_time)) if last_time is not None else ''
+    last_time = time.time()
+    sys.__stdout__.write("STOP_TIME: " + str(time.time()-start_time) + "s - diff: "+diff+"  - " +title+ "\n")
 
 
 def get_option(dict, key, default=None, type=None):
@@ -75,6 +85,217 @@ def read_home_config(path = '~/aetros.yml', logger=None):
 ignore_pattern_cache = {}
 
 
+def extract_parameters(full_definitions, overwritten = {}, incoming_path = ''):
+    container = {}
+    for parameter in full_definitions:
+        param_type = parameter['type']
+
+        if 'defaultValue' in parameter:
+            defaultValue = parameter['defaultValue']
+        elif 'default' in parameter:
+            defaultValue = parameter['default']
+        else:
+            defaultValue = None
+
+        value = defaultValue
+        if 'value' in parameter:
+            value = parameter['value']
+
+        name = parameter['name']
+
+        path = (incoming_path + '.' + name).strip('.')
+
+        if path in overwritten:
+            value = overwritten[path]
+
+        if param_type == 'string':
+            container[name] = str(value)
+#
+        if param_type == 'number':
+            container[name] = float(value)
+#
+        if param_type == 'boolean':
+            container[name] = bool(value)
+#
+        if param_type == 'array':
+            container[name] = value
+
+        if param_type == 'group':
+            container[name] = extract_parameters(parameter['children'], overwritten, path)
+
+        if param_type == 'choice_group':
+            if '' == value:
+                #no default value nor value set
+                continue
+
+            if isinstance(value, six.string_types) and value not in parameter['children']:
+                found_names = []
+                for idx, child in enumerate(parameter['children']):
+                    found_names.append(child['name'])
+                    if value == child['name']:
+                        value = idx
+                        break
+
+                if isinstance(value, six.string_types):
+                    names = ', '.join(found_names)
+                    raise Exception(str(value) + " is not available in " + path + ". " + names)
+
+            value_name = parameter['children'][value]['name']
+            container[name] = {
+                '$value': value_name,
+            }
+            container[name][value_name] = extract_parameters(parameter['children'][value]['children'], overwritten, path)
+
+        if param_type == 'choice_string' or param_type == 'choice_number':
+            if path in overwritten:
+                for idx, child in enumerate(parameter['children']):
+                    if overwritten[path] == child['value']:
+                        value = idx
+                        break
+
+            if value is None or (value < 0 or value >= len(parameter['children'])):
+                value = 0
+
+            container[name] = parameter['children'][value]['value']
+
+    return container
+
+def lose_parameters_to_full(parameters):
+
+    if not parameters:
+        return {}
+
+    if isinstance(parameters, list):
+        # full definition with type, name etc.
+        return parameters
+
+    def type_of(v):
+        if isinstance(v, six.string_types):
+            return 'string'
+
+        if isinstance(v, (float, int)):
+            return 'number'
+
+        if isinstance(v, bool):
+            return 'boolean'
+
+        if isinstance(v, (list, dict)):
+            return 'array'
+
+    def extract_from_parameters(parameters):
+        definitions = []
+
+        for k, v in six.iteritems(parameters):
+            definition = {'name': k}
+
+            if k[0] != '_' and isinstance(v, list):
+                # //regular array ['a', 'b']
+                if not v:
+                    definition['type'] = 'choice_string'
+                    continue
+                if isinstance(v[0], six.string_types):
+                    definition['type'] = 'choice_string'
+                else:
+                    definition['type'] = 'choice_number'
+
+                definition['children'] = []
+                definition['defaultValue'] = 0
+
+                for child in v:
+                    definition['children'].append({'value': child})
+
+            elif k[0] != '_' and isinstance(v, dict):
+                # named keys, so a group
+                # ['a' => 'bla']
+                # becomes a choicegroup when all childern are groups as well
+                all_groups = len(v) > 1
+
+                for children in six.itervalues(v):
+                    if not isinstance(children, dict):
+                        all_groups = False
+                        break
+
+                if all_groups:
+                    # when group in group, then first become choice_group
+                    definition['type'] = 'choice_group'
+                    definition['defaultValue'] = 0
+                else:
+                    definition['type'] = 'group'
+
+                definition['children'] = extract_from_parameters(v)
+            else:
+                definition['type'] = type_of(v)
+                definition['defaultValue'] = v
+
+            definitions.append(definition)
+
+        return definitions
+
+    return extract_from_parameters(parameters)
+
+
+def read_parameter_by_path(dictionary, path, return_group=False):
+
+    # if path in dictionary:
+    #     return dictionary[path]
+
+    # elif '.' not in path:
+    #     raise Exception('Parameter ' + path + ' not found and no default value given.')
+
+    if not dictionary:
+        return None
+
+    current_group = None
+
+    path = path.split('.')
+    current = dictionary
+
+    for item in path:
+        current_group = None
+        if item not in current:
+            raise Exception('Parameter ' + path + ' not found and no default value given.')
+
+        current = current[item]
+
+        if isinstance(current, dict) and '$value' in current and current['$value'] in current:
+            current_group = current
+            current = current[current['$value']]
+
+    if isinstance(current_group, dict) and '$value' in current_group and current_group['$value'] in current_group:
+        if return_group:
+            return current_group[current_group['$value']]
+        else:
+            return current_group['$value']
+
+    return current
+
+
+def flatten_parameters(parameters, incomingPath = ''):
+    result = {}
+
+    for key, value in six.iteritems(parameters):
+        if '$value' == key: continue
+
+        path = (incomingPath + '.' + key).strip('.')
+
+        if isinstance(value, dict) and key[0] != '_':
+            if '$value' in value:
+                result[path] = value['$value']
+                if value['$value'] not in value:
+                    raise Exception(value['$value'] + " of " + path + " not in " + str(value))
+                value = value[value['$value']]
+                result.update(flatten_parameters(value, path))
+            else:
+                result.update(flatten_parameters(value, path))
+
+        elif isinstance(value, list) and key[0] != '_':
+            result[path] = value[0]
+        else:
+            result[path] = value
+
+    return result
+
+
 def is_ignored(path, ignore_patters):
     if isinstance(ignore_patters, six.string_types):
         ignore_patters = ignore_patters.split('\n')
@@ -131,20 +352,19 @@ def is_ignored(path, ignore_patters):
 
 def read_config(path = 'aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
-    home_config = read_home_config(logger=logger)
 
     config = {
         'dockerfile': None,
         'command': None,
         'install': None,
         'ignore': None,
+        'image': None,
         'server': None,
         'parameters': {},
         'servers': None,
         'before_command': [],
     }
 
-    config.update(home_config)
     if os.path.exists(path):
         f = open(path, 'r')
 

@@ -25,8 +25,8 @@ from aetros.utils import unpack_simple_job_id, read_home_config
 import aetros.cuda_gpu
 
 class ServerClient(BackendClient):
-    def __init__(self, host, event_listener, logger):
-        BackendClient.__init__(self, host, event_listener, logger)
+    def __init__(self, config, event_listener, logger):
+        BackendClient.__init__(self, config, event_listener, logger)
         self.server_name = None
 
     def configure(self, server_name):

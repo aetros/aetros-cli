@@ -7,11 +7,16 @@ from aetros.KerasCallback import KerasCallback
 from aetros.Trainer import Trainer
 
 
-def optimizer_factory(settings):
+def optimizer_factory(job):
     import keras.optimizers
 
-    optimizer = settings['$value']
-    optimizer_settings = settings[optimizer]
+    if isinstance(job, dict):
+        # old simple code
+        optimizer = job['$value']
+        optimizer_settings = job[optimizer]
+    else:
+        optimizer = job.get_parameter('keras_optimizer')
+        optimizer_settings = job.get_parameter('keras_optimizer', return_group=True)
 
     if 'sgd' == optimizer:
         return keras.optimizers.SGD(lr=optimizer_settings['learning_rate'] or 0.01, momentum=optimizer_settings['momentum'] or 0, nesterov=optimizer_settings['nesterov'], decay=optimizer_settings['decay'] or 0.0)

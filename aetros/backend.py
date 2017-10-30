@@ -24,7 +24,8 @@ from six.moves import _thread
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
-from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint
+from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
+    read_parameter_by_path, stop_time, read_home_config
 
 try:
     from cStringIO import StringIO
@@ -846,9 +847,10 @@ class JobBackend:
 
         self.pid = os.getpid()
 
+        self.home_config = read_home_config()
         self.read_config(model_name)
-        self.client = JobClient(self.config, self.event_listener, self.logger)
-        self.git = Git(self.logger, self.client, self.config, self.model_name)
+        self.client = JobClient(self.home_config, self.event_listener, self.logger)
+        self.git = Git(self.logger, self.client, self.home_config, self.model_name)
 
         self.logger.debug("Started tracking of job files in git %s for remote %s" % (self.git.git_path, self.git.origin_url))
 
@@ -861,7 +863,7 @@ class JobBackend:
 
     @property
     def host(self):
-        return self.config['host']
+        return self.home_config['host']
 
     def section(self, title):
         title = title.replace("\t", "  ")
@@ -1539,13 +1541,11 @@ class JobBackend:
 
             del self.config['models']
 
-        # todo, read parameters from script command arguments
-
-        ssh_command = self.config['ssh']
+        ssh_command = self.home_config['ssh']
         ssh_command += ' -o StrictHostKeyChecking=no'
 
-        if self.config['ssh_key']:
-            ssh_command += ' -i "' + os.path.expanduser(self.config['ssh_key']) + '"'
+        if self.home_config['ssh_key']:
+            ssh_command += ' -i "' + os.path.expanduser(self.home_config['ssh_key']) + '"'
 
         import tempfile
         f = tempfile.NamedTemporaryFile(delete=False)
@@ -1557,59 +1557,21 @@ class JobBackend:
 
         self.logger.debug('SSH_COMMAND:'+ssh_command)
 
-    def get_parameter(self, path, default=None):
+    def get_parameter(self, path, default=None, return_group=False):
         """
-        Reads hyper parameter from job configuration. If nothing found, fallback to user config in aetros.yml
+        Reads hyperparameter from job configuration. If nothing found use given default.
+
         :param path: str 
         :param default: *
+        :param return_group: If true and path is a choice_group, we return the dict instead of the group name.
         :return: *
         """
-        params = self.job['config']['parameters']
+        value = read_parameter_by_path(self.job['config']['parameters'], path, return_group)
 
-        if path in params:
-            return params[path]
+        if value is None:
+            return default
 
-        try:
-            # try first parameters from job creator
-            return self.read_dict_by_path(params, path)
-        except:
-            # if not found in parameters from the creator (Trainer usually) then try user config
-            try:
-                return self.read_dict_by_path(self.config['parameters'], path)
-            except:
-                if default is None:
-                    raise
-
-        # not found and default is not None
-        return default
-
-    def read_dict_by_path(self, dictionary, path):
-        if path in dictionary:
-            return dictionary[path]
-        elif '.' not in path:
-            raise Exception('Parameter ' + path + ' not found and no default value given.')
-
-        if '.' in path:
-            path = path.split('.')
-            current = dictionary
-
-            for item in path:
-                if item not in current:
-                    raise Exception('Parameter ' + path + ' not found and no default value given.')
-
-                current = current[item]
-
-                if isinstance(current, dict) and '$value' in current and current['$value'] in current:
-                    # hyperparameter groups
-                    # keras_optimizer: {
-                    #   $value: "rmsprop",
-                    #   rmsprop: {
-                    #     learning_rate: 0.0781,
-                    #   }
-                    # }
-                    current = current[current['$value']]
-
-            return current
+        return value
 
     def fetch(self, job_id):
         """
@@ -1669,7 +1631,7 @@ class JobBackend:
 
         from aetros.JobModel import JobModel
 
-        return JobModel(self.job_id, self.job, self.config['storage_dir'])
+        return JobModel(self.job_id, self.job, self.home_config['storage_dir'])
 
     def sync_weights(self, push=True):
 
