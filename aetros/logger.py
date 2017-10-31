@@ -131,7 +131,7 @@ class GeneralLogger(object):
 
             if not self.buffer_disabled:
                 for char in message:
-                    if '\b' == char or '\r' == char and self.buffer:
+                    if '\b' == char and self.buffer:
                         self.buffer = self.buffer[:-1]
                     else:
                         self.buffer += char
