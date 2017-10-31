@@ -877,9 +877,11 @@ class JobBackend:
             self.logger.warning("Make sure you have saved your ssh pub key in your AETROS Trainer user account.")
 
     def on_client_offline(self, params):
-        self.logger.warning("Could not establish a connection. We stopped automatic syncing.")
-        self.logger.warning("You can publish later this job to AETROS Trainer executing following command.")
-        self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+        if self.is_master_process():
+            self.logger.warning("Could not establish a connection. We stopped automatic syncing.")
+            self.logger.warning("You can publish later this job to AETROS Trainer by executing following command.")
+            self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+
         self.git.online = False
 
     def on_registration(self, params):
@@ -922,9 +924,11 @@ class JobBackend:
             self.stop_requested_force = True
             self.logger.warning('Force stopped')
 
+            # just kill the process, we don't care about the results
+            os._exit(1)
             # with force_exit we really close the process, killing it in unknown state
-            self.fail('Force stopped', force_exit=True)
-            return
+            # self.fail('Force stopped', force_exit=True)
+            # return
 
         if self.is_master_process():
             self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
@@ -1313,20 +1317,20 @@ class JobBackend:
 
         if self.stop_requested:
             if self.stop_requested_force:
-                self.fail('Force stopped.', force_exit=True)
+                self.fail('Force stopped.')
             else:
-                self.abort(force_exit=False)
+                self.abort()
             return
 
         if not self.ended and hasattr(sys, 'last_value'):
             # sys.last_value contains a exception, when there was an uncaught one
             if isinstance(sys.last_value, KeyboardInterrupt):
-                self.abort(force_exit=False)
+                self.abort()
             else:
-                self.fail(type(sys.last_value).__name__ + ': ' + str(sys.last_value), force_exit=False)
+                self.fail(type(sys.last_value).__name__ + ': ' + str(sys.last_value))
 
         elif self.running:
-            self.done(force_exit=False)
+            self.done()
 
     def done(self, force_exit=True):
         if not self.running:
@@ -1341,7 +1345,7 @@ class JobBackend:
         if isinstance(sys.stderr, GeneralLogger):
             sys.stderr.send_buffer()
 
-    def stop(self, progress=None, wait_for_client=False, force_exit=True):
+    def stop(self, progress=None, wait_for_client=False, force_exit=False):
         global last_exit_code
 
         if self.stopped:
@@ -1368,11 +1372,7 @@ class JobBackend:
         self.ended = True
         self.running = False
 
-        info_to_send_job = not wait_for_client
-        if not info_to_send_job:
-            info_to_send_job = len(self.client.queue) > 0 and not self.client.registered
-
-        if self.git.online:
+        if self.git.online and not force_exit:
             if wait_for_client:
                 self.logger.debug("client sends last %d messages ..." % (len(self.client.queue),))
                 self.client.wait_sending_last_messages()
@@ -1381,7 +1381,9 @@ class JobBackend:
         self.logger.debug("Git stopping ...")
         self.git.stop()
 
-        if self.client.online:
+        was_online = self.client.online
+
+        if self.client.online and not force_exit:
             # server stores now all store_file and stream_file as blob as well,
             # wait for connection close to make sure server stored the files in server's git.
             # This happens after self.client.wait_sending_last_message() because it makes sure,
@@ -1396,14 +1398,15 @@ class JobBackend:
         if progress is not None:
             self.git.commit_file('STOP', 'aetros/job/status/progress.json', json.dumps(progress, default=invalid_json_values))
 
-        # both sides should have same blobs, so we do now our final push
-        self.logger.debug("git last push ...")
-        successful_push = self.git.push()
+        if not force_exit and was_online:
+            # both sides should have same blobs, so we do now our final push
+            self.logger.debug("git last push ...")
+            successful_push = self.git.push()
 
-        if not successful_push and info_to_send_job:
-            self.logger.warning("Not all job information has been uploaded.")
-            self.logger.warning("Please run following command to make sure your job is stored on the server.")
-            self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+            if not successful_push:
+                self.logger.warning("Not all job information has been uploaded.")
+                self.logger.warning("Please run following command to make sure your job is stored on the server.")
+                self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
 
         # remove the index file
         self.git.clean_up()
@@ -1411,8 +1414,7 @@ class JobBackend:
         if self.ssh_git_file is not None and os.path.exists(self.ssh_git_file):
             os.unlink(self.ssh_git_file)
 
-        if self.is_master_process():
-            self.logger.info("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
+        self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
         if force_exit and progress == JOB_STATUS.PROGRESS_STATUS_FAILED:
             os._exit(1)
@@ -1420,7 +1422,7 @@ class JobBackend:
         if force_exit:
             os._exit(0)
 
-    def abort(self, wait_for_client_messages=True, force_exit=True):
+    def abort(self, wait_for_client_messages=True, force_exit=False):
         if not self.running:
             return
 
@@ -1428,7 +1430,7 @@ class JobBackend:
 
         self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages, force_exit=force_exit)
 
-    def fail(self, message=None, force_exit=True):
+    def fail(self, message=None, force_exit=False):
         """
         Marks the job as failed, saves the given error message and force exists the process when force_exit=True.
         """

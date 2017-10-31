@@ -54,7 +54,7 @@ $ python -m aetros --help
 To debug issues, you can try to enable debug mode using `DEBUG=1` environment variable in front of the command, example:
 
 ```bash
-$ python -m aetros start owner/model-name/cd877e3f91e137394d644f4b61d97e6ab47fdfde
+$ DEBUG=1 python -m aetros start owner/model-name/cd877e3f91e137394d644f4b61d97e6ab47fdfde
 2017-09-04 17:18:52 osx.fritz.box aetros-job[11153] DEBUG Home config loaded from /Users/marc/.aetros.yml
 ...
 ```

@@ -5,7 +5,7 @@ import argparse
 import os
 
 import sys
-import yaml
+import ruamel.yaml as yaml
 
 from aetros import api
 from aetros.utils import read_home_config
@@ -30,7 +30,7 @@ class InitCommand:
         parsed_args = parser.parse_args(args)
 
         if os.path.exists('aetros.yml'):
-            config = yaml.load(open('aetros.yml', 'r'))
+            config = yaml.safe_load(open('aetros.yml', 'r'))
             if isinstance(config, dict) and 'model' in config:
                 print("failed: aetros.yml already exists with a linked model to " + config['model'])
                 sys.exit(1)

@@ -70,6 +70,9 @@ class Git:
 
         self.prepare_index_file()
 
+        if subprocess.Popen(['git', '--version'], stdout=subprocess.PIPE).wait() > 0:
+            raise Exception("Git binary not available. Please install Git v2 first.")
+
         ssh_command = self.config['ssh']
         ssh_command += ' -o StrictHostKeyChecking=no'
         if self.config['ssh_key']:
@@ -123,10 +126,14 @@ class Git:
         """
         import aetros.api
         try:
-            user = json.loads(aetros.api.request('user-git'))
+            response = aetros.api.request('user-git')
+            if response:
+                user = json.loads(response)
 
-            self.git_name = user['name']
-            self.git_email = user['email']
+                self.git_name = user['name']
+                self.git_email = user['email']
+            else:
+                self.go_offline()
         except ApiConnectionError as e:
             self.go_offline()
 

@@ -1,7 +1,6 @@
 from __future__ import division
 from __future__ import absolute_import
 
-import json
 import os
 import re
 import time
@@ -11,7 +10,7 @@ import numpy as np
 import signal
 import six
 import sys
-import yaml
+import ruamel.yaml as yaml
 
 start_time = time.time()
 last_time = None
@@ -58,7 +57,7 @@ def read_home_config(path = '~/aetros.yml', logger=None):
         f = open(path, 'r')
         try:
             logger and logger.debug('Home config loaded from ' + os.path.realpath(path))
-            custom_config = yaml.load(f)
+            custom_config = yaml.safe_load(f)
         except:
             raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
 
@@ -371,7 +370,7 @@ def read_config(path = 'aetros.yml', logger=None):
     if os.path.exists(path):
         f = open(path, 'r')
 
-        custom_config = yaml.load(f)
+        custom_config = yaml.safe_load(f)
         if custom_config is None:
             custom_config = {}
 

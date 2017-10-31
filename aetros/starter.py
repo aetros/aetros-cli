@@ -71,7 +71,6 @@ def start_custom(logger, job_backend):
 
     # replace {{batch_size}} parameters
     if isinstance(job_config['parameters'], dict):
-        print(flatten_parameters(job_config['parameters']))
         for key, value in six.iteritems(flatten_parameters(job_config['parameters'])):
             if isinstance(command, list):
                 for pos in command:
@@ -133,10 +132,10 @@ def start_custom(logger, job_backend):
         image = job_backend.model_name
 
     if image is not None:
-        if not docker_image_built:
-            logger.info("Pull docker image: $ " + image)
-            execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
-                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        # if not docker_image_built:
+        #     logger.info("Pull docker image: $ " + image)
+        #     execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
+        #         stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
         inspections = json.loads(inspections.decode('utf-8'))
@@ -155,7 +154,8 @@ def start_custom(logger, job_backend):
         # make sure old container is removed
         subprocess.Popen([home_config['docker'], 'rm', job_backend.job_id], stderr=subprocess.PIPE).wait()
 
-        docker_command = [home_config['docker'], 'run', '--name', job_backend.job_id]
+        # -t is necessary to let the command receive SIGINT
+        docker_command = [home_config['docker'], 'run', '-t', '--name', job_backend.job_id]
         docker_command += home_config['docker_options']
         docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/exp']
         docker_command += ['-w', '/exp']
@@ -203,6 +203,7 @@ def start_custom(logger, job_backend):
         # We can not send a SIGINT to the child process
         # as we don't know whether it received it already (pressing CTRL+C) or not (sending SIGINT to this process only
         # instead of to the group), so we assume it received it. A second signal would force the exit.
+        sys.__stdout__.write("Aborted\n")
 
         if p and p.poll() is None:
             p.wait()
