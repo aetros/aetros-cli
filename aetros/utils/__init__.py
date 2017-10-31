@@ -8,6 +8,8 @@ import datetime
 
 import numpy as np
 import signal
+
+import paramiko
 import six
 import sys
 import ruamel.yaml as yaml
@@ -49,7 +51,60 @@ def unpack_full_job_id(full_id):
     return [owner, model, id]
 
 
-def read_home_config(path = '~/aetros.yml', logger=None):
+def create_ssh_stream(config):
+    ssh_stream = paramiko.client.SSHClient()
+    ssh_stream.load_system_host_keys()
+    ssh_stream.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    key = None
+
+    if config['ssh_key_base64']:
+        key = paramiko.RSAKey.from_private_key(six.StringIO(config['ssh_key_base64']))
+    elif config['ssh_key']:
+        key = paramiko.RSAKey.from_private_key(open(os.path.expanduser(config['ssh_key']), 'r'))
+
+    ssh_stream.connect(config['host'], username='git', compress=True, pkey=key)
+    return ssh_stream
+
+
+def setup_git_ssh(config):
+    if os.getenv('GIT_SSH'):
+        return
+
+    import tempfile
+    ssh_command = config['ssh']
+    ssh_command += ' -o StrictHostKeyChecking=no'
+
+    ssh_key = None
+    if config['ssh_key_base64']:
+        ssh_key = tempfile.NamedTemporaryFile(delete=False)
+        ssh_key.write(six.b(config['ssh_key_base64']))
+        ssh_key.close()
+        ssh_command += ' -i '+ ssh_key.name
+        os.chmod(ssh_key.name, 0o600)
+    elif config['ssh_key']:
+        ssh_command += ' -i '+ os.path.expanduser(config['ssh_key'])
+
+    ssh_script = tempfile.NamedTemporaryFile(delete=False)
+    ssh_script.write(six.b(ssh_command + ' "$@"'))
+    ssh_script.close()
+    os.environ['GIT_SSH'] = ssh_script.name
+    os.chmod(ssh_script.name, 0o700)
+
+    def delete():
+        if os.path.exists(ssh_script.name):
+            os.unlink(ssh_script.name)
+
+        if ssh_key and os.path.exists(ssh_key.name):
+            os.unlink(ssh_key.name)
+
+    return delete
+
+
+def read_home_config(path = None, logger=None):
+    if not path:
+        path = os.getenv('AETROS_HOME_CONFIG_FILE') or '~/aetros.yml'
+
     path = os.path.normpath(os.path.expanduser(path))
     custom_config = {}
 
@@ -65,11 +120,13 @@ def read_home_config(path = '~/aetros.yml', logger=None):
             custom_config = {}
 
     config = {
-        'host': os.getenv('API_HOST') or 'trainer.aetros.com',
-        'storage_dir': '~/.aetros',
-        'ssh_key': os.getenv('AETROS_SSH_KEY'),
-        'ssh': 'ssh',
+        'host': os.getenv('AETROS_HOST') or 'trainer.aetros.com',
+        'storage_dir': os.getenv('AETROS_STORAGE_DIR') or '~/.aetros',
+        'ssh_key': '',
+        'ssh_key_base64': os.getenv('AETROS_SSH_KEY_BASE64'),
         'image': None,
+        'ssh': 'ssh',
+        'git': 'git',
         'docker': 'docker',
         'docker_options': [],
         'ssl_verify': True,

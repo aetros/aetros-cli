@@ -1,10 +1,12 @@
 import subprocess
 
 import six
+from ruamel import yaml
 from six.moves.urllib.parse import urlencode
 import json
 
-from aetros.utils import read_home_config
+from aetros.logger import drain_stream
+from aetros.utils import read_home_config, create_ssh_stream
 
 
 class ApiError(Exception):
@@ -33,32 +35,30 @@ def request(path, query=None, body=None, method='get', config=None):
 
     config = read_home_config() if config is None else config
 
-    args = [config['ssh']] if isinstance(config['ssh'], six.string_types) else config['ssh']
-    args += ['-o', 'StrictHostKeyChecking no']
-
-    if config['ssh_key']:
-        args += ['-i', config['ssh_key']]
-
     if method == 'get' and body is not None:
         method = 'post'
 
-    ssh_stream = subprocess.Popen(args + ['git@' + config['host'], 'api', method, path],
-        stderr=subprocess.PIPE,
-        stdin=subprocess.PIPE if body is not None else None, stdout=subprocess.PIPE)
+    ssh_stream = create_ssh_stream(config)
+    stdin, stdout, stderr = ssh_stream.exec_command('api ' + method + ' ' + path)
 
-    input = None
     if body is not None:
         input = six.b(json.dumps(body))
+        stdin.write(input)
 
-    stdout, stderr = ssh_stream.communicate(input)
+    stdout = drain_stream(stdout)
+    stderr = drain_stream(stderr)
 
-    if ssh_stream.returncode != 0:
-        if 'Connection ' in stderr:
+    if len(stderr) > 0:
+        if six.b('Connection ') in stderr:
             raise ApiConnectionError('Could not request api: ' + path, stderr)
+
+        if six.b('Permission denied') in stderr:
+            raise ApiConnectionError('Could not request API due to permission denied. '
+                                     'Did you setup authentication properly?', stderr)
 
         raise ApiError('Could not request api: ' + path, stderr)
 
-    return stdout.decode('utf-8')
+    return stdout
 
 
 def raise_response_exception(message, response):
@@ -68,7 +68,7 @@ def raise_response_exception(message, response):
 
     if isinstance(content, six.string_types):
         try:
-            content_parsed = json.loads(content)
+            content_parsed = yaml.safe_load(content)
             if 'error' in content_parsed:
                 error = content_parsed['error']
             if 'message' in content_parsed:
@@ -94,7 +94,7 @@ def read(obj):
 
 def parse_json(content):
     try:
-        a = json.loads(content)
+        a = yaml.safe_load(content)
     except:
         raise Exception('Could not parse api request. Content: ' + str(content))
 
@@ -114,11 +114,11 @@ def user():
     return parse_json(request('user'))
 
 
-def create_job(model_name, parameters=None, dataset_id=None, config=None):
+def create_job(model_name, local=False, parameters=None, dataset_id=None, config=None):
     content = request(
         'job',
         {'modelId': model_name},
-        {'parameters': parameters, 'datasetId': dataset_id, 'config': config},
+        {'parameters': parameters, 'datasetId': dataset_id, 'config': config, 'local': local},
         'put'
     )
     return parse_json(content)

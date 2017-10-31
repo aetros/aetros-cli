@@ -2,13 +2,8 @@ from __future__ import absolute_import
 from __future__ import print_function
 import argparse
 
-import sys
-
 import six
-
-from aetros.backend import JobBackend
 from aetros import api
-from aetros.utils import read_config, human_size
 
 class IdCommand:
     def __init__(self, logger):

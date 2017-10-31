@@ -7,7 +7,7 @@ import sys
 
 import os
 
-from aetros.utils import read_home_config
+from aetros.utils import read_home_config, setup_git_ssh
 
 
 class PushJobCommand:
@@ -30,6 +30,7 @@ class PushJobCommand:
             sys.exit(1)
 
         config = read_home_config()
+
         model = parsed_args.id[0:parsed_args.id.rindex('/')]
         ref = 'refs/aetros/job/' + parsed_args.id[parsed_args.id.rindex('/')+1:]
 
@@ -40,4 +41,5 @@ class PushJobCommand:
             self.logger.error("Are you in the correct directory?")
 
         print('Pushing ' + ref + ' from ' + git_dir)
-        subprocess.call(['git', '--bare', '--git-dir', git_dir, 'push', 'origin', ref])
+        setup_git_ssh(config)
+        subprocess.call([config['git'], '--bare', '--git-dir', git_dir, 'push', 'origin', ref])

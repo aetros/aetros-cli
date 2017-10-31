@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-import subprocess
 import atexit
 import os
 import socket
@@ -10,7 +9,6 @@ from threading import Thread, Lock
 import coloredlogs
 import logging
 
-import copy
 import requests
 import signal
 import json
@@ -19,19 +17,13 @@ import six
 import PIL.Image
 import sys
 import msgpack
-from six.moves import _thread
+from ruamel import yaml
 
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
-    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters
-
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from io import StringIO
-
+    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, create_ssh_stream
 from aetros.MonitorThread import MonitoringThread
 
 if not isinstance(sys.stdout, GeneralLogger):
@@ -131,10 +123,11 @@ class BackendClient:
         :type event_listener: EventListener
         :type job_id: integer
         """
+        self.config = config
         self.host = config['host']
         self.ssh_stream = None
-        self.ssh_command = config['ssh']
-        self.ssh_key_path = config['ssh_key']
+        self.ssh_stream_stdout = None
+        self.ssh_stream_stdin = None
         self.go_offline_on_first_failed_attempt = True
 
         self.event_listener = event_listener
@@ -221,36 +214,15 @@ class BackendClient:
             if self.connected or not self.online:
                 return True
 
-            args = [self.ssh_command] if isinstance(self.ssh_command, six.string_types) else self.ssh_command
-            args += ['-o', 'StrictHostKeyChecking no']
+            self.ssh_stream = create_ssh_stream(self.config)
+            self.ssh_stream_stdin, self.ssh_stream_stdout, stderr = self.ssh_stream.exec_command('stream')
 
-            if self.ssh_key_path:
-                args += ['-i', self.ssh_key_path]
-
-            args = args + ['git@' + self.host, 'stream']
-            self.logger.debug('Open ssh: ' + (' '.join(args)))
-
-            # Since a CTRL+C or SIGINT to process group would kill all children too, our SSH connection will die first.
-            # We need that connection to indicate whether the process is still alive, so we create
-            # it in a different process group.
-            # We need to make sure, we kill it when the process dies, otherwise it would run forever.
-            kwargs = {}
-            if os.name == 'nt':
-                kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
-            else:
-                kwargs['preexec_fn'] = os.setsid
-
-            self.ssh_stream = subprocess.Popen(args, bufsize=0,
-                stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
-                **kwargs
-            )
-
-            self.logger.debug('Done: pid=' + str(self.ssh_stream.pid))
+            self.logger.debug('Open ssh')
             messages = self.wait_for_at_least_one_message()
             stderrdata = ''
 
             if not messages:
-                stderrdata = self.ssh_stream.stderr.read().decode("utf-8").strip()
+                stderrdata = stderr.read().decode("utf-8").strip()
             else:
                 self.connected = True
                 self.registered = self.on_connect(self.was_connected_once)
@@ -260,8 +232,7 @@ class BackendClient:
                 self.connected = False
 
                 try:
-                    if self.ssh_stream.poll() is None:
-                        self.ssh_stream.kill()
+                    self.ssh_stream.close()
                 except: pass
 
                 self.connection_tries += 1
@@ -310,12 +281,10 @@ class BackendClient:
         # give is some free time
         time.sleep(0.1)
 
-        # ssh process is dead
-        if self.ssh_stream.poll() is not None:
-            # since the ssh process can receive a SIGINT first (CTRL+C on terminal, instead of sending SIGINT to
-            # this process only) we need to wait a bit to make sure we receive one as well.
-            # if so, we close anything and don't reconnect (self.expect_close will be True automatically)
-            time.sleep(0.3)
+        # make sure ssh connection is closed, so we can recover
+        try:
+            self.ssh_stream.close()
+        except: pass
 
         if self.expect_close:
             # we expected the close, so ignore the error
@@ -330,11 +299,12 @@ class BackendClient:
             return
 
         message = "Connection error"
-        if self.ssh_stream.poll() is None:
-            message += " (active ssh)"
 
         if error:
             self.logger.error(message + ": " + str(error))
+
+            if 'No authentication methods available' in str(error):
+                self.logger.error("Make sure you have ssh_key in your ~/aetros.yml configured.")
         else:
             self.logger.error(message)
 
@@ -428,11 +398,13 @@ class BackendClient:
         self.active = False
 
         i = 0
-        while self.ssh_stream.poll() is None:
-            i += 1
-            time.sleep(0.1)
-            if i % 50 == 0:
-                self.logger.warning("We still waiting for connection closing on server side.")
+        try:
+            while self.ssh_stream_stdout and self.ssh_stream_stdout.read() != six.b(''):
+                i += 1
+                time.sleep(0.1)
+                if i % 50 == 0:
+                    self.logger.warning("We are still waiting for connection closing on server side.")
+        except: pass
 
         self.online = False
 
@@ -442,13 +414,7 @@ class BackendClient:
 
         if self.ssh_stream:
             try:
-                self.ssh_stream.kill()
-                if self.ssh_stream and self.ssh_stream.pool() is None:
-                    # well, we have to kill you, because it's in a different
-                    # process group, and we really need to make sure, it is killed when our
-                    # process dies
-                    time.sleep(0.1)
-                    self.ssh_stream.terminate()
+                self.ssh_stream.close()
             except: pass
 
         if self.online:
@@ -460,6 +426,10 @@ class BackendClient:
         if not (self.active and self.online):
             # It's important to queue anything when active and online
             # as we would lose information in git streams.
+            return
+
+        if self.stop_on_empty_queue:
+            # make sure, we don't add new one
             return
 
         self.message_id += 1
@@ -481,9 +451,9 @@ class BackendClient:
         msg = msgpack.packb(message, default=invalid_json_values)
 
         try:
-            self.ssh_stream.stdin.write(msg)
+            self.ssh_stream_stdin.write(msg)
             message['_sent'] = True
-            self.ssh_stream.stdin.flush()
+            self.ssh_stream_stdin.flush()
 
             return len(msg)
         except KeyboardInterrupt:
@@ -513,7 +483,7 @@ class BackendClient:
         while True:
             chunk = ''
             try:
-                chunk = self.ssh_stream.stdout.read(1)
+                chunk = self.ssh_stream_stdout.read(1)
             except Exception as error:
                 self.connection_error(error)
                 raise
@@ -537,7 +507,7 @@ class BackendClient:
         """
 
         try:
-            chunk = self.ssh_stream.stdout.read(1)
+            chunk = self.ssh_stream_stdout.read(1)
         except Exception as error:
             self.connection_error(error)
             raise
@@ -832,7 +802,6 @@ class JobBackend:
         self.stop_requested = False
         self.stop_requested_force = False
 
-        self.ssh_git_file = None
         self.kpi_channel = None
         self.registered = None
         self.progresses = {}
@@ -1332,7 +1301,7 @@ class JobBackend:
         elif self.running:
             self.done()
 
-    def done(self, force_exit=True):
+    def done(self, force_exit=False):
         if not self.running:
             return
 
@@ -1410,9 +1379,6 @@ class JobBackend:
 
         # remove the index file
         self.git.clean_up()
-
-        if self.ssh_git_file is not None and os.path.exists(self.ssh_git_file):
-            os.unlink(self.ssh_git_file)
 
         self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
@@ -1596,7 +1562,7 @@ class JobBackend:
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
         with open(self.git.work_tree + '/aetros/job.json') as f:
-            self.job = json.loads(f.read())
+            self.job = yaml.safe_load(f.read())
 
         if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
@@ -1779,6 +1745,9 @@ class JobBackend:
 
         env['hostname'] = socket.gethostname()
         env['variables'] = dict(os.environ)
+
+        if 'AETROS_SSH_KEY' in env['variables']: del env['variables']['AETROS_SSH_KEY']
+        if 'AETROS_SSH_KEY_BASE64' in env['variables']: del env['variables']['AETROS_SSH_KEY_BASE64']
 
         env['pip_packages'] = sorted([[i.key, i.version] for i in pip.get_installed_distributions()])
         self.set_system_info('environment', env)

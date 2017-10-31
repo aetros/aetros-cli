@@ -2,6 +2,9 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 
 import time
+
+from ruamel import yaml
+
 start_time = time.time()
 
 import json
@@ -20,7 +23,7 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, fetch=True):
+def start(logger, full_id, fetch=True, env=None, volumes=None):
     """
     Starts the training process with all logging of a job_id
     """
@@ -43,25 +46,31 @@ def start(logger, full_id, fetch=True):
     if job_backend.is_simple_model():
         start_keras(logger, job_backend)
     else:
-        start_custom(logger, job_backend)
+        start_custom(logger, job_backend, env, volumes)
 
 
-def start_custom(logger, job_backend):
+def start_custom(logger, job_backend, env=None, volumes=None):
     work_tree = job_backend.git.work_tree
+    home_config = read_home_config()
 
-    my_env = os.environ.copy()
-    if 'PYTHONPATH' not in my_env:
-        my_env['PYTHONPATH'] = ''
+    if not env:
+        env = {}
 
-    my_env['PYTHONPATH'] += ':' + os.getcwd()
-    my_env['AETROS_MODEL_NAME'] = job_backend.model_name
-    my_env['AETROS_JOB_ID'] = job_backend.job_id
-    my_env['AETROS_ATTY'] = '1'
-    my_env['AETROS_GIT'] = job_backend.git.get_base_command()
+    if 'PYTHONPATH' not in env:
+        env['PYTHONPATH'] = ''
+
+    env['PYTHONPATH'] += ':' + os.getcwd()
+    env['AETROS_MODEL_NAME'] = job_backend.model_name
+    env['AETROS_JOB_ID'] = job_backend.job_id
+    env['AETROS_ATTY'] = '1'
+    env['AETROS_GIT'] = job_backend.git.get_base_command()
+
+    print(home_config['ssh_key'])
+    if not os.getenv('AETROS_SSH_KEY_BASE64') and home_config['ssh_key']:
+        env['AETROS_SSH_KEY_BASE64'] = open(os.path.expanduser(home_config['ssh_key']), 'r').read().decode('utf-8')
 
     job_config = job_backend.job['config']
 
-    home_config = read_home_config()
 
     if 'command' not in job_config :
         job_backend.fail('No "command" given. See Configuration section in the documentation.')
@@ -131,6 +140,7 @@ def start_custom(logger, job_backend):
         docker_image_built = True
         image = job_backend.model_name
 
+    docker_command = None
     if image is not None:
         # if not docker_image_built:
         #     logger.info("Pull docker image: $ " + image)
@@ -138,7 +148,7 @@ def start_custom(logger, job_backend):
         #         stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
-        inspections = json.loads(inspections.decode('utf-8'))
+        inspections = yaml.safe_load(inspections.decode('utf-8'))
         if inspections:
             inspection = inspections[0]
             with job_backend.git.batch_commit('Docker image'):
@@ -154,11 +164,31 @@ def start_custom(logger, job_backend):
         # make sure old container is removed
         subprocess.Popen([home_config['docker'], 'rm', job_backend.job_id], stderr=subprocess.PIPE).wait()
 
-        # -t is necessary to let the command receive SIGINT
-        docker_command = [home_config['docker'], 'run', '-t', '--name', job_backend.job_id]
+
+        # -ti is necessary to let the command receive SIGINT
+        docker_command = [home_config['docker'], 'run', '-ti', '--name', job_backend.job_id]
         docker_command += home_config['docker_options']
-        docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/exp']
-        docker_command += ['-w', '/exp']
+
+        env['AETROS_GIT_WORK_DIR'] = '/job'
+        docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/job']
+
+        env['AETROS_STORAGE_DIR'] = '/aetros'
+        docker_command += ['--mount', 'type=bind,source='+job_backend.git.git_path+',destination='+'/aetros/'+job_backend.model_name + '.git']
+
+        home_config_path = os.path.expanduser('~/aetros.yml')
+        if os.path.exists(home_config_path):
+            env['AETROS_HOME_CONFIG_FILE'] = '/aetros/aetros.yml'
+            docker_command += ['--mount', 'type=bind,source='+home_config_path+',destination='+'/aetros/aetros.yml']
+
+        docker_command += ['-w', '/job']
+
+        # make sure the docker command receives all environment variables
+        for k in six.iterkeys(env):
+            docker_command += ['-e', k]
+
+        if volumes:
+            for volume in volumes:
+                docker_command += ['-v', volume]
 
         if 'resources' in job_backend.job:
             assigned_resources = job_backend.job['resources']
@@ -167,10 +197,14 @@ def start_custom(logger, job_backend):
 
         docker_command.append(image)
 
+        # since linux doesnt handle SIGINT when pid=1 process has no signal listener,
+        # we need to make sure, we attached one to the pid=1 process
+        trap = 'trapIt () { "$@"& pid="$!"; trap "echo KILLING; kill -INT $pid" INT; wait; };'
+
         if isinstance(command, list):
             docker_command += command
         else:
-            docker_command += ['sh', '-c', command]
+            docker_command += ['sh', '-c', trap + 'trapIt ' + command]
 
         command = docker_command
 
@@ -184,8 +218,11 @@ def start_custom(logger, job_backend):
     wait_stderr = None
     try:
         job_backend.section('command')
-        logger.warning("$ %s " % (str(command)[1:-1]))
-        p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=my_env)
+        logger.warning("$ %s " % (' '.join([json.dumps(a) for a in command])))
+
+        command_env = os.environ.copy()
+        command_env.update(env)
+        p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env)
         wait_stdout = sys.stdout.attach(p.stdout)
         wait_stderr = sys.stderr.attach(p.stderr)
 
@@ -209,6 +246,12 @@ def start_custom(logger, job_backend):
             p.wait()
             if wait_stdout: wait_stdout()
             if wait_stderr: wait_stderr()
+
+        if docker_command:
+            # in docker run does not proxy INT signals to the docker-engine,
+            # so we need to do it on our own directly.
+            subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id]).wait()
+            pass
 
         # check if there was a JobBackend in the command
         # if so, we do not add any further stuff to the git

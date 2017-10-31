@@ -15,6 +15,7 @@ import signal
 
 import requests
 import six
+from cryptography.hazmat.primitives import serialization
 from requests.auth import HTTPBasicAuth
 
 from aetros.api import raise_response_exception
@@ -100,7 +101,8 @@ class ServerCommand:
         self.executed_jobs = 0
         self.started_jobs = {}
         self.max_jobs = 0
-        self.ssh_key_path = None
+        self.ssh_key_private = None
+        self.ssh_key_public = None
 
         self.resources_limit = {}
         self.disabled_gpus = []
@@ -186,57 +188,50 @@ class ServerCommand:
 
         ssh_key_registered = False
         if parsed_args.generate_ssh_key:
-            self.ssh_key_path = os.path.normpath(os.path.expanduser('~/.ssh/id_' + parsed_args.name.replace('/', '__') + '_rsa'))
-            if not os.path.exists(self.ssh_key_path):
-                self.logger.info('Generate SSH key')
+            self.logger.info('Generate SSH key')
 
-                key = paramiko.RSAKey.generate(4096)
-                key.write_private_key_file(self.ssh_key_path)
-
-                with open(self.ssh_key_path + '.pub', 'w+') as f:
-                    f.write('rsa ' + key.get_base64() + ' ' + parsed_args.name)
+            ssh_key = paramiko.RSAKey.generate(4096)
+            self.ssh_key_private = ssh_key.key.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()
+            ).decode()
+            self.ssh_key_public = 'rsa ' + ssh_key.get_base64() + ' ' + parsed_args.name
 
             self.logger.info('Register SSH key at ' + self.config['host'])
             url = 'https://' + self.config['host'] + '/api/server/ssh-key'
 
-            with open(self.ssh_key_path +'.pub', 'r') as f:
-                data = {
-                    'name': parsed_args.name,
-                    'secure_key': parsed_args.generate_ssh_key,
-                    'key': f.read(),
-                }
+            data = {
+                'name': parsed_args.name,
+                'secure_key': parsed_args.generate_ssh_key,
+                'key': self.ssh_key_public,
+            }
 
-                auth = None
-                if 'auth_user' in self.config:
-                    auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
+            auth = None
+            if 'auth_user' in self.config:
+                auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
 
-                response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
+            response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
 
-                if response.status_code != 200:
-                    raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
+            if response.status_code != 200:
+                raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
 
-                ssh_key_registered = response.content == 'true'
+            ssh_key_registered = response.content == 'true'
 
         def delete_ssh_key():
-            with open(self.ssh_key_path +'.pub', 'r') as f:
-                data = {
-                    'secure_key': parsed_args.generate_ssh_key,
-                    'key': f.read(),
-                }
-                self.logger.info('Delete SSH key at ' + self.config['host'])
-                url = 'https://' + self.config['host'] + '/api/server/ssh-key/delete'
+            data = {
+                'secure_key': parsed_args.generate_ssh_key,
+                'key': self.ssh_key_public,
+            }
+            self.logger.info('Delete SSH key at ' + self.config['host'])
+            url = 'https://' + self.config['host'] + '/api/server/ssh-key/delete'
 
-                auth = None
-                if 'auth_user' in self.config:
-                    auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
+            auth = None
+            if 'auth_user' in self.config:
+                auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
 
-                response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
+            response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
 
-                if response.status_code != 200:
-                    raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)
-
-                os.unlink(self.ssh_key_path)
-                os.unlink(self.ssh_key_path +'.pub')
+            if response.status_code != 200:
+                raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)
 
         if parsed_args.generate_ssh_key and ssh_key_registered:
             import atexit
@@ -245,8 +240,8 @@ class ServerCommand:
         if parsed_args.host:
             self.config['host'] = parsed_args.host
 
-        if self.ssh_key_path:
-            self.config['ssh_key'] = self.ssh_key_path
+        if self.ssh_key_private:
+            self.config['ssh_key_base64'] = self.ssh_key_private
 
         self.server = ServerClient(self.config, event_listener, self.logger)
 
@@ -296,8 +291,10 @@ class ServerCommand:
     def stop(self):
         self.active = False
 
-        for p in self.job_processes:
+        for p in six.itervalues(self.job_processes):
             p.kill()
+            time.sleep(0.1)
+            p.terminate()
 
         self.general_logger_stdout.flush()
         self.general_logger_stderr.flush()
@@ -392,15 +389,15 @@ class ServerCommand:
             my_env = os.environ.copy()
             my_env['AETROS_ATTY'] = '1'
 
-            if self.ssh_key_path is not None:
-                my_env['AETROS_SSH_KEY'] = self.ssh_key_path
+            if self.ssh_key_private is not None:
+                my_env['AETROS_SSH_KEY_BASE64'] = self.ssh_key_private
 
             args = [sys.executable, '-m', 'aetros', 'start', full_id]
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': full_id})
 
-            # Since JobBackend sends SIGINT to its current process group to send the signal also to all its children
-            # we need to change the process group of the process.
+            # Since JobBackend sends SIGINT to its current process group, wit sends also to its parents when same pg.
+            # We need to change the process group of the process, so this won't happen.
             # If we don't this, the process of ServerCommand receives the SIGINT as well.
             kwargs = {}
             if os.name == 'nt':

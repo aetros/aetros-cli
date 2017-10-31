@@ -72,6 +72,7 @@ def main(args=None):
         'server': ServerCommand,
         'run': RunCommand,
         'api': ApiCommand,
+        'id': IdCommand,
         'push-job': PushJobCommand,
         'pull-job': PullJobCommand,
         'add': AddCommand,
@@ -84,7 +85,7 @@ def main(args=None):
         sys.exit(1)
 
     level = 'INFO'
-    if '-v' in args or os.getenv('DEBUG') == '1':
+    if '--debug' in args or os.getenv('DEBUG') == '1':
         level = 'DEBUG'
 
     atty = None

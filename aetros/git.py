@@ -6,9 +6,10 @@ import six
 from threading import Thread, Lock
 import time
 import sys
+from ruamel import yaml
 
 from aetros.api import ApiConnectionError
-from aetros.utils import invalid_json_values
+from aetros.utils import invalid_json_values, setup_git_ssh
 
 
 class GitCommandException(Exception):
@@ -73,21 +74,7 @@ class Git:
         if subprocess.Popen(['git', '--version'], stdout=subprocess.PIPE).wait() > 0:
             raise Exception("Git binary not available. Please install Git v2 first.")
 
-        ssh_command = self.config['ssh']
-        ssh_command += ' -o StrictHostKeyChecking=no'
-        if self.config['ssh_key']:
-            ssh_command += ' -i "' + os.path.expanduser(self.config['ssh_key']) + '"'
-
-        import tempfile
-        f = tempfile.NamedTemporaryFile(delete=False)
-        f.write(six.b(ssh_command + ' "$@"'))
-        f.close()
-        self.ssh_git_file = f.name
-        os.environ['GIT_SSH'] = f.name
-        os.chmod(f.name, 0o700)
-
-        self.logger.debug('SSH_COMMAND:'+ssh_command)
-
+        self.delete_git_ssh = setup_git_ssh(config)
         self.logger.debug("GIT_SSH='" + str(os.getenv('GIT_SSH'))+"'")
         self.git_name = None
         self.git_email = None
@@ -113,7 +100,7 @@ class Git:
 
         if self.origin_url and self.git_url not in self.origin_url:
             raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). "
-                            "You seem to switched between aetros.com and on-premise installation. "
+                            "It seems you switched between aetros.com and an on-premise installation or update aetros.yml:host."
                             "Please remove the Git repository." % (self.git_path, self.origin_url, self.git_url))
 
         if not os.path.exists(self.temp_path):
@@ -128,7 +115,9 @@ class Git:
         try:
             response = aetros.api.request('user-git')
             if response:
-                user = json.loads(response)
+                print(response)
+                user = yaml.safe_load(response)
+                print(user)
 
                 self.git_name = user['name']
                 self.git_email = user['email']
@@ -148,7 +137,7 @@ class Git:
 
     @property
     def work_tree(self):
-        return os.path.normpath(self.storage_dir + '/' + self.model_name + '/' + self.job_id)
+        return os.getenv('AETROS_GIT_WORK_DIR') or os.path.normpath(self.storage_dir + '/' + self.model_name + '/' + self.job_id)
 
     @property
     def env(self):
@@ -156,7 +145,7 @@ class Git:
         if self.index_path:
             my_env['GIT_INDEX_FILE'] = self.index_path
 
-        my_env['GIT_SSH'] = self.ssh_git_file
+        my_env['GIT_SSH'] = os.getenv('GIT_SSH')
 
         return my_env
 
@@ -256,7 +245,8 @@ class Git:
 
         if 'Connection refused' in stderrdata or 'Permission denied' in stderrdata:
             if 'Permission denied' in stderrdata:
-                self.logger.warning("You have no permission to push to that model.")
+                self.logger.warning("You have no permission to push to that model. Make sure your SSH key is properly"
+                                    " configured.")
 
             self.go_offline()
             self.logger.error(stderrdata)
@@ -478,6 +468,10 @@ class Git:
     def clean_up(self):
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
+
+        if self.delete_git_ssh:
+            self.delete_git_ssh()
+            self.delete_git_ssh = None
 
     def batch_commit(self, message):
         """

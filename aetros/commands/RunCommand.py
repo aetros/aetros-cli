@@ -4,6 +4,8 @@ import argparse
 
 import sys
 
+import os
+
 import aetros.utils.git
 from aetros.logger import GeneralLogger
 
@@ -38,11 +40,24 @@ class RunCommand:
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
 
+        parser.add_argument('--volume', '-v', action='append', help="Volume into docker")
+        parser.add_argument('-e', action='append', help="Sets additional environment variables. '-e name=value' to set value, or '-e name' to read from current env")
+
         parser.add_argument('-p', '--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
 
         parsed_args = parser.parse_args(args)
 
         config = read_config(parsed_args.config or 'aetros.yml')
+
+        env = {}
+        if parsed_args.e:
+            for item in parsed_args.e:
+                if '=' in item:
+                    k, v = item.split('=')
+                else:
+                    k = item
+                    v = os.getenv(k)
+                env[k] = v
 
         if 'command' not in config and not parsed_args.command:
             self.logger.error('No "command" given in aetros.yml or as argument.')
@@ -119,8 +134,12 @@ class RunCommand:
         print("Job %s/%s created." % (job.model_name, job.job_id))
 
         if parsed_args.local:
-            start(self.logger, job.model_name + '/' + job.job_id, fetch=False)
+            start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume)
         else:
+            if parsed_args.volume:
+                print("Can not use volume with jobs on the cluster. Use datasets instead.")
+                sys.exit(1)
+
             #todo, make it visible
             job.git.push()
             print("Open http://%s/model/%s/job/%s to monitor it." % (job.host, job.model_name, job.job_id))

@@ -48,9 +48,6 @@ class StartCommand:
 
         job_config = {'insights': parsed_args.insights}
 
-        if parsed_args.local:
-            job_config['server'] = 'local'
-
         if parsed_args.image:
             job_config['image'] = parsed_args.image
 
@@ -69,7 +66,7 @@ class StartCommand:
         if model_name.count('/') == 1:
             try:
                 self.logger.debug("Create job ...")
-                created = api.create_job(model_name, hyperparameter, parsed_args.dataset, config=job_config)
+                created = api.create_job(model_name, parsed_args.local, hyperparameter, parsed_args.dataset, config=job_config)
             except api.ApiError as e:
                 if 'Connection refused' in e.reason:
                     self.logger.error("You are offline")

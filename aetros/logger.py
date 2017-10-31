@@ -1,12 +1,29 @@
 from __future__ import absolute_import
 
 import sys
-import time
-import datetime
-
-import os
 import six
 from threading import Timer, Thread, Lock
+
+
+def drain_stream(stream, decode='utf-8'):
+    content = six.b('')
+
+    while True:
+        try:
+            # read() needs to block
+            # buf = os.read(buffer.fileno(), 4096)
+            buf = stream.read(1)
+            if buf == six.b(''):
+                break
+            content += buf
+        except:
+            break
+
+    if decode:
+        return content.decode(decode)
+
+    return content
+
 
 class GeneralLogger(object):
     def __init__(self, redirect_to, job_backend=None):

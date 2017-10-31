@@ -7,7 +7,7 @@ import sys
 
 import os
 
-from aetros.utils import read_home_config
+from aetros.utils import read_home_config, setup_git_ssh
 
 
 class PullJobCommand:
@@ -40,4 +40,5 @@ class PullJobCommand:
             self.logger.error("Are you in the correct directory?")
 
         print('Pull ' + ref + ' into ' + git_dir)
-        subprocess.call(['git', '--bare', '--git-dir', git_dir, 'fetch', 'origin', ref+':'+ref])
+        setup_git_ssh(config)
+        subprocess.call([config['git'], '--bare', '--git-dir', git_dir, 'fetch', 'origin', ref+':'+ref])
