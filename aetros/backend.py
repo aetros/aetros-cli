@@ -256,7 +256,7 @@ class BackendClient:
                 self.was_connected_once = True
 
         except Exception as error:
-            self.connection_error("Connection error during connecting to %s: %s" % (self.host, str(error)))
+            self.connection_error(error)
         finally:
             self.in_connecting = False
 
@@ -283,7 +283,8 @@ class BackendClient:
 
         # make sure ssh connection is closed, so we can recover
         try:
-            self.ssh_stream.close()
+            if self.ssh_stream:
+                self.ssh_stream.close()
         except: pass
 
         if self.expect_close:
@@ -301,7 +302,13 @@ class BackendClient:
         message = "Connection error"
 
         if error:
-            self.logger.error(message + ": " + str(error))
+            import traceback
+            traceback.print_exc()
+
+            if hasattr(error, 'message'):
+                self.logger.error(message + ": " + str(error.message))
+            else:
+                self.logger.error(message + ": " + str(error))
 
             if 'No authentication methods available' in str(error):
                 self.logger.error("Make sure you have ssh_key in your ~/aetros.yml configured.")

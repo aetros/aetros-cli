@@ -164,6 +164,6 @@ def get_libcudart():
     if rc != 0:
         raise ValueError("Could not get version")
     if version.value < 6050:
-        raise NotImplementedError("CUDA version must be between >= 6.5")
+        raise NotImplementedError("CUDA version must be >= 6.5")
 
     return libcudart

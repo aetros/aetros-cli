@@ -253,7 +253,11 @@ class Git:
             return '', 1, ''
 
         if not interrupted and not allowed_to_fail and p is not None and p.returncode != 0:
-            raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)+"\nstdout: '" + str(stdoutdata)+"',\nstderr: '" + str(stderrdata)+"', input="+str(inputdata))
+            raise GitCommandException('Command failed: ' + ' '.join(command) + ', code: ' + str(p.returncode)
+                                      +"\nstdout: '" + str(stdoutdata)
+                                      +"',\nstderr: '" + str(stderrdata)
+                                      # +"', env="+str(self.env)
+                                      +", input="+str(inputdata))
 
         return stdoutdata, p.returncode if p is not None else None, stderrdata
 
@@ -464,8 +468,9 @@ class Git:
                 if not self.keep_stream_files:
                     os.unlink(full_path)
 
-
     def clean_up(self):
+        self.logger.debug("Git: clean up")
+
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
 

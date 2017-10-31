@@ -53,7 +53,7 @@ def unpack_full_job_id(full_id):
 
 def create_ssh_stream(config):
     ssh_stream = paramiko.client.SSHClient()
-    ssh_stream.load_system_host_keys()
+    # ssh_stream.load_system_host_keys()
     ssh_stream.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     key = None
@@ -68,16 +68,13 @@ def create_ssh_stream(config):
 
 
 def setup_git_ssh(config):
-    if os.getenv('GIT_SSH'):
-        return
-
     import tempfile
     ssh_command = config['ssh']
     ssh_command += ' -o StrictHostKeyChecking=no'
 
     ssh_key = None
     if config['ssh_key_base64']:
-        ssh_key = tempfile.NamedTemporaryFile(delete=False)
+        ssh_key = tempfile.NamedTemporaryFile(delete=False, prefix='ssh_key_')
         ssh_key.write(six.b(config['ssh_key_base64']))
         ssh_key.close()
         ssh_command += ' -i '+ ssh_key.name
@@ -85,7 +82,7 @@ def setup_git_ssh(config):
     elif config['ssh_key']:
         ssh_command += ' -i '+ os.path.expanduser(config['ssh_key'])
 
-    ssh_script = tempfile.NamedTemporaryFile(delete=False)
+    ssh_script = tempfile.NamedTemporaryFile(delete=False, prefix='git_ssh_')
     ssh_script.write(six.b(ssh_command + ' "$@"'))
     ssh_script.close()
     os.environ['GIT_SSH'] = ssh_script.name
