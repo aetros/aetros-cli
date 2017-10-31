@@ -23,7 +23,7 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, fetch=True, env=None, volumes=None):
+def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None):
     """
     Starts the training process with all logging of a job_id
     """
@@ -46,10 +46,10 @@ def start(logger, full_id, fetch=True, env=None, volumes=None):
     if job_backend.is_simple_model():
         start_keras(logger, job_backend)
     else:
-        start_custom(logger, job_backend, env, volumes)
+        start_custom(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
 
 
-def start_custom(logger, job_backend, env=None, volumes=None):
+def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     work_tree = job_backend.git.work_tree
     home_config = read_home_config()
 
@@ -192,8 +192,17 @@ def start_custom(logger, job_backend, env=None, volumes=None):
 
         if 'resources' in job_backend.job:
             assigned_resources = job_backend.job['resources']
-            # todo, limit the docker container
-            # todo, assign GPU to nvidia docker and set env for tensorflow
+
+            if 'cpu' in assigned_resources and assigned_resources['cpu']:
+                docker_command += ['--cpus', assigned_resources['cpu']]
+
+            if 'memory' in assigned_resources and assigned_resources['memory']:
+                docker_command += ['--memory', assigned_resources['memory'] * 1024 * 1024 * 1024]
+
+        if gpu_devices:
+            docker_command += ['--device', '/dev/nvidiactl', '--device', '/dev/nvidia-uvm']
+            for gpu_id in gpu_devices:
+                docker_command += ['--device', '/dev/nvidia'+gpu_id]
 
         docker_command.append(image)
 

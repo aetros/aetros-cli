@@ -1,5 +1,7 @@
 import platform
 import ctypes
+from collections import OrderedDict
+
 
 class CUDADeviceProperties(ctypes.Structure):
     # See $CUDA_HOME/include/cuda_runtime_api.h for the definition of
@@ -100,6 +102,20 @@ def get_memory(device):
         return free.value, total.value
     except:
         return None
+
+
+def get_ordered_devices():
+    """
+    Default CUDA_DEVICE_ORDER is not compatible with nvidia-docker. Nvidia-Docker is using
+    CUDA_DEVICE_ORDER=PCI_BUS_ID, so this list returns
+    """
+    devices = OrderedDict()
+
+    for i in range(0, get_installed_devices()):
+        gpu = get_device_properties(i)
+        devices[gpu['pciBusID']] = gpu
+
+    return devices
 
 
 def get_device_properties(device, all=False):

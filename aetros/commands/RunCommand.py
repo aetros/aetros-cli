@@ -36,9 +36,11 @@ class RunCommand:
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
 
         parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
-        parser.add_argument('--memory', help="How much moery should be assigned to job")
+        parser.add_argument('--memory', help="How much memory should be assigned to job")
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
+
+        parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container.")
 
         parser.add_argument('--volume', '-v', action='append', help="Volume into docker")
         parser.add_argument('-e', action='append', help="Sets additional environment variables. '-e name=value' to set value, or '-e name' to read from current env")
@@ -107,13 +109,13 @@ class RunCommand:
             create_info['config']['servers'] = [parsed_args.server]
 
         if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
-            if 'require' not in create_info['config']:
-                create_info['config']['require'] = {}
+            if 'resources' not in create_info['config']:
+                create_info['config']['resources'] = {}
 
-            if parsed_args.cpu: create_info['config']['require']['cpu'] = float(parsed_args.cpu)
-            if parsed_args.memory: create_info['config']['require']['memory'] = float(parsed_args.memory)
-            if parsed_args.gpu: create_info['config']['require']['gpu'] = float(parsed_args.gpu)
-            if parsed_args.gpu_memory: create_info['config']['require']['gpu_memory'] = float(parsed_args.gpu_memory)
+            if parsed_args.cpu: create_info['config']['resources']['cpu'] = float(parsed_args.cpu)
+            if parsed_args.memory: create_info['config']['resources']['memory'] = float(parsed_args.memory)
+            if parsed_args.gpu: create_info['config']['resources']['gpu'] = float(parsed_args.gpu)
+            if parsed_args.gpu_memory: create_info['config']['resources']['gpu_memory'] = float(parsed_args.gpu_memory)
 
         if parsed_args.local:
             create_info['server'] = 'local'
@@ -134,7 +136,7 @@ class RunCommand:
         print("Job %s/%s created." % (job.model_name, job.job_id))
 
         if parsed_args.local:
-            start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume)
+            start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume, gpu_devices=parsed_args.gpu_device)
         else:
             if parsed_args.volume:
                 print("Can not use volume with jobs on the cluster. Use datasets instead.")

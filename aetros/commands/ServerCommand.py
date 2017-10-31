@@ -127,7 +127,7 @@ class ServerCommand:
         parser.add_argument('--max-cpus',
             help="How many cores are available. Per default all available CPU cores.")
         parser.add_argument('--max-gpus',
-            help="How many GPUs are available. Comma separate list of device ids. Starting at 0. "
+            help="How many GPUs are available. Comma separate list of device ids (pciBusId)."
                  "Per default all available GPU cards.")
 
         parser.add_argument('--no-gpus', action='store_true', help="Disable all GPUs")
@@ -156,21 +156,21 @@ class ServerCommand:
         self.resources_limit['host_execution'] = parsed_args.allow_host_execution
 
         if parsed_args.max_gpus or parsed_args.no_gpus:
-            gpus = 0
+            gpus = {}
             try:
-                gpus = aetros.cuda_gpu.get_installed_devices()
+                gpus = aetros.cuda_gpu.get_ordered_devices()
             except:
                 pass
 
             if parsed_args.max_gpus:
                 for i in parsed_args.max_gpus.split(','):
-                    if i > gpus or i < 0:
-                        raise Exception('--resources-max-gpus ' + str(i) + ' not available on the system. Max ' + str(gpus)+ ' GPUs detected.')
+                    if i not in gpus:
+                        raise Exception('--max-gpus ' + str(i) + ' not available on the system. GPUS ' + str([i for i in six.iterkeys(gpus)])+ ' detected.')
 
                     self.disabled_gpus.append(i)
 
             elif parsed_args.no_gpus:
-                for i in range(0, gpus):
+                for i in six.iterkeys(gpus):
                     self.disabled_gpus.append(i)
 
         if parsed_args.show_stdout:
@@ -318,15 +318,15 @@ class ServerCommand:
 
         # make sure we started all ids from "jobs".
         # if we have still active jobs not in jobs_ids, stop them
-        for full_id, job in six.iteritems(jobs):
-            started_id = full_id + '-' + str(job['time'])
+        for full_id, resources_assigned in six.iteritems(jobs):
+            started_id = full_id + '-' + str(resources_assigned['time'])
 
             if started_id in self.started_jobs:
                 # we got the same job id + timestamp twice, just ignore it
                 continue
 
             self.started_jobs[started_id] = True
-            self.execute_job(full_id)
+            self.execute_job(full_id, resources_assigned)
 
         self.lock.release()
 
@@ -381,9 +381,11 @@ class ServerCommand:
 
         self.lock.release()
 
-    def execute_job(self, full_id):
+    def execute_job(self, full_id, resources_assigned):
         self.logger.info("Execute job %s ..." % (full_id, ))
         self.executed_jobs += 1
+
+
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
@@ -392,7 +394,12 @@ class ServerCommand:
             if self.ssh_key_private is not None:
                 my_env['AETROS_SSH_KEY_BASE64'] = self.ssh_key_private
 
-            args = [sys.executable, '-m', 'aetros', 'start', full_id]
+            args = [sys.executable, '-m', 'aetros', 'start']
+            if resources_assigned['gpus']:
+                for gpu_id in resources_assigned['gpus']:
+                    args += ['--gpu-device', gpu_id]
+
+            args += [full_id]
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': full_id})
 
@@ -431,14 +438,13 @@ class ServerCommand:
         values['cpu'] = [cpu['hz_advertised_raw'][0], cpu['count']]
         values['nets'] = {}
         values['disks'] = {}
-        values['gpus'] = []
+        values['gpus'] = {}
         values['boot_time'] = psutil.boot_time()
 
         try:
-            for i in range(0, aetros.cuda_gpu.get_installed_devices()):
-                gpu = aetros.cuda_gpu.get_device_properties(i)
-                gpu['available'] = i not in self.disabled_gpus
-                values['gpus'].append(gpu)
+            for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
+                gpu['available'] = gpu_id not in self.disabled_gpus
+                values['gpus'][gpu_id] = gpu
         except:
             pass
 
@@ -478,11 +484,11 @@ class ServerCommand:
         values['jobs'] = {'running': len(self.job_processes)}
         values['nets'] = {}
         values['processes'] = []
-        values['gpus'] = []
+        values['gpus'] = {}
 
         try:
-            for i in range(0, aetros.cuda_gpu.get_installed_devices()):
-                values['gpus'].append(aetros.cuda_gpu.get_memory(i))
+            for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
+                values['gpus'][gpu_id] = aetros.cuda_gpu.get_memory(gpu['device'])
         except:
             pass
 
