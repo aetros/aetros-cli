@@ -1586,7 +1586,8 @@ class JobBackend:
             progress = 0
 
         if progress >= 2:
-            self.logger.error('You can not restart an existing job that was already running. You need to restart the job through AETROS Trainer.')
+            self.logger.error('You can not restart an existing job that was already running. You need to restart the '
+                              'job through AETROS Trainer. progress='+str(progress))
             sys.exit(1)
 
         self.load_job_from_ref()

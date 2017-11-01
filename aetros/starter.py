@@ -54,7 +54,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         env = {}
 
     if 'PYTHONPATH' not in env:
-        env['PYTHONPATH'] = ''
+        env['PYTHONPATH'] = os.getenv('PYTHONPATH')
 
     env['PYTHONPATH'] += ':' + os.getcwd()
     env['AETROS_MODEL_NAME'] = job_backend.model_name
@@ -75,7 +75,11 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     image = job_config['image']
 
     if job_backend.is_simple_model():
-        command = ['python', '-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
+        if image:
+            command = ['python']
+        else:
+            command = [sys.executable]
+        command += ['-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
 
     # replace {{batch_size}} parameters
     if isinstance(job_config['parameters'], dict):
