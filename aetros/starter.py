@@ -54,7 +54,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         env = {}
 
     if 'PYTHONPATH' not in env:
-        env['PYTHONPATH'] = os.getenv('PYTHONPATH')
+        env['PYTHONPATH'] = os.getenv('PYTHONPATH') or ''
 
     env['PYTHONPATH'] += ':' + os.getcwd()
     env['AETROS_MODEL_NAME'] = job_backend.model_name
