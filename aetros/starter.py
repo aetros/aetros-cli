@@ -202,9 +202,8 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
 
         if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
             #only supported on linux
-            docker_command += ['--device', '/dev/nvidiactl', '--device', '/dev/nvidia-uvm']
-            for gpu_id in gpu_devices:
-                docker_command += ['--device', '/dev/nvidia'+gpu_id]
+            docker_command += ['--runtime', 'nvidia']
+            docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
 
         docker_command.append(image)
 
