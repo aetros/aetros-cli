@@ -59,6 +59,7 @@ def main(args=None):
     from aetros.commands.PredictCommand import PredictCommand
     from aetros.commands.PredictionServerCommand import PredictionServerCommand
     from aetros.commands.StartCommand import StartCommand
+    from aetros.commands.StartSimpleCommand import StartSimpleCommand
     from aetros.commands.RunCommand import RunCommand
     from aetros.commands.AddCommand import AddCommand
     from aetros.commands.InitCommand import InitCommand
@@ -67,6 +68,7 @@ def main(args=None):
 
     commands_dict = {
         'start': StartCommand,
+        'start-simple': StartSimpleCommand,
         'predict': PredictCommand,
         'prediction-server': PredictionServerCommand,
         'server': ServerCommand,

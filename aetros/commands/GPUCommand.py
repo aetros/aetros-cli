@@ -14,7 +14,6 @@ class GPUCommand:
         self.active = True
 
     def main(self, args):
-        import aetros.const
         import aetros.cuda_gpu
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,

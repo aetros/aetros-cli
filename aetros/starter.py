@@ -43,10 +43,7 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
     job_backend.restart(id)
     job_backend.start(start_time=start_time)
 
-    if job_backend.is_simple_model():
-        start_keras(logger, job_backend)
-    else:
-        start_custom(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
+    start_custom(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
 
 
 def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
@@ -71,18 +68,20 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
 
     job_config = job_backend.job['config']
 
-
     if 'command' not in job_config :
         job_backend.fail('No "command" given. See Configuration section in the documentation.')
 
     command = job_config['command']
     image = job_config['image']
 
+    if job_backend.is_simple_model():
+        command = ['python', '-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
+
     # replace {{batch_size}} parameters
     if isinstance(job_config['parameters'], dict):
         for key, value in six.iteritems(flatten_parameters(job_config['parameters'])):
             if isinstance(command, list):
-                for pos in command:
+                for pos, v in enumerate(command):
                     if isinstance(command[pos], six.string_types):
                         command[pos] = command[pos].replace('{{' + key + '}}', json.dumps(value))
             else:
@@ -142,10 +141,10 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
 
     docker_command = None
     if image is not None:
-        # if not docker_image_built:
-        #     logger.info("Pull docker image: $ " + image)
-        #     execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
-        #         stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        if not docker_image_built:
+            logger.info("Pull docker image: $ " + image)
+            execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
         inspections = yaml.safe_load(inspections.decode('utf-8'))
@@ -164,9 +163,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         # make sure old container is removed
         subprocess.Popen([home_config['docker'], 'rm', job_backend.job_id], stderr=subprocess.PIPE).wait()
 
-
-        # -ti is necessary to let the command receive SIGINT
-        docker_command = [home_config['docker'], 'run', '-ti', '--name', job_backend.job_id]
+        docker_command = [home_config['docker'], 'run', '-t', '--name', job_backend.job_id]
         docker_command += home_config['docker_options']
 
         env['AETROS_GIT_WORK_DIR'] = '/job'
@@ -280,7 +277,7 @@ def execute_command_stdout(command, input=None):
     if p.returncode:
         sys.stderr.write(out)
         sys.stderr.write(err)
-        raise Exception('Could not execute command: ' + command)
+        raise Exception('Could not execute command: ' + str(command))
 
     return out
 

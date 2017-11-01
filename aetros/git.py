@@ -115,9 +115,7 @@ class Git:
         try:
             response = aetros.api.request('user-git')
             if response:
-                print(response)
                 user = yaml.safe_load(response)
-                print(user)
 
                 self.git_name = user['name']
                 self.git_email = user['email']
