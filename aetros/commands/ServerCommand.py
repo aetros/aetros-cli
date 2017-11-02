@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
-import json
 import os
 import sys
 import time
@@ -18,7 +17,7 @@ import six
 from cryptography.hazmat.primitives import serialization
 from requests.auth import HTTPBasicAuth
 
-from aetros.api import raise_response_exception
+import aetros.api
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 
@@ -197,7 +196,6 @@ class ServerCommand:
             self.ssh_key_public = 'rsa ' + ssh_key.get_base64() + ' ' + parsed_args.name
 
             self.logger.info('Register SSH key at ' + self.config['host'])
-            url = 'https://' + self.config['host'] + '/api/server/ssh-key'
 
             data = {
                 'name': parsed_args.name,
@@ -205,33 +203,20 @@ class ServerCommand:
                 'key': self.ssh_key_public,
             }
 
-            auth = None
-            if 'auth_user' in self.config:
-                auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
+            response = aetros.api.http_request('server/ssh-key', json_body=data, method='post')
 
-            response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
-
-            if response.status_code != 200:
-                raise_response_exception('Could not register SSH key in AETROS Trainer.', response)
-
-            ssh_key_registered = response.content == 'true'
+            ssh_key_registered = response == True
 
         def delete_ssh_key():
+            self.logger.info('Delete SSH key at ' + self.config['host'])
+
             data = {
                 'secure_key': parsed_args.generate_ssh_key,
                 'key': self.ssh_key_public,
             }
-            self.logger.info('Delete SSH key at ' + self.config['host'])
-            url = 'https://' + self.config['host'] + '/api/server/ssh-key/delete'
-
-            auth = None
-            if 'auth_user' in self.config:
-                auth = HTTPBasicAuth(self.config['auth_user'], self.config['auth_pw'])
-
-            response = requests.post(url, data, auth=auth, verify=self.config['ssl_verify'], headers={'Accept': 'application/json'})
-
-            if response.status_code != 200:
-                raise_response_exception('Could not delete SSH key in AETROS Trainer.', response)
+            response = aetros.api.http_request('server/ssh-key/delete', json_body=data)
+            if not response:
+                self.logger.error('Could not delete SSH key in AETROS Trainer.')
 
         if parsed_args.generate_ssh_key and ssh_key_registered:
             import atexit

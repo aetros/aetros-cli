@@ -17,7 +17,6 @@ import six
 import PIL.Image
 import sys
 import msgpack
-from ruamel import yaml
 
 from aetros.const import JOB_STATUS
 from aetros.git import Git
@@ -214,7 +213,7 @@ class BackendClient:
             if self.connected or not self.online:
                 return True
 
-            self.ssh_stream = create_ssh_stream(self.config)
+            self.ssh_stream = create_ssh_stream(self.config, exit_on_failure=False)
             self.ssh_stream_stdin, self.ssh_stream_stdout, stderr = self.ssh_stream.exec_command('stream')
 
             self.logger.debug('Open ssh')
@@ -1569,7 +1568,7 @@ class JobBackend:
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
         with open(self.git.work_tree + '/aetros/job.json') as f:
-            self.job = yaml.safe_load(f.read())
+            self.job = json.loads(f.read())
 
         if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')

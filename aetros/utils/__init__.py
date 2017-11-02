@@ -51,7 +51,7 @@ def unpack_full_job_id(full_id):
     return [owner, model, id]
 
 
-def create_ssh_stream(config):
+def create_ssh_stream(config, exit_on_failure=True):
     ssh_stream = paramiko.client.SSHClient()
     # ssh_stream.load_system_host_keys()
     ssh_stream.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -63,7 +63,15 @@ def create_ssh_stream(config):
     elif config['ssh_key']:
         key = paramiko.RSAKey.from_private_key(open(os.path.expanduser(config['ssh_key']), 'r'))
 
-    ssh_stream.connect(config['host'], username='git', compress=True, pkey=key)
+    try:
+        ssh_stream.connect(config['host'], username='git', compress=True, pkey=key)
+    except paramiko.ssh_exception.AuthenticationException as e:
+        if exit_on_failure:
+            print("Fatal: AETROS authentication failed. Did you setup SSH keys correctly? "
+                  "See https://aetros.com/docu/trainer/authentication")
+            sys.exit(1)
+        raise
+
     return ssh_stream
 
 

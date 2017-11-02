@@ -2,11 +2,6 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 
 import time
-
-from ruamel import yaml
-
-start_time = time.time()
-
 import json
 import os
 import subprocess
@@ -14,10 +9,11 @@ import sys
 import six
 
 from aetros.logger import GeneralLogger
-from aetros.utils import unpack_full_job_id, read_config, read_home_config, flatten_parameters, stop_time
+from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters
 from .backend import JobBackend
 from .Trainer import Trainer
 
+start_time = time.time()
 
 class GitCommandException(Exception):
     cmd = None
@@ -151,7 +147,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
                 stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
-        inspections = yaml.safe_load(inspections.decode('utf-8'))
+        inspections = json.loads(inspections.decode('utf-8'))
         if inspections:
             inspection = inspections[0]
             with job_backend.git.batch_commit('Docker image'):

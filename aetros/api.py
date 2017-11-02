@@ -1,7 +1,8 @@
-import subprocess
-
+import requests
 import six
-from ruamel import yaml
+import sys
+
+from requests.auth import HTTPBasicAuth
 from six.moves.urllib.parse import urlencode
 import json
 
@@ -22,6 +23,38 @@ class ApiConnectionError(ApiError):
     pass
 
 
+def http_request(path, query='', json_body=None, method='get', config=None):
+    config = read_home_config() if config is None else config
+
+    if query is not None:
+        if isinstance(query, dict):
+            query = urlencode(query)
+
+        if '?' in path:
+            path += '&' + query
+        else:
+            path += '?' + query
+
+    url = 'https://' + config['host'] + '/api/' + path
+    auth = None
+    if 'auth_user' in config:
+        auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])
+
+    if json_body is not None and method == 'get':
+        method = 'post'
+
+    response = requests.request(
+        method, url, data=json_body,
+        auth=auth, verify=config['ssl_verify'],
+        headers={'Accept': 'application/json'}
+    )
+
+    if response.status_code >= 400:
+        raise_response_exception('Failed request ' + path, response)
+
+    return parse_json(response.content)
+
+
 def request(path, query=None, body=None, method='get', config=None):
     query = query or {}
 
@@ -39,7 +72,7 @@ def request(path, query=None, body=None, method='get', config=None):
         method = 'post'
 
     ssh_stream = create_ssh_stream(config)
-    stdin, stdout, stderr = ssh_stream.exec_command('api ' + method + ' ' + path)
+    stdin, stdout, stderr = ssh_stream.exec_command('api ' + method + ' ' + json.dumps(path))
 
     if body is not None:
         input = six.b(json.dumps(body))
@@ -49,12 +82,7 @@ def request(path, query=None, body=None, method='get', config=None):
     stderr = drain_stream(stderr)
 
     if len(stderr) > 0:
-        if six.b('Connection ') in stderr:
-            raise ApiConnectionError('Could not request api: ' + path, stderr)
-
-        if six.b('Permission denied') in stderr:
-            raise ApiConnectionError('Could not request API due to permission denied. '
-                                     'Did you setup authentication properly?', stderr)
+        stderr = stderr.decode('utf-8')
 
         raise ApiError('Could not request api: ' + path, stderr)
 
@@ -68,7 +96,7 @@ def raise_response_exception(message, response):
 
     if isinstance(content, six.string_types):
         try:
-            content_parsed = yaml.safe_load(content)
+            content_parsed = json.loads(content)
             if 'error' in content_parsed:
                 error = content_parsed['error']
             if 'message' in content_parsed:
@@ -81,24 +109,10 @@ def raise_response_exception(message, response):
     raise ApiError(message, reason)
 
 
-def read(obj):
-    r = b''
-    while True:
-        buf = obj.read()
-        if buf == b'':
-            break
-        r += buf
-
-    return r.decode("utf-8")
-
-
 def parse_json(content):
-    try:
-        a = yaml.safe_load(content)
-    except:
-        raise Exception('Could not parse api request. Content: ' + str(content))
+    a = json.loads(content)
 
-    if 'error' in a:
+    if isinstance(a, dict) and 'error' in a:
         raise Exception('API request failed %s: %s.' % (a['error'], a['message']))
 
     return a
