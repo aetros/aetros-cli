@@ -232,7 +232,7 @@ class BackendClient:
 
                 try:
                     self.ssh_stream.close()
-                except: pass
+                except Exception: pass
 
                 self.connection_tries += 1
                 if not self.was_connected_once and self.go_offline_on_first_failed_attempt:
@@ -284,7 +284,7 @@ class BackendClient:
         try:
             if self.ssh_stream:
                 self.ssh_stream.close()
-        except: pass
+        except Exception: pass
 
         if self.expect_close:
             # we expected the close, so ignore the error
@@ -410,7 +410,7 @@ class BackendClient:
                 time.sleep(0.1)
                 if i % 50 == 0:
                     self.logger.warning("We are still waiting for connection closing on server side.")
-        except: pass
+        except Exception: pass
 
         self.online = False
 
@@ -421,7 +421,7 @@ class BackendClient:
         if self.ssh_stream:
             try:
                 self.ssh_stream.close()
-            except: pass
+            except Exception: pass
 
         if self.online:
             self.event_listener.fire('close')
@@ -912,8 +912,10 @@ class JobBackend:
 
         self.stop_requested = True
 
-        # we do not do any action yet, since we have a shutdown listener attached
+        # we do not do any further action yet, since we have a shutdown listener attached
         # which will be executed once the script _really_ ends, after a exception for example has been printed
+        # and all other signal handler have been called.
+        # signal.default_int_handler()
 
     def external_aborted(self, params):
         """

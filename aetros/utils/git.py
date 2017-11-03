@@ -9,7 +9,7 @@ def silent_execute(args):
     try:
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             return subprocess.check_output(args, stderr=DEVNULL).decode("utf-8").strip()
-    except:
+    except Exception:
         return None
 
 

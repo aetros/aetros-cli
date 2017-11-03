@@ -162,7 +162,7 @@ class JobModel:
         else:
             try:
                 image = Image.open(local_path)
-            except:
+            except Exception:
                 print(("Could not open %s" % (local_path,)))
                 return []
 
@@ -295,7 +295,7 @@ class JobModel:
                         else:
                             datasets[dataset['id']] = data_provider.get_data()
 
-                    except:
+                    except Exception:
                         trainer.logger.error('Could not import dataset code: ' + name + ' in ' + os.path.abspath('./aetros/dataset/'))
                         raise
                     finally:

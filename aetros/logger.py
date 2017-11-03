@@ -16,7 +16,7 @@ def drain_stream(stream, decode='utf-8'):
             if buf == six.b(''):
                 break
             content += buf
-        except:
+        except Exception:
             break
 
     if decode:
@@ -80,7 +80,7 @@ class GeneralLogger(object):
                 try:
                     # read() needs to block
                     # buf = os.read(buffer.fileno(), 4096)
-                    buf = buffer.read(16)
+                    buf = buffer.read(1)
                     if buf == six.b(''):
                         break
 
@@ -139,7 +139,6 @@ class GeneralLogger(object):
                 if not self.last_timer:
                     self.last_timer = Timer(1.0, self.send_buffer)
                     self.last_timer.start()
-
         except Exception as e:
             sys.__stderr__.write(str(e))
         finally:

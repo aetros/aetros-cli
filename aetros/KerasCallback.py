@@ -248,7 +248,7 @@ class KerasCallback(Callback):
 
         try:
             self.model.save_weights(self.filepath_latest, overwrite=True)
-        except:
+        except Exception:
             # sometimes hangs with: IOError: Unable to create file (Unable to open file: name = ...
             # without any obvious reason.
             pass
@@ -526,8 +526,7 @@ class KerasCallback(Callback):
                     for sample_idx, predicted_class in enumerate(predicted_classes):
                         expected_class = expected_classes[sample_idx]
                         matrix[expected_class, predicted_class] += 1
-                except:
-                    pass
+                except Exception: pass
 
         else:
             batch_size = self.current['batch_size'] if 'batch_size' in self.current else 16
@@ -539,8 +538,7 @@ class KerasCallback(Callback):
                 for sample_idx, predicted_class in enumerate(predicted_classes):
                     expected_class = expected_classes[sample_idx]
                     matrix[expected_class, predicted_class] += 1
-            except:
-                pass
+            except Exception: pass
 
         confusion_matrix[first_output_layer.name] = matrix.tolist()
 
@@ -561,7 +559,7 @@ class KerasCallback(Callback):
                 data = data.reshape((data.shape[0], data.shape[1], 1))
 
             image = array_to_img(data)
-        except:
+        except Exception:
             return None
 
         # image = image.resize((128, 128))

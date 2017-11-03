@@ -83,7 +83,7 @@ def get_installed_devices():
         libcudart.cudaGetDeviceCount(ctypes.byref(device_count))
 
         return device_count.value
-    except:
+    except Exception:
         return 0
 
 
@@ -100,7 +100,7 @@ def get_memory(device):
             return None
 
         return free.value, total.value
-    except:
+    except Exception:
         return None
 
 
@@ -126,7 +126,7 @@ def get_device_properties(device, all=False):
         rc = libcudart.cudaGetDeviceProperties(ctypes.byref(properties), device)
         if rc != 0:
             return None
-    except:
+    except Exception:
         return None
 
     if all:

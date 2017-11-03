@@ -56,8 +56,10 @@ class StartCommand:
         if parsed_args.branch:
             job_config['sourceGitTree'] = parsed_args.branch
 
-        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
+        if 'resources' not in job_config:
             job_config['resources'] = {}
+
+        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
             if parsed_args.cpu: job_config['resources']['cpu'] = float(parsed_args.cpu)
             if parsed_args.memory: job_config['resources']['memory'] = float(parsed_args.memory)
             if parsed_args.gpu: job_config['resources']['gpu'] = float(parsed_args.gpu)

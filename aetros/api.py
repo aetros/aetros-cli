@@ -29,7 +29,7 @@ def http_request(path, query='', json_body=None, method='get', config=None):
     try:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except: pass
+    except Exception: pass
 
     if query is not None:
         if isinstance(query, dict):
@@ -108,8 +108,7 @@ def raise_response_exception(message, response):
                 error = content_parsed['error']
             if 'message' in content_parsed:
                 error_message = content_parsed['message']
-        except:
-            pass
+        except Exception: pass
 
     reason = 'StatusCode='+str(response.status_code)+', error: ' + str(error)+ ', message: ' + str(error_message)
 

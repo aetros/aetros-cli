@@ -207,21 +207,14 @@ class Git:
             )
 
             stdoutdata, stderrdata = p.communicate(inputdata)
-
         except KeyboardInterrupt:
-            try:
-                if p is not None:
-                    stdoutdata = p.stdout.read()
-                    stderrdata = p.stderr.read()
-            except:
-                pass
-            interrupted = True
+            raise
         finally:
             self.command_lock.release()
 
         try:
             stderrdata = stderrdata.decode('utf-8')
-        except: pass
+        except Exception: pass
 
         self.logger.debug("Git command: " + (' '.join(command)))
 
@@ -302,7 +295,7 @@ class Git:
 
         try:
             self.command_exec(['fetch', '-f', '-n', 'origin', self.ref_head+':'+self.ref_head])
-        except:
+        except Exception:
             self.logger.error("Could not load job information for " + job_id + '. You need to be online to start pre-configured jobs.')
             raise
 
@@ -312,7 +305,7 @@ class Git:
         try:
             self.command_exec(['rev-parse', 'refs/aetros/job/' + job_id])[0].decode('utf-8').strip()
             return True
-        except:
+        except Exception:
             return False
 
     def read_job(self, job_id, checkout=False):
@@ -727,7 +720,7 @@ class Git:
             out, code, err = self.command_exec(['cat-file', '-p', self.ref_head+':'+path])
 
             return code == 0
-        except:
+        except Exception:
             return False
 
     def contents(self, path):
@@ -738,7 +731,7 @@ class Git:
             out, code, err = self.command_exec(['cat-file', '-p', self.ref_head+':'+path])
             if not code:
                 return out.decode('utf-8')
-        except:
+        except Exception:
             pass
 
         return None

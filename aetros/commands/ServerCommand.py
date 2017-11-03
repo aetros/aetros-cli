@@ -158,8 +158,7 @@ class ServerCommand:
             gpus = {}
             try:
                 gpus = aetros.cuda_gpu.get_ordered_devices()
-            except:
-                pass
+            except Exception: pass
 
             if parsed_args.max_gpus:
                 for i in parsed_args.max_gpus.split(','):
@@ -428,14 +427,13 @@ class ServerCommand:
             for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
                 gpu['available'] = gpu_id not in self.disabled_gpus
                 values['gpus'][gpu_id] = gpu
-        except:
-            pass
+        except Exception: pass
 
         for disk in psutil.disk_partitions():
             try:
                 name = self.get_disk_name(disk[1])
                 values['disks'][name] = psutil.disk_usage(disk[1]).total
-            except:
+            except Exception:
                 # suppress Operation not permitted
                 pass
 
@@ -444,7 +442,7 @@ class ServerCommand:
                 if 0 != id.find('lo') and net.isup:
                     self.nets.append(id)
                     values['nets'][id] = net.speed or 1000
-        except:
+        except Exception:
             # suppress Operation not permitted
             pass
 
@@ -472,15 +470,13 @@ class ServerCommand:
         try:
             for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
                 values['gpus'][gpu_id] = aetros.cuda_gpu.get_memory(gpu['device'])
-        except:
-            pass
+        except Exception: pass
 
         for disk in psutil.disk_partitions():
             try:
                 name = self.get_disk_name(disk[1])
                 values['disks'][name] = psutil.disk_usage(disk[1]).used
-            except:
-                pass
+            except Exception: pass
 
         net_stats = psutil.net_io_counters(pernic=True)
         for id in self.nets:

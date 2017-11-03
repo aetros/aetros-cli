@@ -120,7 +120,7 @@ def read_home_config(path = None, logger=None):
         try:
             logger and logger.debug('Home config loaded from ' + os.path.realpath(path))
             custom_config = yaml.safe_load(f)
-        except:
+        except Exception:
             raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
 
         if custom_config is None:

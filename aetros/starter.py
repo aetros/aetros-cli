@@ -191,11 +191,16 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         if 'resources' in job_backend.job:
             assigned_resources = job_backend.job['resources']
 
+            cpus = 1
             if 'cpu' in assigned_resources and assigned_resources['cpu']:
-                docker_command += ['--cpus', assigned_resources['cpu']]
+                cpus = assigned_resources['cpu']
+            docker_command += ['--cpus', str(cpus)]
 
+            memory = 1
             if 'memory' in assigned_resources and assigned_resources['memory']:
-                docker_command += ['--memory', assigned_resources['memory'] * 1024 * 1024 * 1024]
+                memory = assigned_resources['memory']
+
+            docker_command += ['--memory', str(memory * 1024 * 1024 * 1024)]
 
         if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
             #only supported on linux
@@ -250,16 +255,18 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         # instead of to the group), so we assume it received it. A second signal would force the exit.
         sys.__stdout__.write("Aborted\n")
 
-        if p and p.poll() is None:
-            p.wait()
-            if wait_stdout: wait_stdout()
-            if wait_stderr: wait_stderr()
-
-        if docker_command:
-            # in docker run does not proxy INT signals to the docker-engine,
-            # so we need to do it on our own directly.
-            subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id]).wait()
-            pass
+        try:
+            if p and p.poll() is None:
+                p.wait()
+                if wait_stdout: wait_stdout()
+                if wait_stderr: wait_stderr()
+        finally:
+            if docker_command:
+                # in docker run does not proxy INT signals to the docker-engine,
+                # so we need to do it on our own directly.
+                subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id]).wait()
+                time.sleep(1)
+                subprocess.Popen([home_config['docker'], 'stop', job_backend.job_id]).wait()
 
         # check if there was a JobBackend in the command
         # if so, we do not add any further stuff to the git
@@ -334,13 +341,9 @@ def start_keras(logger, job_backend):
     trainer = Trainer(job_backend)
     keras_logger = KerasCallback(job_backend, job_backend.logger)
 
-    try:
-        job_backend.progress(0, job_backend.job['config']['epochs'])
+    job_backend.progress(0, job_backend.job['config']['epochs'])
 
-        logger.info("Start training")
-        keras_model_utils.job_start(job_backend, trainer, keras_logger)
+    logger.info("Start training")
+    keras_model_utils.job_start(job_backend, trainer, keras_logger)
 
-        job_backend.done()
-    except KeyboardInterrupt:
-        logger.warning("Aborted.")
-        sys.exit(1)
+    job_backend.done()
