@@ -80,7 +80,7 @@ class GeneralLogger(object):
                 try:
                     # read() needs to block
                     # buf = os.read(buffer.fileno(), 4096)
-                    buf = buffer.read(1)
+                    buf = buffer.read(16)
                     if buf == six.b(''):
                         break
 

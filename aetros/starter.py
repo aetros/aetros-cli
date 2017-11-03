@@ -58,8 +58,9 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     env['AETROS_ATTY'] = '1'
     env['AETROS_GIT'] = job_backend.git.get_base_command()
 
-    print(home_config['ssh_key'])
-    if not os.getenv('AETROS_SSH_KEY_BASE64') and home_config['ssh_key']:
+    if os.getenv('AETROS_SSH_KEY_BASE64'):
+        env['AETROS_SSH_KEY_BASE64'] = os.getenv('AETROS_SSH_KEY_BASE64')
+    elif home_config['ssh_key']:
         env['AETROS_SSH_KEY_BASE64'] = open(os.path.expanduser(home_config['ssh_key']), 'r').read().decode('utf-8')
 
     job_config = job_backend.job['config']
@@ -200,6 +201,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
             #only supported on linux
             docker_command += ['--runtime', 'nvidia']
             docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
+            docker_command += ['--device', '/dev/nvidia1']
 
         docker_command.append(image)
 

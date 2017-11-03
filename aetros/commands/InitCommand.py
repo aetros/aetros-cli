@@ -24,10 +24,13 @@ class InitCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
             prog=aetros.const.__prog__ + ' run')
         parser.add_argument('name', nargs='?', help="Model name")
-        parser.add_argument('--private', action='store_true', help="Make the model private")
+        parser.add_argument('--private', action='store_true', help="Make the model private. Exmaple: aetros init my-model")
 
         home_config = read_home_config()
         parsed_args = parser.parse_args(args)
+        if not parsed_args.name:
+            parser.print_help()
+            sys.exit(1)
 
         if os.path.exists('aetros.yml'):
             config = yaml.safe_load(open('aetros.yml', 'r'))

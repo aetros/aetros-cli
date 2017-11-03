@@ -65,11 +65,13 @@ def create_ssh_stream(config, exit_on_failure=True):
 
     try:
         ssh_stream.connect(config['host'], username='git', compress=True, pkey=key)
-    except paramiko.ssh_exception.AuthenticationException as e:
-        if exit_on_failure:
-            print("Fatal: AETROS authentication failed. Did you setup SSH keys correctly? "
-                  "See https://aetros.com/docu/trainer/authentication")
-            sys.exit(1)
+    except Exception as e:
+        if isinstance(e, paramiko.ssh_exception.AuthenticationException) or \
+            isinstance(e, paramiko.ssh_exception.SSHException):
+            if exit_on_failure:
+                print("Fatal: AETROS authentication failed. Did you setup SSH keys correctly? "
+                      "See https://aetros.com/docu/trainer/authentication")
+                sys.exit(1)
         raise
 
     return ssh_stream

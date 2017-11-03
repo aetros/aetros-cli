@@ -370,8 +370,6 @@ class ServerCommand:
         self.logger.info("Execute job %s ..." % (full_id, ))
         self.executed_jobs += 1
 
-
-
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             my_env = os.environ.copy()
             my_env['AETROS_ATTY'] = '1'

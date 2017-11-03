@@ -26,6 +26,11 @@ class ApiConnectionError(ApiError):
 def http_request(path, query='', json_body=None, method='get', config=None):
     config = read_home_config() if config is None else config
 
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except: pass
+
     if query is not None:
         if isinstance(query, dict):
             query = urlencode(query)
@@ -52,7 +57,7 @@ def http_request(path, query='', json_body=None, method='get', config=None):
     if response.status_code >= 400:
         raise_response_exception('Failed request ' + path, response)
 
-    return parse_json(response.content)
+    return parse_json(response.content.decode('utf-8'))
 
 
 def request(path, query=None, body=None, method='get', config=None):
@@ -77,6 +82,8 @@ def request(path, query=None, body=None, method='get', config=None):
     if body is not None:
         input = six.b(json.dumps(body))
         stdin.write(input)
+        stdin.flush()
+        stdin.channel.shutdown_write()
 
     stdout = drain_stream(stdout)
     stderr = drain_stream(stderr)
@@ -139,6 +146,5 @@ def create_job(model_name, local=False, parameters=None, dataset_id=None, config
 
 
 def create_model(model_name, private = False):
-    content = request('model/create', {'name': model_name, 'private': private}, None, 'put')
-
+    content = request('model/create', None, {'name': model_name, 'private': private}, 'put')
     return parse_json(content)

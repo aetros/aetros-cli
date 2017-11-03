@@ -66,7 +66,7 @@ class RegisterCommand:
             time.sleep(3)
             response = api.http_request('machine-token/authorized?id=' + token, method='post')
             if response['status'] == 'confirmed':
-                print(response['username'] + " confirmed the public key.")
+                print(response['username'] + ' confirmed the public key. Test with "aetros id"')
                 private_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa')
                 public_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa.pub')
 
@@ -79,6 +79,9 @@ class RegisterCommand:
                 with open(public_key_path, 'w') as f:
                     f.write(ssh_key_public)
 
+                os.chmod(private_key_path, 0o600)
+                os.chmod(public_key_path, 0o600)
+
                 with open(os.path.expanduser('~/aetros.yml'), 'r+') as f:
                     config = f.read()
                     config = config.replace('ssh_key', '#ssh_key')
@@ -86,6 +89,7 @@ class RegisterCommand:
                     f.seek(0)
                     f.write(config)
 
+                print("Private key stored at " + private_key_path + "\n")
                 sys.exit(0)
             if response['status'] == 'expired':
                 print("Token expired.")
