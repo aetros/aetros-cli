@@ -57,20 +57,24 @@ def create_ssh_stream(config, exit_on_failure=True):
     ssh_stream.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     key = None
+    key_filename = get_ssh_key_for_host(config['host'])
 
     if config['ssh_key_base64']:
+        key_filename = None
         key = paramiko.RSAKey.from_private_key(six.StringIO(config['ssh_key_base64']))
-    elif config['ssh_key']:
-        key = paramiko.RSAKey.from_private_key(open(os.path.expanduser(config['ssh_key']), 'r'))
+
+    if not key and not key_filename:
+        raise Exception("No SSH key configured for " + config['host'] + ". See https://aetros.com/docu/trainer/authentication")
+
+    key_description = key_filename if key_filename else 'from server'
 
     try:
-        ssh_stream.connect(config['host'], username='git', compress=True, pkey=key)
+        ssh_stream.connect(config['host'], key_filename=key_filename, username='git', compress=True, pkey=key)
     except Exception as e:
-        if isinstance(e, paramiko.ssh_exception.AuthenticationException) or \
-            isinstance(e, paramiko.ssh_exception.SSHException):
+        if isinstance(e, paramiko.ssh_exception.AuthenticationException) or isinstance(e, paramiko.ssh_exception.SSHException):
             if exit_on_failure:
-                print("Fatal: AETROS authentication failed. Did you setup SSH keys correctly? "
-                      "See https://aetros.com/docu/trainer/authentication")
+                print("Fatal: AETROS authentication against "+config['host']+" failed using key "+key_description+": "+str(e)+
+                      ". Did you setup SSH keys correctly? See https://aetros.com/docu/trainer/authentication")
                 sys.exit(1)
         raise
 
@@ -89,8 +93,8 @@ def setup_git_ssh(config):
         ssh_key.close()
         ssh_command += ' -i '+ ssh_key.name
         os.chmod(ssh_key.name, 0o600)
-    elif config['ssh_key']:
-        ssh_command += ' -i '+ os.path.expanduser(config['ssh_key'])
+    # elif config['ssh_key']:
+    #     ssh_command += ' -i '+ os.path.expanduser(config['ssh_key'])
 
     ssh_script = tempfile.NamedTemporaryFile(delete=False, prefix='git_ssh_')
     ssh_script.write(six.b(ssh_command + ' "$@"'))
@@ -106,6 +110,24 @@ def setup_git_ssh(config):
             os.unlink(ssh_key.name)
 
     return delete
+
+
+def get_ssh_key_for_host(host):
+    ssh_config = paramiko.SSHConfig()
+    user_config_file = os.path.expanduser("~/.ssh/config")
+    if os.path.exists(user_config_file):
+        with open(user_config_file) as f:
+            ssh_config.parse(f)
+
+    user_config = ssh_config.lookup(host)
+
+    if 'identityfile' in user_config:
+        path = os.path.expanduser(user_config['identityfile'][0])
+        if not os.path.exists(path):
+            raise Exception("Specified IdentityFile "+path
+                            + " for " + host + " in ~/.ssh/config not existing anymore.")
+
+        return path
 
 
 def read_home_config(path = None, logger=None):
@@ -129,7 +151,6 @@ def read_home_config(path = None, logger=None):
     config = {
         'host': os.getenv('AETROS_HOST') or 'trainer.aetros.com',
         'storage_dir': os.getenv('AETROS_STORAGE_DIR') or '~/.aetros',
-        'ssh_key': '',
         'ssh_key_base64': os.getenv('AETROS_SSH_KEY_BASE64'),
         'image': None,
         'ssh': 'ssh',
@@ -463,7 +484,11 @@ def raise_sigint():
         os.kill(os.getpid(), signal.CTRL_C_EVENT)
     else:
         # unix.
-        os.killpg(os.getpgid(os.getpid()), signal.SIGINT)
+        pgid = os.getpgid(os.getpid())
+        if pgid == 1:
+            os.kill(os.getpid(), signal.SIGINT)
+        else:
+            os.killpg(os.getpgid(os.getpid()), signal.SIGINT)
 
 
 def prepend_signal_handler(sig, f):

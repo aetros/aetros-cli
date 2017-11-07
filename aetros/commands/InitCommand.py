@@ -24,7 +24,7 @@ class InitCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
             prog=aetros.const.__prog__ + ' run')
         parser.add_argument('name', nargs='?', help="Model name")
-        parser.add_argument('--private', action='store_true', help="Make the model private. Exmaple: aetros init my-model")
+        parser.add_argument('--private', action='store_true', help="Make the model private. Example: aetros init my-model --private")
 
         home_config = read_home_config()
         parsed_args = parser.parse_args(args)

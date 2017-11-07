@@ -540,7 +540,7 @@ class JobClient(BackendClient):
 
     def on_connect(self, reconnect=False):
         self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id, 'reconnect': reconnect, 'master': self.master})
-        self.logger.debug("Wait for one client registration")
+        self.logger.debug("Wait for job client registration")
         messages = self.wait_for_at_least_one_message()
         self.logger.debug("Got " + str(messages))
 
@@ -897,7 +897,7 @@ class JobBackend:
             # signal has already been sent or we force a shutdown.
             # handles the keystroke 2x CTRL+C to force an exit.
             self.stop_requested_force = True
-            self.logger.warning('Force stopped')
+            self.logger.warning('Force stopped: ' + str(sig))
 
             # just kill the process, we don't care about the results
             os._exit(1)
@@ -906,16 +906,18 @@ class JobBackend:
             # return
 
         if self.is_master_process():
-            self.logger.warning('Received SIGINT signal. Send again to force stop. Stopping ...')
+            self.logger.warning('Received '+str(sig)+' signal. Send again to force stop. Stopping ...')
         else:
-            sys.__stdout__.write("Got child sigint")
+            sys.__stdout__.write("Got child signal " + str(sig) +"\n")
+            sys.__stdout__.flush()
 
         self.stop_requested = True
 
-        # we do not do any further action yet, since we have a shutdown listener attached
-        # which will be executed once the script _really_ ends, after a exception for example has been printed
-        # and all other signal handler have been called.
-        # signal.default_int_handler()
+        # the default SIGINT handle in python is not always installed, so we can't rely on the
+        # KeyboardInterrupt exception to be thrown.
+        # thread.interrupt_main would call sigint again.
+        # the shutdown listener will do the rest like committing rest memory files into Git and closing connections.
+        sys.exit(0 if self.in_early_stop else 1)
 
     def external_aborted(self, params):
         """
@@ -949,7 +951,7 @@ class JobBackend:
 
     def early_stop(self):
         """
-        Stop when a limitation is reached (like maxEpoch, maxtime)
+        Stop when a limitation is reached (like maxEpoch, maxtime).
         """
         self.in_early_stop = True
 
@@ -1098,7 +1100,7 @@ class JobBackend:
 
         if epoch_limit and self.total_epochs > 0:
             if epoch >= self.total_epochs:
-                self.logger.warning("\nMaxEpochs of %d/%d reached" % (epoch, self.total_epochs))
+                self.logger.warning("Max epoch of "+str(self.total_epochs)+" reached")
                 self.early_stop()
                 return
 
@@ -1133,7 +1135,7 @@ class JobBackend:
         """
         return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
-    def start(self, start_time=None):
+    def start(self):
         if self.started:
             raise Exception('Job was already started.')
 
@@ -1177,7 +1179,7 @@ class JobBackend:
             # updates the job cache
             self.git.push()
 
-            self.start_monitoring(start_time)
+            self.start_monitoring()
 
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
@@ -1282,26 +1284,49 @@ class JobBackend:
 
     def on_shutdown(self):
         """
-        Shutdown routine. Sets the last progress (done, aborted, errored) and tries to send last logs and git commits.
+        Shutdown routine. Sets the last progress (done, aborted, failed) and tries to send last logs and git commits.
         Also makes sure the ssh connection is closed (thus, the job marked as offline).
 
         Is triggered by atexit.register().
         """
-        if self.stopped:
+        self.logger.warning("on_shutdown")
+        self.logger.warning(str(self.in_early_stop))
+
+        if self.stopped or self.ended:
             # make really sure, ssh connection closed
             self.client.close()
             return
 
-        if self.stop_requested:
-            if self.stop_requested_force:
-                self.fail('Force stopped.')
-            else:
-                self.abort()
+        if self.in_early_stop:
+            self.done()
             return
 
-        if not self.ended and hasattr(sys, 'last_value'):
+        if self.stop_requested:
+            # when SIGINT has been triggered
+            if self.stop_requested_force:
+                if not self.is_master_process():
+                    # if not master process, we just stop everything. status/progress is set by master
+                    self.stop(wait_for_client=True, force_exit=True)
+                else:
+                    # master process
+                    self.fail('Force stopped.', force_exit=True)
+            else:
+                if not self.is_master_process():
+                    # if not master process, we just stop everything. status/progress is set by master
+                    self.stop(wait_for_client=True)
+                else:
+                    # master process
+                    self.abort()
+
+            return
+
+        if hasattr(sys, 'last_value'):
             # sys.last_value contains a exception, when there was an uncaught one
             if isinstance(sys.last_value, KeyboardInterrupt):
+                # can only happen when KeyboardInterrupt has been raised manually
+                # since the one from the default sigint handler will never reach here
+                # since we catch the sigint signal and sys.exit() before the default sigint handler
+                # is able to raise KeyboardInterrupt
                 self.abort()
             else:
                 self.fail(type(sys.last_value).__name__ + ': ' + str(sys.last_value))
@@ -1342,8 +1367,7 @@ class JobBackend:
         self.logger.debug("stop: " + str(progress))
 
         self.send_std_buffer()
-        if last_exit_code is not None:
-            self.set_system_info('exit_code', last_exit_code)
+
 
         self.stopped = True
         self.ended = True
@@ -1370,9 +1394,23 @@ class JobBackend:
 
         self.client.close()
 
+        exit_code = last_exit_code or 0
+        if progress == JOB_STATUS.PROGRESS_STATUS_DONE:
+            exit_code = 0
+
+        if progress == JOB_STATUS.PROGRESS_STATUS_ABORTED:
+            exit_code = 1
+
+        if progress == JOB_STATUS.PROGRESS_STATUS_FAILED:
+            exit_code = 2
+
+        if self.is_master_process():
+            self.set_system_info('exit_code', exit_code)
+
         # everything stopped. Server has all blobs, so we add the last progress
         # and do last git push.
-        if progress is not None:
+        if self.is_master_process() and progress is not None:
+            # if not master process, the master process will set it
             self.git.commit_file('STOP', 'aetros/job/status/progress.json', json.dumps(progress, default=invalid_json_values))
 
         if not force_exit and was_online:
@@ -1390,11 +1428,10 @@ class JobBackend:
 
         self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
-        if force_exit and progress == JOB_STATUS.PROGRESS_STATUS_FAILED:
-            os._exit(1)
-
         if force_exit:
-            os._exit(0)
+            os._exit(exit_code)
+        else:
+            sys.exit(exit_code)
 
     def abort(self, wait_for_client_messages=True, force_exit=False):
         if not self.running:

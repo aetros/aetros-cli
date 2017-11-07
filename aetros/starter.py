@@ -9,11 +9,13 @@ import sys
 import six
 
 from aetros.logger import GeneralLogger
-from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters
+from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters, get_ssh_key_for_host
+from aetros.const import JOB_STATUS
 from .backend import JobBackend
 from .Trainer import Trainer
 
 start_time = time.time()
+
 
 class GitCommandException(Exception):
     cmd = None
@@ -37,7 +39,8 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
         job_backend.fetch(id)
 
     job_backend.restart(id)
-    job_backend.start(start_time=start_time)
+    job_backend.start()
+    job_backend.monitoring_thread.handle_max_time = False
 
     start_custom(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
 
@@ -50,18 +53,20 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         env = {}
 
     if 'PYTHONPATH' not in env:
-        env['PYTHONPATH'] = os.getenv('PYTHONPATH') or ''
+        env['PYTHONPATH'] = os.getenv('PYTHONPATH', '')
 
     env['PYTHONPATH'] += ':' + os.getcwd()
     env['AETROS_MODEL_NAME'] = job_backend.model_name
-    env['AETROS_JOB_ID'] = job_backend.job_id
+    env['AETROS_JOB_ID'] = str(job_backend.job_id)
+    env['DEBUG'] = os.getenv('DEBUG', '')
     env['AETROS_ATTY'] = '1'
     env['AETROS_GIT'] = job_backend.git.get_base_command()
 
     if os.getenv('AETROS_SSH_KEY_BASE64'):
         env['AETROS_SSH_KEY_BASE64'] = os.getenv('AETROS_SSH_KEY_BASE64')
-    elif home_config['ssh_key']:
-        env['AETROS_SSH_KEY_BASE64'] = open(os.path.expanduser(home_config['ssh_key']), 'r').read().decode('utf-8')
+    elif get_ssh_key_for_host(home_config['host']):
+        # we need to read the key into env so they docker container can connect to AETROS
+        env['AETROS_SSH_KEY_BASE64'] = open(get_ssh_key_for_host(home_config['host']), 'r').read().decode('utf-8')
 
     job_config = job_backend.job['config']
 
@@ -171,7 +176,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/job']
 
         env['AETROS_STORAGE_DIR'] = '/aetros'
-        docker_command += ['--mount', 'type=bind,source='+job_backend.git.git_path+',destination='+'/aetros/'+job_backend.model_name + '.git']
+        docker_command += ['--mount', 'type=bind,source='+job_backend.git.git_path+',destination='+'/aetros/' + job_backend.model_name + '.git']
 
         home_config_path = os.path.expanduser('~/aetros.yml')
         if os.path.exists(home_config_path):
@@ -203,21 +208,20 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
             docker_command += ['--memory', str(memory * 1024 * 1024 * 1024)]
 
         if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
-            #only supported on linux
+            # only supported on linux
             docker_command += ['--runtime', 'nvidia']
             docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
-            docker_command += ['--device', '/dev/nvidia1']
+            # support nvidia-docker1 as well
+            # docker_command += ['--device', '/dev/nvidia1']
 
         docker_command.append(image)
 
         # since linux doesnt handle SIGINT when pid=1 process has no signal listener,
         # we need to make sure, we attached one to the pid=1 process
-        trap = 'trapIt () { "$@"& pid="$!"; trap "echo KILLING; kill -INT $pid" INT; wait; };'
+        trap = 'trapIt () { "$@"& pid="$!"; trap "kill -INT $pid" INT TERM; ' \
+               'while kill -0 $pid > /dev/null 2>&1; do wait $pid; ec="$?"; done; exit $ec;};'
 
-        if isinstance(command, list):
-            docker_command += command
-        else:
-            docker_command += ['sh', '-c', trap + 'trapIt ' + command]
+        docker_command += ['sh', '-c', trap + 'trapIt ' + command]
 
         command = docker_command
 
@@ -227,6 +231,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         command = ['sh', '-c', command]
 
     p = None
+    exited = False
     wait_stdout = None
     wait_stderr = None
     try:
@@ -235,6 +240,11 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
 
         command_env = os.environ.copy()
         command_env.update(env)
+
+        # make sure maxTime limitation is correctly calculated
+        job_backend.monitoring_thread.handle_max_time = True
+        job_backend.monitoring_thread.handle_max_time_time = time.time()
+
         p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env)
         wait_stdout = sys.stdout.attach(p.stdout)
         wait_stderr = sys.stderr.attach(p.stderr)
@@ -243,17 +253,15 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         wait_stdout()
         wait_stderr()
 
-        job_backend.set_system_info('exit_code', p.returncode)
-
-        if p.returncode:
-            job_backend.fail()
+        exited = True
 
         sys.exit(p.returncode)
-    except KeyboardInterrupt:
+    except SystemExit:
         # We can not send a SIGINT to the child process
         # as we don't know whether it received it already (pressing CTRL+C) or not (sending SIGINT to this process only
         # instead of to the group), so we assume it received it. A second signal would force the exit.
-        sys.__stdout__.write("Aborted\n")
+
+        sys.__stdout__.write("SystemExit with " + str(p.returncode) + ', exited: ' + str(exited) + ", early: "+str(job_backend.in_early_stop)+"\n")
 
         try:
             if p and p.poll() is None:
@@ -262,20 +270,37 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
                 if wait_stderr: wait_stderr()
         finally:
             if docker_command:
-                # in docker run does not proxy INT signals to the docker-engine,
+                # docker run does not proxy INT signals to the docker-engine,
                 # so we need to do it on our own directly.
-                subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id]).wait()
-                time.sleep(1)
-                subprocess.Popen([home_config['docker'], 'stop', job_backend.job_id]).wait()
+                subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id],
+                                 stderr=subprocess.PIPE, stdout=subprocess.PIPE).wait()
+                subprocess.Popen([home_config['docker'], 'wait', job_backend.job_id], stdout=subprocess.PIPE).wait()
 
-        # check if there was a JobBackend in the command
-        # if so, we do not add any further stuff to the git
-        if job_backend.git.has_file('aetros/job/status/progress.json'):
-            # make sure, we do not overwrite their stuff
-            job_backend.stop()
+        if exited:
+            if p.returncode == 0:
+                job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_DONE)
+            elif p.returncode == 1:
+                job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_ABORTED)
+            else:
+                job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_FAILED)
         else:
-            logger.warning("Job aborted.")
-            job_backend.abort()
+            # master received SIGINT before the actual command exited.
+            if not job_backend.in_early_stop:
+                # master did not receive early_stop signal (maxTime limitation)
+                # if not, the master received a stop signal by server or by hand (ctrl+c), so mark as aborted
+                job_backend.abort()
+            else:
+                # let the on_shutdown listener handle the rest
+                pass
+
+        # only
+        #     # check if there was a JobBackend in the command
+        #     # if so, we do not add any further stuff to the git
+        #     last_progress = job_backend.git.contents('aetros/job/status/progress.json')
+        #     if last_progress is not None and int(last_progress) > 2:
+        #         # make sure, we do not overwrite stuff written inside the sub-process by using our own
+        #         # on_shutdown listener.
+        #         job_backend.stop()
 
 
 def execute_command_stdout(command, input=None):

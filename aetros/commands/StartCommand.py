@@ -30,6 +30,9 @@ class StartCommand:
 
         parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container.")
 
+        parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
+        parser.add_argument('--max-epochs', help="Limit execution epochs. Sends SIGINT to the process group when reached.")
+
         parser.add_argument('--insights', action='store_true', help="activates insights. Only for simple models.")
         parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for simple models with placeholders as input/output.")
 
@@ -55,6 +58,12 @@ class StartCommand:
 
         if parsed_args.branch:
             job_config['sourceGitTree'] = parsed_args.branch
+
+        if parsed_args.max_epochs:
+            job_config['maxEpochs'] = int(parsed_args.max_epochs)
+
+        if parsed_args.max_time:
+            job_config['maxTime'] = float(parsed_args.max_time)
 
         if 'resources' not in job_config:
             job_config['resources'] = {}

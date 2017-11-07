@@ -705,16 +705,6 @@ class Git:
 
         return self.git_last_commit
 
-    def git_job_last_commit_sha(self):
-        if not self.job_id:
-            raise Exception('Can not fetch last commit sha, when no job_id is set.')
-
-        out, code = self.command_exec(['rev-parse', self.ref_head])
-        if not code:
-            return out.decode('utf-8').strip()
-        else:
-            raise Exception('Job ref not created yet. ' + self.ref_head)
-
     def has_file(self, path):
         try:
             out, code, err = self.command_exec(['cat-file', '-p', self.ref_head+':'+path])

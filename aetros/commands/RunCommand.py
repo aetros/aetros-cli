@@ -40,6 +40,9 @@ class RunCommand:
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
 
+        parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
+        parser.add_argument('--max-epochs', help="Limit execution epochs. Sends SIGINT to the process group when reached.")
+
         parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container.")
 
         parser.add_argument('--volume', '-v', action='append', help="Volume into docker")
@@ -98,6 +101,12 @@ class RunCommand:
         hyperparameter = extract_parameters(full_hyperparameters, incoming_hyperparameter)
 
         create_info['config']['parameters'] = hyperparameter
+
+        if parsed_args.max_epochs:
+            create_info['config']['maxEpochs'] = int(parsed_args.max_epochs)
+
+        if parsed_args.max_time:
+            create_info['config']['maxTime'] = float(parsed_args.max_time)
 
         if parsed_args.command:
             create_info['config']['command'] = parsed_args.command

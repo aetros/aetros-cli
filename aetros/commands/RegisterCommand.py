@@ -12,10 +12,9 @@ import sys
 import time
 
 from cryptography.hazmat.primitives import serialization
-from ruamel import yaml
 
 from aetros import api
-from aetros.utils import read_home_config
+from aetros.utils import read_home_config, get_ssh_key_for_host, create_ssh_stream
 
 
 class RegisterCommand:
@@ -35,10 +34,19 @@ class RegisterCommand:
         parsed_args = parser.parse_args(args)
 
         home_config = read_home_config()
+        host = home_config['host']
 
-        if home_config['ssh_key']:
-            choice = six.moves.input("You have already configured a SSH (ssk_key: "+home_config['ssh_key']+") "
-                                     "for AETROS.\nWant to create a new key? (y/N): ").lower()
+        installed_key = get_ssh_key_for_host(host)
+        key_exists_and_valid = False
+        if installed_key:
+            try:
+                create_ssh_stream(home_config, exit_on_failure=False)
+                key_exists_and_valid = True
+            except Exception: pass
+
+        if key_exists_and_valid:
+            choice = six.moves.input("You have already configured a valid SSH (ssk_key: "+installed_key+") "
+                                     "for "+host+".\nWant to create a new key? (y/N): ").lower()
             if choice != 'y' and choice != 'yes':
                 print("Aborted.")
                 sys.exit(1)
@@ -59,14 +67,14 @@ class RegisterCommand:
 
         print("Open following link and login to confirm this machine's SSH key in your account.")
         print("Public Key Fingerprint: MD5:" + fingerprint)
-        print("\n   https://" + home_config['host'] + "/confirm-machine/" + token)
+        print("\n   https://" + host + "/confirm-machine/" + token)
         print("\nWaiting for confirmation ...")
 
         while True:
             time.sleep(3)
             response = api.http_request('machine-token/authorized?id=' + token, method='post')
             if response['status'] == 'confirmed':
-                print(response['username'] + ' confirmed the public key. Test with "aetros id"')
+                print(response['username'] + ' confirmed the public key. Test with "aetros id"o "ssh git@'+host+'"')
                 private_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa')
                 public_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa.pub')
 
@@ -82,14 +90,34 @@ class RegisterCommand:
                 os.chmod(private_key_path, 0o600)
                 os.chmod(public_key_path, 0o600)
 
-                with open(os.path.expanduser('~/aetros.yml'), 'r+') as f:
-                    config = f.read()
-                    config = config.replace('ssh_key', '#ssh_key')
-                    config += '\nssh_key: ~/.ssh/aetros_' + response['username']+'_rsa'
-                    f.seek(0)
-                    f.write(config)
+                ssh_config_path = os.path.expanduser('~/.ssh/config')
 
-                print("Private key stored at " + private_key_path + "\n")
+                if not os.path.exists(os.path.dirname(ssh_config_path)):
+                    os.makedirs(os.path.dirname(ssh_config_path))
+
+                host_section = 'host '+host+'\n'
+                identity_section = '    IdentityFile ~/.ssh/aetros_' + response['username']+'_rsa\n'
+
+                if os.path.exists(ssh_config_path):
+                    import re
+                    regex = re.compile(r"^host\s+" + re.escape(host)+'\s*', re.IGNORECASE | re.MULTILINE)
+                    with open(ssh_config_path, 'r+') as f:
+                        config = f.read()
+
+                        if regex.match(config):
+                            config = regex.sub(host_section + identity_section, config, 1)
+                        else:
+                            config = host_section + identity_section + config
+
+                        f.seek(0)
+                        f.write(config)
+                else:
+                    with open(ssh_config_path, 'w') as f:
+                        f.write(host_section + identity_section)
+
+                print("Private key " + private_key_path + " installed in ~/.ssh/config for "+host+"\n")
+                user = api.user()
+                print("Key installed of account %s (%s)" % (user['username'], user['name']))
                 sys.exit(0)
             if response['status'] == 'expired':
                 print("Token expired.")
