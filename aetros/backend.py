@@ -1170,7 +1170,6 @@ class JobBackend:
             # other sub-processes may only modify other data.
             self.git.commit_file('JOB_STARTED', 'aetros/job/times/started.json', str(time.time()))
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
-            self.set_system_info('command', str(sys.argv))
             self.git.store_file('aetros/job/times/elapsed.json', str(0))
             self.collect_system_information()
             self.collect_environment()
@@ -1359,15 +1358,13 @@ class JobBackend:
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
-        self.sync_weights(push=False)
-
         if self.is_master_process():
+            self.sync_weights(push=False)
             self.set_status('STOPPED', add_section=False)
 
         self.logger.debug("stop: " + str(progress))
 
         self.send_std_buffer()
-
 
         self.stopped = True
         self.ended = True
@@ -1500,7 +1497,8 @@ class JobBackend:
             create_info = {
                 'server': server,
                 'config': {
-                    'insights': insights
+                    'insights': insights,
+                    'command': ' '.join(sys.argv)
                 }
             }
             config = read_config(self.config_path, logger=self.logger)

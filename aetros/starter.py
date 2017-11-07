@@ -221,8 +221,10 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         trap = 'trapIt () { "$@"& pid="$!"; trap "kill -INT $pid" INT TERM; ' \
                'while kill -0 $pid > /dev/null 2>&1; do wait $pid; ec="$?"; done; exit $ec;};'
 
-        docker_command += ['sh', '-c', trap + 'trapIt ' + command]
+        if isinstance(command, list):
+            command = ' '.join(command)
 
+        docker_command += ['sh', '-c', trap + 'trapIt ' + command]
         command = docker_command
 
     job_backend.set_system_info('image/name', str(image))
@@ -245,7 +247,18 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         job_backend.monitoring_thread.handle_max_time = True
         job_backend.monitoring_thread.handle_max_time_time = time.time()
 
-        p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env)
+        # Since JobBackend sends SIGINT to its current process group, it sends also to its parents when same pg.
+        # We need to change the process group of the process, so this won't happen.
+        # If we don't this, the master process receives the SIGINT as well.
+        kwargs = {}
+        if os.name == 'nt':
+            kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs['preexec_fn'] = os.setsid
+
+        p = subprocess.Popen(args=command,
+                             bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE,
+                             env=command_env, **kwargs)
         wait_stdout = sys.stdout.attach(p.stdout)
         wait_stderr = sys.stderr.attach(p.stderr)
 
@@ -260,21 +273,18 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         # We can not send a SIGINT to the child process
         # as we don't know whether it received it already (pressing CTRL+C) or not (sending SIGINT to this process only
         # instead of to the group), so we assume it received it. A second signal would force the exit.
-
         sys.__stdout__.write("SystemExit with " + str(p.returncode) + ', exited: ' + str(exited) + ", early: "+str(job_backend.in_early_stop)+"\n")
 
-        try:
-            if p and p.poll() is None:
-                p.wait()
-                if wait_stdout: wait_stdout()
-                if wait_stderr: wait_stderr()
-        finally:
-            if docker_command:
-                # docker run does not proxy INT signals to the docker-engine,
-                # so we need to do it on our own directly.
-                subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id],
-                                 stderr=subprocess.PIPE, stdout=subprocess.PIPE).wait()
-                subprocess.Popen([home_config['docker'], 'wait', job_backend.job_id], stdout=subprocess.PIPE).wait()
+        # make sure the process dies
+        if docker_command:
+            # docker run does not proxy INT signals to the docker-engine,
+            # so we need to do it on our own directly.
+            subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id],
+                             stderr=subprocess.PIPE, stdout=subprocess.PIPE).wait()
+            subprocess.Popen([home_config['docker'], 'wait', job_backend.job_id], stdout=subprocess.PIPE).wait()
+        elif not exited and p and p.poll() is None:
+            p.kill() # sends SIGINT
+            p.wait()
 
         if exited:
             if p.returncode == 0:
