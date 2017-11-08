@@ -17,6 +17,8 @@ class GPUCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' run')
 
+        print("CUDA version: " +str(aetros.cuda_gpu.get_version()))
+
         for gpu in aetros.cuda_gpu.get_ordered_devices():
             properties = aetros.cuda_gpu.get_device_properties(gpu['device'], all=True)
             free, total = aetros.cuda_gpu.get_memory(gpu['device'])

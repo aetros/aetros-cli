@@ -164,6 +164,13 @@ def get_device_properties(device, all=False):
     }
 
 
+def get_version():
+    libcudart = get_libcudart()
+    version = ctypes.c_int()
+    libcudart.cudaRuntimeGetVersion(ctypes.byref(version))
+
+    return version.value
+
 def get_libcudart():
     system = platform.system()
     if system == "Linux":
