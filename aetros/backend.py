@@ -1360,8 +1360,6 @@ class JobBackend:
             self.monitoring_thread.stop()
 
         if self.is_master_process():
-            self.sync_weights(push=False)
-
             self.set_status('STOPPED', add_section=False)
 
         self.logger.debug("stop: " + str(progress))

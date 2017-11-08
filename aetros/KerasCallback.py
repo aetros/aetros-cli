@@ -127,6 +127,9 @@ class KerasCallback(Callback):
         if self.data_validation_size is None:
             raise Exception('data_validation_size could not be determined for given validation_data. Please specify it.')
 
+    def on_train_end(self, logs={}):
+        self.job_backend.sync_weights()
+
     def on_train_begin(self, logs={}):
         self.start_time = time.time()
         self.last_batch_time = time.time()

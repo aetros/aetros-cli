@@ -65,8 +65,8 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     if os.getenv('AETROS_SSH_KEY_BASE64'):
         env['AETROS_SSH_KEY_BASE64'] = os.getenv('AETROS_SSH_KEY_BASE64')
     elif get_ssh_key_for_host(home_config['host']):
-        # we need to read the key into env so they docker container can connect to AETROS
-        env['AETROS_SSH_KEY_BASE64'] = open(get_ssh_key_for_host(home_config['host']), 'r').read().decode('utf-8')
+        # we need to read the key into env so the docker container can connect to AETROS
+        env['AETROS_SSH_KEY_BASE64'] = open(get_ssh_key_for_host(home_config['host']), 'r').read()
 
     job_config = job_backend.job['config']
 
