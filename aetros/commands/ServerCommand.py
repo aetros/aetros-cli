@@ -162,6 +162,8 @@ class ServerCommand:
         except Exception: pass
 
         if parsed_args.max_gpus:
+            self.enabled_gpus = []
+
             for i in parsed_args.max_gpus.split(','):
                 i = int(i)
                 if i < 0 or i >= len(gpus):
