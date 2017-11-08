@@ -113,13 +113,17 @@ def get_ordered_devices():
     https://github.com/NVIDIA/nvidia-docker/wiki/nvidia-docker#gpu-isolation
     """
 
+    libcudart = get_libcudart()
+
     devices = {}
     for i in range(0, get_installed_devices()):
         gpu = get_device_properties(i)
-        id = "%02d:%02d:%d" % (gpu['pciDomainID'], gpu['pciBusID'], gpu['pciDeviceID'])
-        gpu['fullId'] = id
-        gpu['id'] = str(i)
-        devices[id] = gpu
+
+        pciBusId = ctypes.create_string_buffer('', 64)
+        libcudart.cudaDeviceGetPCIBusId(ctypes.byref(pciBusId), 64, i)
+        gpu['fullId'] = pciBusId.value
+        gpu['id'] = i
+        devices[pciBusId.value] = gpu
 
     ordered = []
 

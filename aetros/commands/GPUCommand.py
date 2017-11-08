@@ -22,4 +22,4 @@ class GPUCommand:
         for gpu in aetros.cuda_gpu.get_ordered_devices():
             properties = aetros.cuda_gpu.get_device_properties(gpu['device'], all=True)
             free, total = aetros.cuda_gpu.get_memory(gpu['device'])
-            print("%s GPU id=%s %s (memory %d/%dGB)" %(gpu['fullId'], str(gpu['id']), properties['name'], free/1024/1024/1024, total/1024/1024/1024))
+            print("%s GPU id=%s %s (memory %dGB, free %dGB)" %(gpu['fullId'], str(gpu['id']), properties['name'], total/1024/1024/1024, free/1024/1024/1024))
