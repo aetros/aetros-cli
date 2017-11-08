@@ -18,6 +18,7 @@ import PIL.Image
 import sys
 import msgpack
 
+from aetros.JobModel import JobModel
 from aetros.const import JOB_STATUS
 from aetros.git import Git
 from aetros.logger import GeneralLogger
@@ -1360,6 +1361,7 @@ class JobBackend:
 
         if self.is_master_process():
             self.sync_weights(push=False)
+
             self.set_status('STOPPED', add_section=False)
 
         self.logger.debug("stop: " + str(progress))
@@ -1635,8 +1637,6 @@ class JobBackend:
         """
         if not self.job:
             raise Exception('Job not loaded yet. Use load(id) first.')
-
-        from aetros.JobModel import JobModel
 
         return JobModel(self.job_id, self.job, self.home_config['storage_dir'])
 
