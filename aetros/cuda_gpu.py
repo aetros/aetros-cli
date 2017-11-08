@@ -1,6 +1,7 @@
 import platform
 import ctypes
-from collections import OrderedDict
+
+import six
 
 
 class CUDADeviceProperties(ctypes.Structure):
@@ -106,16 +107,26 @@ def get_memory(device):
 
 def get_ordered_devices():
     """
-    Default CUDA_DEVICE_ORDER is not compatible with nvidia-docker. Nvidia-Docker is using
-    CUDA_DEVICE_ORDER=PCI_BUS_ID, so this list returns
-    """
-    devices = OrderedDict()
+    Default CUDA_DEVICE_ORDER is not compatible with nvidia-docker.
+    Nvidia-Docker is using CUDA_DEVICE_ORDER=PCI_BUS_ID.
 
+    https://github.com/NVIDIA/nvidia-docker/wiki/nvidia-docker#gpu-isolation
+    """
+
+    devices = {}
     for i in range(0, get_installed_devices()):
         gpu = get_device_properties(i)
-        devices[gpu['pciBusID']] = gpu
+        id = "%02d:%02d:%d" % (gpu['pciDomainID'], gpu['pciBusID'], gpu['pciDeviceID'])
+        gpu['fullId'] = id
+        gpu['id'] = str(i)
+        devices[id] = gpu
 
-    return devices
+    ordered = []
+
+    for key in sorted(devices):
+        ordered.append(devices[key])
+
+    return ordered
 
 
 def get_device_properties(device, all=False):
@@ -133,6 +144,10 @@ def get_device_properties(device, all=False):
         values = {}
         for field in properties._fields_:
             values[field[0]] = getattr(properties, field[0])
+
+            if isinstance(values[field[0]], six.binary_type):
+                values[field[0]] = values[field[0]].decode('utf-8')
+
             if '_Array_' in type(values[field[0]]).__name__:
                 values[field[0]] = [x for x in values[field[0]]]
 
@@ -143,6 +158,7 @@ def get_device_properties(device, all=False):
         'name': properties.name,
         'clock': properties.clockRate,
         'memory': properties.totalGlobalMem,
+        'pciDomainID': properties.pciDomainID,
         'pciDeviceID': properties.pciDeviceID,
         'pciBusID': properties.pciBusID,
     }

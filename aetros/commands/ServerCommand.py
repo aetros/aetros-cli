@@ -104,7 +104,7 @@ class ServerCommand:
         self.ssh_key_public = None
 
         self.resources_limit = {}
-        self.disabled_gpus = []
+        self.enabled_gpus = []
 
         self.job_processes = {}
         self.registered = False
@@ -154,22 +154,23 @@ class ServerCommand:
 
         self.resources_limit['host_execution'] = parsed_args.allow_host_execution
 
-        if parsed_args.max_gpus or parsed_args.no_gpus:
-            gpus = {}
-            try:
-                gpus = aetros.cuda_gpu.get_ordered_devices()
-            except Exception: pass
+        gpus = []
+        try:
+            gpus = aetros.cuda_gpu.get_ordered_devices()
+            for i in range(len(gpus)):
+                self.enabled_gpus.append(i)
+        except Exception: pass
 
-            if parsed_args.max_gpus:
-                for i in parsed_args.max_gpus.split(','):
-                    if i not in gpus:
-                        raise Exception('--max-gpus ' + str(i) + ' not available on the system. GPUS ' + str([i for i in six.iterkeys(gpus)])+ ' detected.')
+        if parsed_args.max_gpus:
+            for i in parsed_args.max_gpus.split(','):
+                i = int(i)
+                if i < 0 or i >= len(gpus):
+                    raise Exception('--max-gpus ' + str(i) + ' not available on the system. GPUs ' + str([i for i in range(len(gpus))])+ ' detected.')
 
-                    self.disabled_gpus.append(i)
+                self.enabled_gpus.append(i)
 
-            elif parsed_args.no_gpus:
-                for i in six.iterkeys(gpus):
-                    self.disabled_gpus.append(i)
+        elif parsed_args.no_gpus:
+            self.enabled_gpus = []
 
         if parsed_args.show_stdout:
             self.show_stdout = True
@@ -424,8 +425,9 @@ class ServerCommand:
         values['boot_time'] = psutil.boot_time()
 
         try:
-            for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
-                gpu['available'] = gpu_id not in self.disabled_gpus
+            for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
+                gpu['available'] = gpu_id in self.enabled_gpus
+
                 values['gpus'][gpu_id] = gpu
         except Exception: pass
 
@@ -468,7 +470,7 @@ class ServerCommand:
         values['gpus'] = {}
 
         try:
-            for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
+            for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
                 values['gpus'][gpu_id] = aetros.cuda_gpu.get_memory(gpu['device'])
         except Exception: pass
 

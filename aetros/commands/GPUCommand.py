@@ -1,10 +1,8 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
-import json
 
 import six
-
 
 class GPUCommand:
     def __init__(self, logger):
@@ -19,7 +17,7 @@ class GPUCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' run')
 
-        for gpu_id, gpu in six.iteritems(aetros.cuda_gpu.get_ordered_devices()):
+        for gpu in aetros.cuda_gpu.get_ordered_devices():
             properties = aetros.cuda_gpu.get_device_properties(gpu['device'], all=True)
-            print("GPU" + str(gpu_id) + ": " + str(properties['name']))
-            print(json.dumps(properties, indent=4))
+            free, total = aetros.cuda_gpu.get_memory(gpu['device'])
+            print("%s GPU id=%s %s (memory %d/%dGB)" %(gpu['fullId'], str(gpu['id']), properties['name'], free/1024/1024/1024, total/1024/1024/1024))

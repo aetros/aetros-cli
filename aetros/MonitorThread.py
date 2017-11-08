@@ -24,8 +24,8 @@ class MonitoringThread(Thread):
         self.stream = self.job_backend.git.stream_file('aetros/job/monitoring.csv')
 
         header = ["second", "cpu", "memory"]
-        for gpu_id in six.iterkeys(aetros.cuda_gpu.get_ordered_devices()):
-            header.append("memory_gpu" + str(gpu_id))
+        for gpu in aetros.cuda_gpu.get_ordered_devices():
+            header.append("memory_gpu" + str(gpu['id']))
 
         self.stream.write(json.dumps(header)[1:-1] + "\n")
         self.second = 0
@@ -63,7 +63,7 @@ class MonitoringThread(Thread):
 
         row = [self.second, cpu_util, mem.percent]
 
-        for gpu in six.itervalues(aetros.cuda_gpu.get_ordered_devices()):
+        for gpu in aetros.cuda_gpu.get_ordered_devices():
             gpu_memory_use = None
             info = aetros.cuda_gpu.get_memory(gpu['device'])
 
