@@ -334,32 +334,6 @@ class ServerCommand:
                     reason = 'Failed job %s. Exit status: %s' % (full_job_id, str(exit_code))
                     self.logger.error(reason)
 
-                git = Git(self.logger, None, self.config, model)
-                if git.is_job_fetched(job_id):
-                    git.read_job(job_id)
-
-                    if not git.has_file('aetros/job/log.txt'):
-                        log = six.b('')
-                        if id(process.stdout) in self.general_logger_stdout.attach_last_messages:
-                            log += self.general_logger_stdout.attach_last_messages[id(process.stdout)]
-
-                        if id(process.stderr) in self.general_logger_stderr.attach_last_messages:
-                            log += self.general_logger_stderr.attach_last_messages[id(process.stderr)]
-
-                        git.commit_file('LOGS', 'aetros/job/log.txt', log)
-
-                    from aetros.const import JOB_STATUS
-                    if exit_code > 0 or not git.has_file('aetros/job/status/progress.json'):
-                        self.logger.info("Set progress to " + ('FAILED' if exit_code > 0 else 'DONE'))
-                        git.commit_file(
-                            'STOP',
-                            'aetros/job/status/progress.json',
-                            str(JOB_STATUS.PROGRESS_STATUS_FAILED) if exit_code > 0 else str(JOB_STATUS.PROGRESS_STATUS_DONE)
-                        )
-
-                    git.push()
-                    git.clean_up()
-
                 self.server.send_message({'type': 'job-finished', 'id': full_job_id})
                 delete_finished.append(full_job_id)
 

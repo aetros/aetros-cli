@@ -40,12 +40,13 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
 
     job_backend.restart(id)
     job_backend.start()
+    job_backend.set_status('PREPARE')
     job_backend.monitoring_thread.handle_max_time = False
 
-    start_custom(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
+    start_command(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
 
 
-def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
+def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     work_tree = job_backend.git.work_tree
     home_config = read_home_config()
 
@@ -135,7 +136,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
         ]
 
         logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
-
+        job_backend.set_status('IMAGE BUILD')
         p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
         if p.returncode:
@@ -149,6 +150,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     if image is not None:
         if not docker_image_built:
             logger.info("Pull docker image: $ " + image)
+            job_backend.set_status('IMAGE PULL')
             execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
                 stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
@@ -237,7 +239,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
     wait_stdout = None
     wait_stderr = None
     try:
-        job_backend.section('command')
+        job_backend.set_status('STARTED')
         logger.warning("$ %s " % (' '.join([json.dumps(a) for a in command])))
 
         command_env = os.environ.copy()
@@ -257,8 +259,8 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
             kwargs['preexec_fn'] = os.setsid
 
         p = subprocess.Popen(args=command,
-                             bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE,
-                             env=command_env, **kwargs)
+            bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE,
+            env=command_env, **kwargs)
         wait_stdout = sys.stdout.attach(p.stdout)
         wait_stderr = sys.stderr.attach(p.stderr)
 
@@ -280,7 +282,7 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
             # docker run does not proxy INT signals to the docker-engine,
             # so we need to do it on our own directly.
             subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id],
-                             stderr=subprocess.PIPE, stdout=subprocess.PIPE).wait()
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE).wait()
             subprocess.Popen([home_config['docker'], 'wait', job_backend.job_id], stdout=subprocess.PIPE).wait()
         elif not exited and p and p.poll() is None:
             p.kill() # sends SIGINT
@@ -303,14 +305,14 @@ def start_custom(logger, job_backend, env=None, volumes=None, gpu_devices=None):
                 # let the on_shutdown listener handle the rest
                 pass
 
-        # only
-        #     # check if there was a JobBackend in the command
-        #     # if so, we do not add any further stuff to the git
-        #     last_progress = job_backend.git.contents('aetros/job/status/progress.json')
-        #     if last_progress is not None and int(last_progress) > 2:
-        #         # make sure, we do not overwrite stuff written inside the sub-process by using our own
-        #         # on_shutdown listener.
-        #         job_backend.stop()
+                # only
+                #     # check if there was a JobBackend in the command
+                #     # if so, we do not add any further stuff to the git
+                #     last_progress = job_backend.git.contents('aetros/job/status/progress.json')
+                #     if last_progress is not None and int(last_progress) > 2:
+                #         # make sure, we do not overwrite stuff written inside the sub-process by using our own
+                #         # on_shutdown listener.
+                #         job_backend.stop()
 
 
 def execute_command_stdout(command, input=None):
