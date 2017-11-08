@@ -6,14 +6,8 @@ import os
 import sys
 import tempfile
 import urllib
-
 from PIL import Image
-
 import numpy as np
-from aetros.Trainer import Trainer
-from aetros.keras_model_utils import ensure_dir
-from aetros.backend import JobBackend
-
 
 class JobModel:
     """
