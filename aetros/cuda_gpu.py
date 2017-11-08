@@ -119,11 +119,12 @@ def get_ordered_devices():
     for i in range(0, get_installed_devices()):
         gpu = get_device_properties(i)
 
-        pciBusId = ctypes.create_string_buffer('', 64)
+        pciBusId = ctypes.create_string_buffer(64)
         libcudart.cudaDeviceGetPCIBusId(ctypes.byref(pciBusId), 64, i)
-        gpu['fullId'] = pciBusId.value
+        full_id = pciBusId.value.decode('utf-8')
+        gpu['fullId'] = full_id
         gpu['id'] = i
-        devices[pciBusId.value] = gpu
+        devices[full_id] = gpu
 
     ordered = []
 

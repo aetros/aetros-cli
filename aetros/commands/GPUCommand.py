@@ -1,8 +1,5 @@
-from __future__ import absolute_import
-from __future__ import print_function
+from __future__ import absolute_import, print_function, division
 import argparse
-
-import six
 
 class GPUCommand:
     def __init__(self, logger):
@@ -22,4 +19,4 @@ class GPUCommand:
         for gpu in aetros.cuda_gpu.get_ordered_devices():
             properties = aetros.cuda_gpu.get_device_properties(gpu['device'], all=True)
             free, total = aetros.cuda_gpu.get_memory(gpu['device'])
-            print("%s GPU id=%s %s (memory %dGB, free %dGB)" %(gpu['fullId'], str(gpu['id']), properties['name'], total/1024/1024/1024, free/1024/1024/1024))
+            print("%s GPU id=%s %s (memory %.2fGB, free %.2fGB)" %(gpu['fullId'], str(gpu['id']), properties['name'], total/1024/1024/1024, free/1024/1024/1024))

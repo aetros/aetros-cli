@@ -69,7 +69,7 @@ class MonitoringThread(Thread):
 
             if info is not None:
                 free, total = info
-                gpu_memory_use = free/total*100
+                gpu_memory_use = (total-free) / total*100
 
             row.append(gpu_memory_use)
 
