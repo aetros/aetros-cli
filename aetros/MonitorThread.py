@@ -6,7 +6,6 @@ import time
 import psutil
 from threading import Thread
 import numpy as np
-import six
 import aetros.cuda_gpu
 
 
@@ -24,8 +23,10 @@ class MonitoringThread(Thread):
         self.stream = self.job_backend.git.stream_file('aetros/job/monitoring.csv')
 
         header = ["second", "cpu", "memory"]
-        for gpu in aetros.cuda_gpu.get_ordered_devices():
-            header.append("memory_gpu" + str(gpu['id']))
+        try:
+            for gpu in aetros.cuda_gpu.get_ordered_devices():
+                header.append("memory_gpu" + str(gpu['id']))
+        except Exception: pass
 
         self.stream.write(json.dumps(header)[1:-1] + "\n")
         self.second = 0
@@ -63,15 +64,17 @@ class MonitoringThread(Thread):
 
         row = [self.second, cpu_util, mem.percent]
 
-        for gpu in aetros.cuda_gpu.get_ordered_devices():
-            gpu_memory_use = None
-            info = aetros.cuda_gpu.get_memory(gpu['device'])
+        try:
+            for gpu in aetros.cuda_gpu.get_ordered_devices():
+                gpu_memory_use = None
+                info = aetros.cuda_gpu.get_memory(gpu['device'])
 
-            if info is not None:
-                free, total = info
-                gpu_memory_use = (total-free) / total*100
+                if info is not None:
+                    free, total = info
+                    gpu_memory_use = (total-free) / total*100
 
-            row.append(gpu_memory_use)
+                row.append(gpu_memory_use)
+        except Exception: pass
 
         self.stream.write(json.dumps(row)[1:-1] + "\n")
         self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))
