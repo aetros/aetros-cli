@@ -134,10 +134,10 @@ class RunCommand:
         if 'resources' not in create_info['config']:
             create_info['config']['resources'] = {}
 
-        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
+        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu is not None or parsed_args.gpu_memory:
             if parsed_args.cpu: create_info['config']['resources']['cpu'] = float(parsed_args.cpu)
             if parsed_args.memory: create_info['config']['resources']['memory'] = float(parsed_args.memory)
-            if parsed_args.gpu: create_info['config']['resources']['gpu'] = float(parsed_args.gpu)
+            if parsed_args.gpu is not None: create_info['config']['resources']['gpu'] = float(parsed_args.gpu)
             if parsed_args.gpu_memory: create_info['config']['resources']['gpu_memory'] = float(parsed_args.gpu_memory)
 
         if parsed_args.local:

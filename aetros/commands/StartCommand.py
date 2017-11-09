@@ -78,10 +78,10 @@ class StartCommand:
             for name in parsed_args.server:
                 job_config['servers'].append(name)
 
-        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
+        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu is not None or parsed_args.gpu_memory:
             if parsed_args.cpu: job_config['resources']['cpu'] = float(parsed_args.cpu)
             if parsed_args.memory: job_config['resources']['memory'] = float(parsed_args.memory)
-            if parsed_args.gpu: job_config['resources']['gpu'] = float(parsed_args.gpu)
+            if parsed_args.gpu is not None: job_config['resources']['gpu'] = float(parsed_args.gpu)
             if parsed_args.gpu_memory: job_config['resources']['gpu_memory'] = float(parsed_args.gpu_memory)
 
         model_name = parsed_args.name
