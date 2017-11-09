@@ -36,10 +36,10 @@ class RunCommand:
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
         parser.add_argument('--priority', help="Increases or decreases priority. Default is 0.")
 
-        parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
-        parser.add_argument('--memory', help="How much memory should be assigned to job")
-        parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
-        parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
+        parser.add_argument('--cpu', help="How many CPU cores should be assigned to job. Docker only.")
+        parser.add_argument('--memory', help="How much memory should be assigned to job. Docker only.")
+        parser.add_argument('--gpu', help="How many GPU cards should be assigned to job. Docker only.")
+        parser.add_argument('--gpu_memory', help="Memory requirement for the GPU. Docker only.")
 
         parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
         parser.add_argument('--max-epochs', help="Limit execution epochs. Sends SIGINT to the process group when reached.")
@@ -117,7 +117,6 @@ class RunCommand:
             create_info['config']['command'] = parsed_args.command
 
         if parsed_args.image:
-            create_info['config']['image'] = parsed_args.image
 
             # reset install options, since we can't make sure if the base image still fits
             if 'image' in config and config['image'] and config['image'] != parsed_args.image:
@@ -125,6 +124,7 @@ class RunCommand:
 
             # reset dockerfile, since we specified manually an image
             create_info['config']['dockerfile'] = None
+            create_info['config']['image'] = parsed_args.image
 
         if parsed_args.server:
             create_info['config']['servers'] = []

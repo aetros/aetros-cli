@@ -467,7 +467,7 @@ class Git:
             os.remove(self.index_path)
 
         if self.delete_git_ssh:
-            if self.thread_push_instance.isAlive():
+            if self.thread_push_instance and self.thread_push_instance.isAlive():
                 self.thread_push_instance.join()
 
             self.delete_git_ssh()

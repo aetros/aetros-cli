@@ -61,7 +61,7 @@ class GeneralLogger(object):
                 if self.job_backend.write_log(self.buffer):
                     self.buffer = ''
 
-    def attach(self, buffer):
+    def attach(self, buffer, read_line=False):
         """
         Read buffer until end (read() returns '') and sends it to self.logger and self.job_backend.
 
@@ -80,7 +80,10 @@ class GeneralLogger(object):
                 try:
                     # read() needs to block
                     # buf = os.read(buffer.fileno(), 4096)
-                    buf = buffer.read(1)
+                    if read_line:
+                        buf = buffer.readline()
+                    else:
+                        buf = buffer.read(1)
                     if buf == six.b(''):
                         break
 

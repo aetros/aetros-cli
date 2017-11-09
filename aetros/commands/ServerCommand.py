@@ -377,8 +377,8 @@ class ServerCommand:
                 stderr=subprocess.PIPE, stdout=subprocess.PIPE, **kwargs)
 
             if self.show_stdout:
-                self.general_logger_stdout.attach(process.stdout)
-                self.general_logger_stderr.attach(process.stderr)
+                self.general_logger_stdout.attach(process.stdout, read_line=True)
+                self.general_logger_stderr.attach(process.stderr, read_line=True)
 
             self.job_processes[full_id] = process
 

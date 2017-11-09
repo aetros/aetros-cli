@@ -33,7 +33,6 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
         sys.stdout.clear_buffer()
 
     job_backend = JobBackend(model_name=owner + '/' + name)
-    job_backend.section('checkout')
 
     if fetch:
         job_backend.fetch(id)

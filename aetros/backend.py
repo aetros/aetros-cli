@@ -942,6 +942,10 @@ class JobBackend:
         # only the master processes handles the regular stop signal from the server, sending a SIGINT to
         # all its child (means to us, non-master process)
         if not self.is_master_process():
+            if force:
+                # make sure even the subprocess dies really on force
+                os._exit(1)
+
             return
 
         self.logger.warning("Received stop signal by server.")

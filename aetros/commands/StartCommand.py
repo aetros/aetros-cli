@@ -24,10 +24,10 @@ class StartCommand:
         parser.add_argument('-b', '--branch', help="This overwrites the Git branch used when new job should be started.")
         parser.add_argument('--priority', help="Increases or decreases priority. Default is 0.")
 
-        parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
-        parser.add_argument('--memory', help="How much memory should be assigned to job")
-        parser.add_argument('--gpu', help="How many GPU cards should be assigned to job")
-        parser.add_argument('--gpu_memory', help="Memory requirement for the GPU")
+        parser.add_argument('--cpu', help="How many CPU cores should be assigned to job. Docker only.")
+        parser.add_argument('--memory', help="How much memory should be assigned to job. Docker only.")
+        parser.add_argument('--gpu', help="How many GPU cards should be assigned to job. Docker only.")
+        parser.add_argument('--gpu_memory', help="Memory requirement for the GPU. Docker only.")
 
         parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container.")
 
