@@ -65,12 +65,12 @@ def main(args=None):
     from aetros.commands.InitCommand import InitCommand
     from aetros.commands.IdCommand import IdCommand
     from aetros.commands.GPUCommand import GPUCommand
-    from aetros.commands.RegisterCommand import RegisterCommand
+    from aetros.commands.AuthenticateCommand import AuthenticateCommand
 
     commands_dict = {
         'start': StartCommand,
         'start-simple': StartSimpleCommand,
-        'register': RegisterCommand,
+        'authenticate': AuthenticateCommand,
         'predict': PredictCommand,
         'prediction-server': PredictionServerCommand,
         'server': ServerCommand,

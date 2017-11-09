@@ -17,7 +17,7 @@ from aetros import api
 from aetros.utils import read_home_config, get_ssh_key_for_host, create_ssh_stream
 
 
-class RegisterCommand:
+class AuthenticateCommand:
     def __init__(self, logger):
         self.logger = logger
         self.client = None
@@ -28,8 +28,8 @@ class RegisterCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                                         prog=aetros.const.__prog__ + ' run',
-            description='Register the machine with a new pair of SSH keys.')
+                                         prog=aetros.const.__prog__ + ' authenticate',
+            description='Authenticates the machine with a new pair of SSH keys with a user account.')
 
         parsed_args = parser.parse_args(args)
 
@@ -74,7 +74,7 @@ class RegisterCommand:
             time.sleep(3)
             response = api.http_request('machine-token/authorized?id=' + token, method='post')
             if response['status'] == 'confirmed':
-                print(response['username'] + ' confirmed the public key. Test with "aetros id"o "ssh git@'+host+'"')
+                print("\n" + response['username'] + ' confirmed the public key. Test with "aetros id" or "ssh git@'+host+'".')
                 private_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa')
                 public_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa.pub')
 
@@ -115,9 +115,9 @@ class RegisterCommand:
                     with open(ssh_config_path, 'w') as f:
                         f.write(host_section + identity_section)
 
-                print("Private key " + private_key_path + " installed in ~/.ssh/config for "+host+"\n")
+                print("Private key " + private_key_path + " installed in ~/.ssh/config for "+host+".\n")
                 user = api.user()
-                print("Key installed of account %s (%s)" % (user['username'], user['name']))
+                print("Key installed of account %s (%s)." % (user['username'], user['name']))
                 sys.exit(0)
             if response['status'] == 'expired':
                 print("Token expired.")
