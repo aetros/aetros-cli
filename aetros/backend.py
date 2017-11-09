@@ -1805,8 +1805,7 @@ class JobBackend:
             import aetros.cuda_gpu
             try:
                 self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
-            except NotImplementedError:
-                pass
+            except Exception: pass
 
             import cpuinfo
             cpu = cpuinfo.get_cpu_info()
