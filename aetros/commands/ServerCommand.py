@@ -116,7 +116,9 @@ class ServerCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' server')
         parser.add_argument('name', nargs='?', help="Server name")
-        parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in your account, and delete them when the server exits.")
+        parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in "
+                                                       "your account, and delete them when the server exits. "
+                                                       "You should prefer 'aetros register' command as its safer.")
 
         parser.add_argument('--allow-host-execution', action='store_true', help="Whether a job can run on this server "
             "directly, without a virtual (docker) container.\nSecurity risk and makes resource limitation useless.")
@@ -127,7 +129,7 @@ class ServerCommand:
             help="How many cores are available. Per default all available CPU cores.")
         parser.add_argument('--max-gpus',
             help="How many GPUs are available. Comma separate list of device ids (pciBusId)."
-                 "Per default all available GPU cards.")
+                 "Per default all available GPU cards. Use 'aetros gpu' too see the ids.")
 
         parser.add_argument('--no-gpus', action='store_true', help="Disable all GPUs")
 

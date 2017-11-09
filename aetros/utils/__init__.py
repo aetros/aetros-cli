@@ -248,8 +248,8 @@ def extract_parameters(full_definitions, overwritten = None, incoming_path = '')
 
     return container
 
-def lose_parameters_to_full(parameters):
 
+def lose_parameters_to_full(parameters):
     if not parameters:
         return {}
 

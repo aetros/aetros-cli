@@ -109,7 +109,7 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
                 dockerfile_content = "\n".join(dockerfile)
             else:
                 if image is None:
-                    job_backend.fail("Image name missing, since install is defined in aetros.yml")
+                    job_backend.fail("Image name missing, needed by `install` in aetros.yml")
                 dockerfile_content = 'FROM ' + image + '\nRUN '
 
                 if isinstance(job_config['install'], list):
@@ -275,7 +275,7 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
         # We can not send a SIGINT to the child process
         # as we don't know whether it received it already (pressing CTRL+C) or not (sending SIGINT to this process only
         # instead of to the group), so we assume it received it. A second signal would force the exit.
-        sys.__stdout__.write("SystemExit with " + str(p.returncode) + ', exited: ' + str(exited) + ", early: "+str(job_backend.in_early_stop)+"\n")
+        # sys.__stdout__.write("SystemExit with " + str(p.returncode) + ', exited: ' + str(exited) + ", early: "+str(job_backend.in_early_stop)+"\n")
 
         # make sure the process dies
         if docker_command:

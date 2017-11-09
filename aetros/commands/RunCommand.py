@@ -30,10 +30,11 @@ class RunCommand:
                                          prog=aetros.const.__prog__ + ' run')
         parser.add_argument('command', nargs='?', help="The command to run. Default read in aetros.yml")
         parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in aetros.yml. If not specified, command is executed on the host.")
-        parser.add_argument('-s', '--server', help="Limits the server pool to this server. Default not limitation or read in aetros.yml.")
+        parser.add_argument('-s', '--server', action='append', help="Limits the server pool to this server. Default not limitation or read in aetros.yml. Multiple --server allowed.")
         parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in aetros.yml")
         parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
+        parser.add_argument('--priority', help="Increases or decreases priority. Default is 0.")
 
         parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
         parser.add_argument('--memory', help="How much memory should be assigned to job")
@@ -105,6 +106,10 @@ class RunCommand:
         if parsed_args.max_epochs:
             create_info['config']['maxEpochs'] = int(parsed_args.max_epochs)
 
+        create_info['config']['priority'] = 0
+        if parsed_args.priority:
+            create_info['config']['priority'] = float(parsed_args.priority)
+
         if parsed_args.max_time:
             create_info['config']['maxTime'] = float(parsed_args.max_time)
 
@@ -114,8 +119,17 @@ class RunCommand:
         if parsed_args.image:
             create_info['config']['image'] = parsed_args.image
 
+            # reset install options, since we can't make sure if the base image still fits
+            if 'image' in config and config['image'] and config['image'] != parsed_args.image:
+                create_info['config']['install'] = None
+
+            # reset dockerfile, since we specified manually an image
+            create_info['config']['dockerfile'] = None
+
         if parsed_args.server:
-            create_info['config']['servers'] = [parsed_args.server]
+            create_info['config']['servers'] = []
+            for name in parsed_args.server:
+                create_info['config']['servers'].append(name)
 
         if 'resources' not in create_info['config']:
             create_info['config']['resources'] = {}

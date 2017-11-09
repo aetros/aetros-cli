@@ -150,13 +150,14 @@ class Git:
     def thread_push(self):
         while self.active_thread:
             try:
+                time.sleep(1)
+
                 if self.job_id and self.online and self.active_push and self.dirty:
                     self.dirty = False
                     start = time.time()
                     self.command_exec(['push', '-f', 'origin', self.ref_head])
                     self.last_push_time = time.time() - start
 
-                time.sleep(1)
             except SystemExit:
                 return
             except KeyboardInterrupt:
@@ -417,7 +418,7 @@ class Git:
         """
         self.active_thread = False
 
-        if self.thread_push_instance:
+        if self.thread_push_instance and self.thread_push_instance.isAlive():
             self.thread_push_instance.join()
 
         with self.batch_commit('STREAM_END'):
@@ -466,6 +467,9 @@ class Git:
             os.remove(self.index_path)
 
         if self.delete_git_ssh:
+            if self.thread_push_instance.isAlive():
+                self.thread_push_instance.join()
+
             self.delete_git_ssh()
             self.delete_git_ssh = None
 

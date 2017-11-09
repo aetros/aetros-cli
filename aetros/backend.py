@@ -1190,8 +1190,6 @@ class JobBackend:
             if isinstance(sys.stderr, GeneralLogger):
                 sys.stderr.job_backend = self
                 sys.stdout.flush()
-
-            self.detect_git_version()
         else:
             # if this process has been called within another process that is already using JobBackend.
             # we disable some stuff
@@ -1289,8 +1287,6 @@ class JobBackend:
 
         Is triggered by atexit.register().
         """
-        self.logger.warning("on_shutdown")
-        self.logger.warning(str(self.in_early_stop))
 
         if self.stopped or self.ended:
             # make really sure, ssh connection closed
@@ -1802,17 +1798,11 @@ class JobBackend:
         with self.git.batch_commit('JOB_SYSTEM_INFORMATION'):
             self.set_system_info('memory_total', mem.total)
 
-            on_gpu = False
-
             import aetros.cuda_gpu
-            props = aetros.cuda_gpu.get_device_properties(0)
-            if props:
-                self.set_system_info('cuda_available', True)
-                self.set_system_info('cuda_device_number', props['device'])
-                self.set_system_info('cuda_device_name', props['name'])
-                self.set_system_info('cuda_device_max_memory', props['memory'])
-
-            self.set_system_info('on_gpu', on_gpu)
+            try:
+                self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
+            except NotImplementedError:
+                pass
 
             import cpuinfo
             cpu = cpuinfo.get_cpu_info()

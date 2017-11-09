@@ -20,8 +20,9 @@ class StartCommand:
 
         parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in aetros.yml. If not specified, command is executed on the host.")
         parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
-        parser.add_argument('-s', '--server', help="Limits the server pool to this server. Default not limitation or read in aetros.yml.")
+        parser.add_argument('-s', '--server', action='append', help="Limits the server pool to this server. Default not limitation or read in aetros.yml. Multiple --server allowed.")
         parser.add_argument('-b', '--branch', help="This overwrites the Git branch used when new job should be started.")
+        parser.add_argument('--priority', help="Increases or decreases priority. Default is 0.")
 
         parser.add_argument('--cpu', help="How many CPU cores should be assigned to job")
         parser.add_argument('--memory', help="How much memory should be assigned to job")
@@ -36,7 +37,7 @@ class StartCommand:
         parser.add_argument('--insights', action='store_true', help="activates insights. Only for simple models.")
         parser.add_argument('--dataset', help="Dataset id when model has placeholders. Only for simple models with placeholders as input/output.")
 
-        parser.add_argument('--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
+        parser.add_argument('-p', '--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
 
         parsed_args = parser.parse_args(args)
 
@@ -65,8 +66,17 @@ class StartCommand:
         if parsed_args.max_time:
             job_config['maxTime'] = float(parsed_args.max_time)
 
+        job_config['priority'] = 0
+        if parsed_args.priority:
+            job_config['priority'] = float(parsed_args.priority)
+
         if 'resources' not in job_config:
             job_config['resources'] = {}
+
+        if parsed_args.server:
+            job_config['servers'] = []
+            for name in parsed_args.server:
+                job_config['servers'].append(name)
 
         if parsed_args.cpu or parsed_args.memory or parsed_args.gpu or parsed_args.gpu_memory:
             if parsed_args.cpu: job_config['resources']['cpu'] = float(parsed_args.cpu)
