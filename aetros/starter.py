@@ -146,7 +146,7 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
         image = job_backend.model_name
 
     docker_command = None
-    if image is not None:
+    if image:
         if not docker_image_built:
             logger.info("Pull docker image: $ " + image)
             job_backend.set_status('IMAGE PULL')
