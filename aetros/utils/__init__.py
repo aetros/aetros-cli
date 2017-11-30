@@ -149,9 +149,9 @@ def read_home_config(path = None, logger=None):
             custom_config = {}
 
     config = {
-        'host': os.getenv('AETROS_HOST') or 'trainer.aetros.com',
-        'storage_dir': os.getenv('AETROS_STORAGE_DIR') or '~/.aetros',
-        'ssh_key_base64': os.getenv('AETROS_SSH_KEY_BASE64'),
+        'host': 'trainer.aetros.com',
+        'storage_dir': '~/.aetros',
+        'ssh_key_base64': None,
         'image': None,
         'ssh': 'ssh',
         'git': 'git',
@@ -161,6 +161,15 @@ def read_home_config(path = None, logger=None):
     }
 
     config.update(custom_config)
+
+    if os.getenv('AETROS_HOST'):
+        config['host'] = os.getenv('AETROS_HOST')
+
+    if os.getenv('AETROS_STORAGE_DIR'):
+        config['storage_dir'] = os.getenv('AETROS_STORAGE_DIR')
+
+    if os.getenv('AETROS_SSH_KEY_BASE64'):
+        config['ssh_key_base64'] = os.getenv('AETROS_SSH_KEY_BASE64')
 
     config['storage_dir'] = os.path.abspath(os.path.expanduser(config['storage_dir']))
 

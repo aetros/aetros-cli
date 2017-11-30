@@ -83,6 +83,9 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
             command = [sys.executable]
         command += ['-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
 
+    if command is None:
+        raise Exception('No command specified.')
+
     # replace {{batch_size}} parameters
     if isinstance(job_config['parameters'], dict):
         for key, value in six.iteritems(flatten_parameters(job_config['parameters'])):
@@ -90,7 +93,7 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
                 for pos, v in enumerate(command):
                     if isinstance(command[pos], six.string_types):
                         command[pos] = command[pos].replace('{{' + key + '}}', json.dumps(value))
-            else:
+            elif isinstance(command, six.string_types):
                 command = command.replace('{{' + key + '}}', json.dumps(value))
 
     logger.info("Switch working directory to " + work_tree)
