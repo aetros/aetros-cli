@@ -562,6 +562,7 @@ class JobClient(BackendClient):
                 self.event_listener.fire('registration_failed', {'reason': message['reason']})
                 return False
 
+
             if 'registered' == message['a']:
                 self.registered = True
                 self.event_listener.fire('registration')
@@ -570,6 +571,18 @@ class JobClient(BackendClient):
 
         self.logger.error("Registration of job %s failed." % (self.job_id,))
         return False
+
+    def handle_messages(self, messages):
+        BackendClient.handle_messages(self, messages)
+        for message in messages:
+            if self.external_stopped:
+                continue
+
+            if 'parameter-changed' == message['a']:
+                self.event_listener.fire('parameter_changed', {'values': message['values']})
+
+            if 'action' == message['a']:
+                self.event_listener.fire('action', {'value': message['value']})
 
 
 def context():
@@ -768,6 +781,7 @@ class JobBackend:
 
         self.client = None
         self.stream_log = None
+        self.parameter_change_callback = None
 
         self.last_batch_time = time.time()
         self.start_time = time.time()
@@ -794,6 +808,9 @@ class JobBackend:
         # whether it has started once
         self.started = False
 
+        # whether on_shutdown has been called and thus the python interpreter is dying.
+        self.in_shutdown = False
+
         self.monitoring_thread = None
 
         if not self.logger:
@@ -818,6 +835,8 @@ class JobBackend:
         self.event_listener.on('registration', self.on_registration)
         self.event_listener.on('registration_failed', self.on_registration_failed)
         self.event_listener.on('offline', self.on_client_offline)
+        self.event_listener.on('parameter_changed', self.on_parameter_changed)
+        self.event_listener.on('action', self.on_action)
 
         if hasattr(signal, 'SIGUSR1'):
             prepend_signal_handler(signal.SIGUSR1, self.on_signusr1)
@@ -1003,6 +1022,13 @@ class JobBackend:
         if 'settings' in self.job['config']:
             return self.job['config']['settings']
         return {}
+
+
+    def set_parameter_change_callback(self, callback):
+        self.parameter_change_callback = callback
+
+    def on_parameter_changed(self, params):
+        pass
 
     def create_progress(self, id, total_steps=100):
         if id in self.progresses:
@@ -1292,6 +1318,8 @@ class JobBackend:
         Is triggered by atexit.register().
         """
 
+        self.in_shutdown = True
+
         if self.stopped or self.ended:
             # make really sure, ssh connection closed
             self.client.close()
@@ -1427,7 +1455,7 @@ class JobBackend:
 
         if force_exit:
             os._exit(exit_code)
-        else:
+        elif not self.in_shutdown:
             sys.exit(exit_code)
 
     def abort(self, wait_for_client_messages=True, force_exit=False):
@@ -1532,6 +1560,12 @@ class JobBackend:
         self.logger.debug("Job created with Git ref " + self.git.ref_head)
 
         return self.job_id
+
+    def create_task(self, job_id, task_config, name, index):
+        task_config['task'] = name
+        task_config['index'] = index
+
+        self.git.create_task_id(job_id, task_config)
 
     def is_simple_model(self):
         if not self.job:
@@ -1704,6 +1738,33 @@ class JobBackend:
                 contents = f.read()
 
             self.git.commit_file('FILE ' + (title or git_path), git_path, contents)
+
+    registered_actions = {}
+
+    def register_action(self, name, callback, default='', value_type=None, label=None, description=None):
+        if value_type is None:
+            if isinstance(default, six.string_types):
+                value_type = 'string'
+            if isinstance(default, int):
+                value_type = 'integer'
+            if isinstance(default, float):
+                value_type = 'float'
+
+        value = {
+            'default': default,
+            'type': value_type,
+            'label': label,
+            'description': description,
+        }
+
+        self.git.store_file('aetros/job/actions/' + name + '/config.json', json.dumps(value, default=invalid_json_values))
+
+        value['callback'] = callback
+        self.registered_actions[name] = value
+
+    def on_action(self, params):
+
+        pass
 
     def add_files(self):
         """

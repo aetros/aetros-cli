@@ -45,12 +45,13 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
     start_command(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
 
 
-def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None):
+def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_devices=None):
     work_tree = job_backend.git.work_tree
     home_config = read_home_config()
 
-    if not env:
-        env = {}
+    env = {}
+    if env_overwrite:
+        env.update(env_overwrite)
 
     if 'PYTHONPATH' not in env:
         env['PYTHONPATH'] = os.getenv('PYTHONPATH', '')
@@ -230,6 +231,12 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
 
         docker_command += ['sh', '-c', trap + 'trapIt ' + command]
         command = docker_command
+    else:
+        # non-docker
+        if not isinstance(command, list):
+            if os.environ.get('LD_LIBRARY_PATH', None):
+                # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
+                command = 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI; ' + command
 
     job_backend.set_system_info('image/name', str(image))
 
@@ -244,25 +251,29 @@ def start_command(logger, job_backend, env=None, volumes=None, gpu_devices=None)
         job_backend.set_status('STARTED')
         logger.warning("$ %s " % (' '.join([json.dumps(a) for a in command])))
 
-        command_env = os.environ.copy()
-        command_env.update(env)
-
         # make sure maxTime limitation is correctly calculated
         job_backend.monitoring_thread.handle_max_time = True
         job_backend.monitoring_thread.handle_max_time_time = time.time()
 
         # Since JobBackend sends SIGINT to its current process group, it sends also to its parents when same pg.
         # We need to change the process group of the process, so this won't happen.
-        # If we don't this, the master process receives the SIGINT as well.
+        # If we don't this, the master process (server command e.g.) receives the SIGINT as well.
         kwargs = {}
         if os.name == 'nt':
             kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
         else:
             kwargs['preexec_fn'] = os.setsid
 
-        p = subprocess.Popen(args=command,
-            bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE,
-            env=command_env, **kwargs)
+        # only use full env when no image used
+
+        command_env = env
+        if not docker_command:
+            command_env = os.environ.copy()
+            command_env.update(env)
+            if os.environ.get('LD_LIBRARY_PATH', None):
+                command_env['LD_LIBRARY_PATH_ORI'] = command_env['LD_LIBRARY_PATH']
+
+        p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs)
         wait_stdout = sys.stdout.attach(p.stdout)
         wait_stderr = sys.stderr.attach(p.stderr)
 

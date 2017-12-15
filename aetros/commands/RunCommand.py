@@ -6,6 +6,8 @@ import sys
 
 import os
 
+import six
+
 import aetros.utils.git
 from aetros.logger import GeneralLogger
 
@@ -44,7 +46,7 @@ class RunCommand:
         parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
         parser.add_argument('--max-epochs', help="Limit execution epochs. Sends SIGINT to the process group when reached.")
 
-        parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container.")
+        parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container. Local only.")
 
         parser.add_argument('--volume', '-v', action='append', help="Volume into docker")
         parser.add_argument('-e', action='append', help="Sets additional environment variables. '-e name=value' to set value, or '-e name' to read from current env")
@@ -157,7 +159,7 @@ class RunCommand:
                 if 'memory' in resources:
                     create_info['resources_assigned']['memory'] = resources['memory']
             else:
-                # since this runs on the host, extract machine hardware and put int resources_assigned
+                # since this runs on the host, extract machine hardware and put it in resources_assigned
                 # so we see it at the job.
                 pass
 
@@ -175,12 +177,27 @@ class RunCommand:
                 'commit': aetros.utils.git.get_current_commit_hash(),
             }
 
-        job.create(create_info=create_info, server=None)
+        job_id = job.create(create_info=create_info, server=None)
+        tasks = []
+
+        if 'tasks' in config:
+            for name, task_config in six.iteritems(config['tasks']):
+                replica = 1
+                if 'replica' in task_config:
+                    replica = int(task_config['replica'])
+                for index in range(0, replica):
+                    tasks.append(job.create_task(job_id, task_config, name, index))
 
         print("Job %s/%s created." % (job.model_name, job.job_id))
 
         if parsed_args.local:
             start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume, gpu_devices=parsed_args.gpu_device)
+
+            # todo handle dependencies?
+            # what to start first?
+            for task_id in tasks:
+                start()
+
         else:
             if parsed_args.volume:
                 print("Can not use volume with jobs on the cluster. Use datasets instead.")

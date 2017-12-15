@@ -364,6 +364,22 @@ class Git:
         # of files checked out by start.py (custom models)
         self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
 
+    def create_task_id(self, job_id, data):
+        """
+        Creates a new task id and reference (refs/aetros/task/<id>) by creating a new commit with the same tree
+        as job_id's and added aetros/task.json file. As parent commit the job_id is used.
+        """
+        self.read_tree(job_id)
+        self.add_file('aetros/task.json', json.dumps(data, indent=4))
+        tree_id = self.write_tree()
+
+        task_id = self.command_exec(['commit-tree', '-m', "TASK_CREATED", tree_id, '-p', job_id])[0].decode('utf-8').strip()
+
+        ref = 'refs/aetros/task/' + task_id
+        self.command_exec(['update-ref', ref, task_id])
+
+        return task_id
+
     def create_job_id(self, data):
         """
         Create a new job id and reference (refs/aetros/job/<id>) by creating a new commit with empty tree. That
