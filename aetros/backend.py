@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import atexit
+import inspect
 import os
 import socket
 from threading import Thread, Lock
@@ -19,7 +20,7 @@ import sys
 import msgpack
 
 from aetros.JobModel import JobModel
-from aetros.const import JOB_STATUS
+from aetros.const import JOB_STATUS, __version__
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
@@ -534,13 +535,21 @@ class BackendClient:
 
 
 class JobClient(BackendClient):
-    def configure(self, model_name, job_id, master=True):
+    def configure(self, model_name, job_id, name='master'):
         self.model_name = model_name
         self.job_id = job_id
-        self.master = master
+        self.name = name
 
     def on_connect(self, reconnect=False):
-        self.send_message({'type': 'register_job_worker', 'model': self.model_name, 'job': self.job_id, 'reconnect': reconnect, 'master': self.master})
+        self.send_message({
+            'type': 'register_job_worker',
+            'model': self.model_name,
+            'job': self.job_id,
+            'reconnect': reconnect,
+            'version': __version__,
+            'name': self.name
+        })
+
         self.logger.debug("Wait for job client registration")
         messages = self.wait_for_at_least_one_message()
         self.logger.debug("Got " + str(messages))
@@ -581,8 +590,8 @@ class JobClient(BackendClient):
             if 'parameter-changed' == message['a']:
                 self.event_listener.fire('parameter_changed', {'values': message['values']})
 
-            if 'action' == message['a']:
-                self.event_listener.fire('action', {'value': message['value']})
+            if 'action' == message['type']:
+                self.event_listener.fire('action', message)
 
 
 def context():
@@ -766,7 +775,7 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None, logger=None, config_path = 'aetros.yml'):
+    def __init__(self, model_name=None, logger=None, config_path = 'aetros.yml', name='master'):
         self.event_listener = EventListener()
 
         self.log_file_handle = None
@@ -777,6 +786,7 @@ class JobBackend:
         self.ssh_stream = None
         self.model_name = model_name
         self.logger = logger
+        self.name = name
         self.config_path = config_path
 
         self.client = None
@@ -1187,7 +1197,7 @@ class JobBackend:
 
         on_shutdown.started_jobs.append(self)
 
-        self.client.configure(self.model_name, self.job_id, self.is_master_process())
+        self.client.configure(self.model_name, self.job_id, self.name)
         self.git.prepare_git_user()
 
         if self.git.online:
@@ -1741,20 +1751,31 @@ class JobBackend:
 
     registered_actions = {}
 
-    def register_action(self, name, callback, default='', value_type=None, label=None, description=None):
-        if value_type is None:
-            if isinstance(default, six.string_types):
-                value_type = 'string'
-            if isinstance(default, int):
-                value_type = 'integer'
-            if isinstance(default, float):
-                value_type = 'float'
+    def register_action(self,  callback, name=None, label=None, description=None):
+        if name is None:
+            name = callback.__name__
+
+        args = {}
+        inspect_args = inspect.getargspec(callback)
+        start_default_idx = len(inspect_args.args) - len(inspect_args.defaults)
+
+        for idx, name in enumerate(inspect_args.args):
+            args[name] = {'default': None, 'type': 'mixed'}
+
+            if idx >= start_default_idx:
+                default_value = inspect_args.defaults[idx - start_default_idx]
+                arg_type = 'mixed'
+                if isinstance(default_value, six.string_types): arg_type = 'string'
+                if isinstance(default_value, int): arg_type = 'integer'
+                if isinstance(default_value, float): arg_type = 'float'
+                if isinstance(default_value, bool): arg_type = 'bool'
+
+                args[name] = {'default': default_value, 'type': arg_type}
 
         value = {
-            'default': default,
-            'type': value_type,
             'label': label,
             'description': description,
+            'args': args
         }
 
         self.git.store_file('aetros/job/actions/' + name + '/config.json', json.dumps(value, default=invalid_json_values))
@@ -1763,8 +1784,61 @@ class JobBackend:
         self.registered_actions[name] = value
 
     def on_action(self, params):
+        action_id = params['id']
+        action_name = params['name']
+        action_value = params['value']
 
-        pass
+        if action_name not in self.registered_actions:
+            self.logger.warning('Received action ' + str(action_name) + ' but no callback registered.')
+            return
+
+        callback = self.registered_actions[action_name]['callback']
+
+        action = {
+            'name': action_name,
+            'value': action_value,
+            'time': time.time(),
+        }
+
+        self.git.store_file(
+            'aetros/job/actions/' + str(action_name) + '/result/' + str(action_id) + '.json',
+            json.dumps(action, default=invalid_json_values)
+        )
+
+        def done(value):
+            result = {
+                'value': value,
+                'time': time.time()
+            }
+            # if value is binary, include mimetype and save it in a separate file
+
+            self.git.store_file(
+                'aetros/job/actions/' + str(action_name) + '/result/' + str(action_id) + '.json',
+                json.dumps(result, default=invalid_json_values)
+            )
+
+        try:
+            result = callback(action_value, done)
+            # returning done as result marks this as async call
+
+            if result is not done:
+                # we have no async call
+                done(result)
+
+        except SystemExit:
+            raise
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            result = {
+                'exception': str(e),
+                'time': time.time()
+            }
+
+            self.git.store_file(
+                'aetros/job/actions/' + str(action_name) + '/result/' + str(action_id) + '.json',
+                json.dumps(result, default=invalid_json_values)
+            )
 
     def add_files(self):
         """

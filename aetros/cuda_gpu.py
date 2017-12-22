@@ -4,6 +4,9 @@ import ctypes
 import six
 
 
+class CudaNotImplementedException(Exception): pass
+
+
 class CUDADeviceProperties(ctypes.Structure):
     # See $CUDA_HOME/include/cuda_runtime_api.h for the definition of
     # the cudaDeviceProp structypes.
@@ -83,6 +86,8 @@ def get_installed_devices():
         device_count = ctypes.c_int()
         libcudart.cudaGetDeviceCount(ctypes.byref(device_count))
 
+        del libcudart
+
         return device_count.value
     except Exception:
         return 0
@@ -132,6 +137,8 @@ def get_ordered_devices():
         devices[key]['id'] = i
         ordered.append(devices[key])
         i += 1
+
+    del libcudart
 
     return ordered
 
@@ -187,13 +194,13 @@ def get_libcudart():
     elif system == "Windows":
         libcudart = ctypes.windll.LoadLibrary("libcudart.dll")
     else:
-        raise NotImplementedError("Cannot identify system.")
+        raise CudaNotImplementedException("Cannot identify system.")
 
     version = ctypes.c_int()
     rc = libcudart.cudaRuntimeGetVersion(ctypes.byref(version))
     if rc != 0:
         raise ValueError("Could not get version")
     if version.value < 6050:
-        raise NotImplementedError("CUDA version must be >= 6.5")
+        raise CudaNotImplementedException("CUDA version must be >= 6.5")
 
     return libcudart

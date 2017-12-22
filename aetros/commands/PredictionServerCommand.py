@@ -23,7 +23,6 @@ class PredictionServerCommand:
         parser.add_argument('id', nargs='?', help='job id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
-        parser.add_argument('--tf', action='store_true', help="Uses TensorFlow instead of Theano")
         parser.add_argument('--port', help="Changes port. Default 8000")
         parser.add_argument('--host', help="Changes host. Default 127.0.0.1")
 
@@ -36,7 +35,7 @@ class PredictionServerCommand:
             parser.print_help()
             sys.exit()
 
-        os.environ['KERAS_BACKEND'] = 'tensorflow' if parsed_args.tf else 'theano'
+        os.environ['KERAS_BACKEND'] = 'tensorflow'
 
         self.model = self.start_model(parsed_args)
         self.start_webserver('127.0.0.1' if not parsed_args.host else parsed_args.host, 8000 if not parsed_args.port else int(parsed_args.port))

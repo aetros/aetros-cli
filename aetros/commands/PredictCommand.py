@@ -16,7 +16,6 @@ class PredictCommand:
         parser.add_argument('id', nargs='?', help='the job id, e.g. peter/mnist/5d0f81d3ea73e8b2da3236c93f502339190c7037')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder.")
         parser.add_argument('-i', nargs='+', help="Input (path or url). Multiple allowed")
-        parser.add_argument('--th', action='store_true', help="Uses Theano instead of Tensorflow")
 
         parsed_args = parser.parse_args(args)
 
@@ -28,5 +27,5 @@ class PredictCommand:
             parser.print_help()
             sys.exit()
 
-        os.environ['KERAS_BACKEND'] = 'theano' if parsed_args.th else 'tensorflow'
+        os.environ['KERAS_BACKEND'] = 'tensorflow'
         predict(self.logger, parsed_args.id, parsed_args.i, parsed_args.weights)

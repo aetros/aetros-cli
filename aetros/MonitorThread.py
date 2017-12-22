@@ -26,7 +26,7 @@ class MonitoringThread(Thread):
         try:
             for gpu in aetros.cuda_gpu.get_ordered_devices():
                 header.append("memory_gpu" + str(gpu['id']))
-        except Exception: pass
+        except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         self.stream.write(json.dumps(header)[1:-1] + "\n")
         self.second = 0
@@ -51,7 +51,6 @@ class MonitoringThread(Thread):
         cpu_util = np.mean(psutil.cpu_percent(interval=1, percpu=True)) #blocks 1sec
         mem = psutil.virtual_memory()
 
-
         if not self.running:
             return
 
@@ -74,7 +73,7 @@ class MonitoringThread(Thread):
                     gpu_memory_use = (total-free) / total*100
 
                 row.append(gpu_memory_use)
-        except Exception: pass
+        except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         self.stream.write(json.dumps(row)[1:-1] + "\n")
         self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))

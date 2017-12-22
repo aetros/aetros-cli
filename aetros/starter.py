@@ -130,10 +130,12 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             job_backend.commit_file('Dockerfile.aetros')
 
         job_backend.set_system_info('image/dockerfile', dockerfile)
+
+        image = job_backend.model_name.lower()
         docker_build = [
             home_config['docker'],
             'build',
-            '-t', job_backend.model_name,
+            '-t', image,
             '-f', dockerfile,
             '.',
         ]
@@ -147,7 +149,6 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             sys.exit(p.returncode)
 
         docker_image_built = True
-        image = job_backend.model_name
 
     docker_command = None
     if image:
