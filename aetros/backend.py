@@ -819,6 +819,7 @@ class JobBackend:
         self.current_batch = 0
         self.total_epochs = 0
         self.made_batches = 0
+        self.last_batch = 0
         self.batches_per_second = 0
 
         # indicates whether early_stop() has been called. Is called by reaching maxTimes or maxEpochs limitation.
@@ -1011,9 +1012,15 @@ class JobBackend:
 
         raise_sigint()
 
+    # self.batch(0, 10)
+    # self.batch(5, 10) made_batch=5
     def batch(self, batch, total, size=None):
         time_diff = time.time() - self.last_batch_time
-        self.made_batches += 1
+
+        if self.last_batch < batch:
+            self.last_batch = 0
+
+        self.made_batches = self.last_batch - batch
 
         if time_diff > 1 or batch == total:  # only each second second or last batch
             with self.git.batch_commit('BATCH'):
@@ -1046,6 +1053,10 @@ class JobBackend:
                     self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
 
         self.current_batch = batch
+
+    def step(self, step, total):
+        self.set_system_info('step', step, True)
+        self.set_system_info('steps', total, True)
 
     def set_speed(self, speed):
         self.set_system_info('samplesPerSecond', speed, True)

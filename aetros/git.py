@@ -538,6 +538,7 @@ class Git:
     def get_empty_tree_id(self):
         """
         Returns the famous empty tree id. To be used in creating a new empty root commit without any files.
+        4b825dc642cb6eb9a060e54bf8d69288fbee4904
 
         :rtype: str 
         """
