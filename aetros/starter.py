@@ -108,7 +108,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
     docker_image_built = False
 
     if job_config['dockerfile'] or job_config['install']:
-        docker_image = docker_build_image(logger, home_config, job_backend)
+        rebuild_image = job_config['rebuild_image'] if 'rebuild_image' in job_config else False
+        docker_image = docker_build_image(logger, home_config, job_backend, rebuild_image)
         docker_image_built = True
 
     if docker_image:
@@ -383,7 +384,7 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_device
     return docker_command
 
 
-def docker_build_image(logger, home_config, job_backend):
+def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
     job_config = job_backend.job['config']
     image = job_config['image']
     dockerfile = job_config['dockerfile']
@@ -419,7 +420,12 @@ def docker_build_image(logger, home_config, job_backend):
     if 'category' in job_config:
         image += '_' + job_config['category']
 
-    docker_build = [home_config['docker'], 'build', '-t', image, '-f', dockerfile, '.', ]
+    docker_build = [home_config['docker'], 'build']
+
+    if rebuild_image:
+        docker_build += ['--no-cache']
+
+    docker_build += ['-t', image, '-f', dockerfile, '.', ]
 
     logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
     job_backend.set_status('IMAGE BUILD')

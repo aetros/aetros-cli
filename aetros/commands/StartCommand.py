@@ -29,6 +29,8 @@ class StartCommand:
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job. Docker only.")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU. Docker only.")
 
+        parser.add_argument('--rebuild-image', action='store_true', help="Makes sure the Docker image is re-built without cache.")
+
         parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container.")
 
         parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
@@ -70,6 +72,9 @@ class StartCommand:
         if parsed_args.priority:
             job_config['priority'] = float(parsed_args.priority)
 
+        if parsed_args.rebuild_image:
+            job_config['config']['rebuild_image'] = True
+
         if 'resources' not in job_config:
             job_config['resources'] = {}
 
@@ -91,7 +96,7 @@ class StartCommand:
                 self.logger.debug("Create job ...")
                 created = api.create_job(model_name, parsed_args.local, hyperparameter, parsed_args.dataset, config=job_config)
             except api.ApiError as e:
-                if 'Connection refused' in e.reason:
+                if 'Connection refused' in e.error:
                     self.logger.error("You are offline")
 
                 raise

@@ -43,6 +43,8 @@ class RunCommand:
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job. Docker only.")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU. Docker only.")
 
+        parser.add_argument('--rebuild-image', action='store_true', help="Makes sure the Docker image is re-built without cache.")
+
         parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
         parser.add_argument('--max-epochs', help="Limit execution epochs. Sends SIGINT to the process group when reached.")
 
@@ -104,6 +106,9 @@ class RunCommand:
         hyperparameter = extract_parameters(full_hyperparameters, incoming_hyperparameter)
 
         create_info['config']['parameters'] = hyperparameter
+
+        if parsed_args.rebuild_image:
+            create_info['config']['rebuild_image'] = True
 
         if parsed_args.max_epochs:
             create_info['config']['maxEpochs'] = int(parsed_args.max_epochs)
