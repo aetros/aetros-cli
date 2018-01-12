@@ -456,6 +456,7 @@ def execute_command(**kwargs):
     wait_stderr = sys.stderr.attach(p.stderr)
 
     p.wait()
+
     wait_stdout()
     wait_stderr()
 

@@ -99,9 +99,13 @@ class Git:
         self.origin_url = self.get_remote_url('origin')
 
         if self.origin_url and self.git_url not in self.origin_url:
-            raise Exception("Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). "
-                            "It seems you switched between aetros.com and an on-premise installation or update aetros.yml:host."
-                            "Please remove the Git repository." % (self.git_path, self.origin_url, self.git_url))
+            logger.warning("It seems you switched between aetros.com and an on-premise installation or updated aetros.yml:host. " \
+                           "Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " \
+                           "We updated the remote origin automatically." \
+                            % (self.git_path, self.origin_url, self.git_url))
+
+            self.command_exec(['remote', 'remove', 'origin'])
+            self.command_exec(['remote', 'add', 'origin', self.git_url])
 
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
@@ -126,12 +130,11 @@ class Git:
 
 
     def get_remote_url(self, origin_name):
-        output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip()
+        output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip().split('\n')
 
-        import re
-        match = re.match('^' + re.escape(origin_name) + '\t([^\s]+)', output)
-        if match:
-            return match.group(1)
+        for line in output:
+            if line.startswith(origin_name):
+                return line[len(origin_name)+1:line.index('.git')+4]
 
     @property
     def work_tree(self):

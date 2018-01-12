@@ -731,7 +731,7 @@ class JobChannel:
                 'traces can only be None or a list of dicts: [{name: "name", option1: ...}, {name: "name2"}, ...]')
 
         if not traces:
-            traces = [{'name': name}]
+            traces = [{'name': ''}]
 
         if isinstance(traces, list) and isinstance(traces[0], six.string_types):
             traces = list(map(lambda x: {'name': x}, traces))
@@ -766,6 +766,10 @@ class JobChannel:
             raise Exception(
                 'You tried to set more y values (%d items) then traces available in channel %s (%d traces).' % (
                     len(y), self.name, len(self.traces)))
+
+        for v in y:
+            if not isinstance(v, (int, float)) and not isinstance(v, six.string_types):
+                raise Exception('Could not send channel value for ' + self.name+' since type ' + type(y).__name__+' is not supported. Use int, float or string values.')
 
         line = json.dumps([x] + y)[1:-1]
 
@@ -813,14 +817,15 @@ class JobBackend:
         self.stream_log = None
         self.parameter_change_callback = None
 
-        self.last_batch_time = time.time()
+        self.last_step_time = time.time()
+        self.last_step = 0
+
         self.start_time = time.time()
         self.current_epoch = 0
-        self.current_batch = 0
         self.total_epochs = 0
-        self.made_batches = 0
-        self.last_batch = 0
-        self.batches_per_second = 0
+
+        self.step_label = None
+        self.step_speed_label = None
 
         # indicates whether early_stop() has been called. Is called by reaching maxTimes or maxEpochs limitation.
         # This flag stops exiting with > 0, since the reach of a limitation is a valid exit.
@@ -1006,60 +1011,76 @@ class JobBackend:
 
     def early_stop(self):
         """
-        Stop when a limitation is reached (like maxEpoch, maxtime).
+        Stop when a limitation is reached (like maxEpoch, maxTime).
         """
         self.in_early_stop = True
 
         raise_sigint()
 
-    # self.batch(0, 10)
-    # self.batch(5, 10) made_batch=5
-    def batch(self, batch, total, size=None):
-        time_diff = time.time() - self.last_batch_time
+    def batch(self, batch, total, batch_size, label='BATCH', speed_label='SAMPLES/S'):
+        self.step(batch, total, size=batch_size, label=label, speed_label=speed_label)
 
-        if self.last_batch < batch:
-            self.last_batch = 0
+    def sample(self, sample, total, label='SAMPLE', speed_label='SAMPLES/S'):
+        self.step(sample, total, size=1, label=label, speed_label=speed_label)
 
-        self.made_batches = self.last_batch - batch
+    def step(self, step, total, label='STEP', speed_label='STEPS/S', size=1):
+        """
+        Increase the step indicator, which is a sub progress circle of the actual
+        main progress circle (epoch, progress() method).
+        """
 
-        if time_diff > 1 or batch == total:  # only each second second or last batch
+        time_diff = time.time() - self.last_step_time
+
+        if time_diff > 1 or step == total:  # only each second or last batch
             with self.git.batch_commit('BATCH'):
-                self.set_system_info('batch', batch, True)
-                self.set_system_info('batches', total, True)
-                self.set_system_info('batchSize', size, True)
+                if self.last_step > step:
+                    self.last_step = 0
 
-                self.batches_per_second = self.made_batches / time_diff
-                self.made_batches = 0
-                self.last_batch_time = time.time()
+                made_steps = step - self.last_step
+                self.last_step = step
+
+                self.set_system_info('step', step, True)
+                self.set_system_info('steps', total, True)
+
+                steps_per_second = made_steps / time_diff
+                self.last_step_time = time.time()
 
                 if size:
-                    self.set_system_info('samplesPerSecond', self.batches_per_second * size, True)
+                    self.set_system_info('samplesPerSecond', steps_per_second * size, True)
 
-                epochs_per_second = self.batches_per_second / total  # all batches
+                epochs_per_second = steps_per_second / total  # all batches
                 self.set_system_info('epochsPerSecond', epochs_per_second, True)
 
-                if self.total_epochs:
-                    eta = 0
-                    if batch < total:
-                        # time to end this epoch
-                        if self.batches_per_second != 0:
-                            eta = (total - batch) / self.batches_per_second
+                current_epochs = self.current_epoch if self.current_epoch else 1
+                total_epochs = self.total_epochs if self.total_epochs else 1
 
-                    # time until all epochs are done
-                    if self.total_epochs - (self.current_epoch - 1) > 0:
-                        if epochs_per_second != 0:
-                            eta += (self.total_epochs - (self.current_epoch - 1)) / epochs_per_second
+                eta = 0
+                if step < total:
+                    # time to end this epoch
+                    if steps_per_second != 0:
+                        eta = (total - step) / steps_per_second
 
-                    self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
+                # time until all epochs are done
+                if total_epochs - (current_epochs - 1) > 0:
+                    if epochs_per_second != 0:
+                        eta += (total_epochs - (current_epochs - 1)) / epochs_per_second
 
-        self.current_batch = batch
+                self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
 
-    def step(self, step, total):
-        self.set_system_info('step', step, True)
-        self.set_system_info('steps', total, True)
+        if label and self.step_label != label:
+            self.set_system_info('stepLabel', label, True)
+            self.step_label = label
 
-    def set_speed(self, speed):
+        if speed_label and self.step_speed_label != speed_label:
+            self.set_system_info('stepSpeedLabel', speed_label, True)
+            self.step_speed_label = speed_label
+
+    def set_speed(self, speed, speed_label=None):
         self.set_system_info('samplesPerSecond', speed, True)
+
+        if speed_label and self.step_speed_label != speed_label:
+            self.set_system_info('stepSpeedLabel', speed_label, True)
+            self.step_speed_label = speed_label
 
     @property
     def job_settings(self):

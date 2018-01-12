@@ -4,6 +4,8 @@ import argparse
 
 import six
 from aetros import api
+from aetros.utils import read_home_config
+
 
 class IdCommand:
     def __init__(self, logger):
@@ -19,10 +21,11 @@ class IdCommand:
                                          prog=aetros.const.__prog__ + ' run')
 
         parsed_args = parser.parse_args(args)
+        config = read_home_config()
 
         user = api.user()
 
-        print("Key installed of account %s (%s)" % (user['username'], user['name']))
+        print("Key installed of account %s (%s) on %s" % (user['username'], user['name'], config['host']))
 
         if len(user['accounts']) > 0:
             for orga in six.itervalues(user['accounts']):
