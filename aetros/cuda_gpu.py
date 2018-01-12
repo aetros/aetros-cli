@@ -185,7 +185,16 @@ def get_version():
 
     return version.value
 
+
+libcudart = None
+
+
 def get_libcudart():
+    global libcudart
+
+    if libcudart is not None:
+        return libcudart
+
     system = platform.system()
     if system == "Linux":
         libcudart = ctypes.cdll.LoadLibrary("libcudart.so")

@@ -38,7 +38,12 @@ class InitCommand:
                 print("failed: aetros.yml already exists with a linked model to " + config['model'])
                 sys.exit(1)
 
-        name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.private)
+        try:
+            name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.private)
+        except api.ApiError as e:
+            if e.error != 'already_exists':
+                raise e
+            name = parsed_args.name
 
         with open('aetros.yml', 'w') as f:
             f.write('model: ' + name)

@@ -46,9 +46,9 @@ class RunCommand:
         parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
         parser.add_argument('--max-epochs', help="Limit execution epochs. Sends SIGINT to the process group when reached.")
 
-        parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container. Local only.")
+        parser.add_argument('--gpu-device', action='append', help="Which device id should be mapped into the NVIDIA docker container. Only when --local")
 
-        parser.add_argument('--volume', '-v', action='append', help="Volume into docker")
+        parser.add_argument('--volume', '-v', action='append', help="Volume into docker. Only when --local")
         parser.add_argument('-e', action='append', help="Sets additional environment variables. '-e name=value' to set value, or '-e name' to read from current env")
 
         parser.add_argument('-p', '--param', action='append', help="Sets a hyperparameter, example '--param name=value'. Multiple --param allowed.")
@@ -119,7 +119,6 @@ class RunCommand:
             create_info['config']['command'] = parsed_args.command
 
         if parsed_args.image:
-
             # reset install options, since we can't make sure if the base image still fits
             if 'image' in config and config['image'] and config['image'] != parsed_args.image:
                 create_info['config']['install'] = None
@@ -165,6 +164,9 @@ class RunCommand:
 
         if parsed_args.local:
             create_info['server'] = 'local'
+
+        if parsed_args.config:
+            create_info['config']['config_path'] = parsed_args.config
 
         create_info['config']['sourcesAttached'] = True
 

@@ -8,6 +8,7 @@ import tempfile
 import urllib
 from PIL import Image
 import numpy as np
+import collections
 
 class JobModel:
     """
@@ -209,7 +210,7 @@ class JobModel:
     def layers(self):
         if self._layers is None:
             with open(self.get_layers_path(), 'r') as f:
-                self._layers = json.loads(f.read())
+                self._layers = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
 
         return self._layers
 
@@ -221,7 +222,7 @@ class JobModel:
             def read_dataset(id):
                 dataset_json_path = os.path.normpath(self.get_dataset_dir() + '/' + id + '.json')
                 with open(dataset_json_path, 'r') as f:
-                    self._datasets[id] = json.loads(f.read())
+                    self._datasets[id] = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
 
             for owner in os.listdir(self.get_dataset_dir()):
                 path = os.path.normpath(self.get_dataset_dir() + '/' + owner + '/dataset/')

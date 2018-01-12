@@ -464,7 +464,7 @@ def read_config(path = 'aetros.yml', logger=None):
     if os.path.exists(path):
         f = open(path, 'r')
 
-        custom_config = yaml.safe_load(f)
+        custom_config = yaml.load(f, Loader=yaml.RoundTripLoader)
         if custom_config is None:
             custom_config = {}
 

@@ -5,8 +5,10 @@ import atexit
 import inspect
 import os
 import socket
+
 from threading import Thread, Lock
 
+import collections
 import coloredlogs
 import logging
 
@@ -85,21 +87,21 @@ class ApiClient:
     def get(self, url, params=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
 
         return requests.get(self.get_url(url), params=params, **kwargs)
 
     def post(self, url, data=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
 
         return requests.post(self.get_url(url), data=data, **kwargs)
 
     def put(self, url, data=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values))
+            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
 
         return requests.put(self.get_url(url), data=data, **kwargs)
 
@@ -535,7 +537,7 @@ class BackendClient:
 
 
 class JobClient(BackendClient):
-    def configure(self, model_name, job_id, name='master'):
+    def configure(self, model_name, job_id, name):
         self.model_name = model_name
         self.job_id = job_id
         self.name = name
@@ -550,7 +552,7 @@ class JobClient(BackendClient):
             'name': self.name
         })
 
-        self.logger.debug("Wait for job client registration")
+        self.logger.debug("Wait for job client registration for " + self.name)
         messages = self.wait_for_at_least_one_message()
         self.logger.debug("Got " + str(messages))
 
@@ -658,6 +660,7 @@ class JobLossChannel:
             'layout': layout,
             'lossChannel': True
         }
+        self.lock = Lock()
 
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
         self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data.csv')
@@ -665,8 +668,13 @@ class JobLossChannel:
 
     def send(self, x, training_loss, validation_loss):
         line = json.dumps([x, training_loss, validation_loss])[1:-1]
-        self.stream.write(line + "\n")
-        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
+
+        self.lock.acquire()
+        try:
+            self.stream.write(line + "\n")
+            self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
+        finally:
+            self.lock.release()
 
 
 class JobImage:
@@ -713,6 +721,7 @@ class JobChannel:
         self.job_backend = job_backend
         self.kpi = kpi
         self.kpiTrace = kpiTrace
+        self.lock = Lock()
 
         if self.kpi:
             self.job_backend.kpi_channel = self
@@ -759,8 +768,13 @@ class JobChannel:
                     len(y), self.name, len(self.traces)))
 
         line = json.dumps([x] + y)[1:-1]
-        self.stream.write(line + "\n")
-        self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
+
+        self.lock.acquire()
+        try:
+            self.stream.write(line + "\n")
+            self.job_backend.git.store_file('aetros/job/channel/' + self.name + '/last.csv', line)
+        finally:
+            self.lock.release()
 
         if self.kpi:
             self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[self.kpiTrace]))
@@ -775,7 +789,7 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None, logger=None, config_path = 'aetros.yml', name='master'):
+    def __init__(self, model_name=None, logger=None, config_path = 'aetros.yml', name=None):
         self.event_listener = EventListener()
 
         self.log_file_handle = None
@@ -786,8 +800,14 @@ class JobBackend:
         self.ssh_stream = None
         self.model_name = model_name
         self.logger = logger
-        self.name = name
         self.config_path = config_path
+
+        self.name = name
+        if not self.name:
+            if os.getenv('AETROS_JOB_NAME'):
+                self.name = os.getenv('AETROS_JOB_NAME')
+            else:
+                self.name = 'master'
 
         self.client = None
         self.stream_log = None
@@ -1027,6 +1047,9 @@ class JobBackend:
 
         self.current_batch = batch
 
+    def set_speed(self, speed):
+        self.set_system_info('samplesPerSecond', speed, True)
+
     @property
     def job_settings(self):
         if 'settings' in self.job['config']:
@@ -1176,7 +1199,7 @@ class JobBackend:
         """
         return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
-    def start(self):
+    def start(self, collect_system=True):
         if self.started:
             raise Exception('Job was already started.')
 
@@ -1212,12 +1235,15 @@ class JobBackend:
             self.git.commit_file('JOB_STARTED', 'aetros/job/times/started.json', str(time.time()))
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
             self.git.store_file('aetros/job/times/elapsed.json', str(0))
-            self.collect_system_information()
-            self.collect_environment()
 
-            # make sure we get the process first, before monitoring sends elapses and
+            if collect_system:
+                self.collect_system_information()
+                self.collect_environment()
+
+            # make sure we get the progress first, before monitoring sends elapses and
             # updates the job cache
-            self.git.push()
+            if self.git.online:
+                self.git.push()
 
             self.start_monitoring()
 
@@ -1572,6 +1598,7 @@ class JobBackend:
         return self.job_id
 
     def create_task(self, job_id, task_config, name, index):
+        # move to git
         task_config['task'] = name
         task_config['index'] = index
 
@@ -1649,7 +1676,7 @@ class JobBackend:
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
         with open(self.git.work_tree + '/aetros/job.json') as f:
-            self.job = json.loads(f.read())
+            self.job = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
 
         if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
@@ -1907,7 +1934,7 @@ class JobBackend:
         image.save(buffer, format="JPEG", optimize=True, quality=70)
         return buffer.getvalue()
 
-    def collect_environment(self):
+    def collect_environment(self, overwrite_variables={}):
         import socket
         import os
         import pip
@@ -1922,6 +1949,7 @@ class JobBackend:
 
         env['hostname'] = socket.gethostname()
         env['variables'] = dict(os.environ)
+        env['variables'].update(overwrite_variables)
 
         if 'AETROS_SSH_KEY' in env['variables']: del env['variables']['AETROS_SSH_KEY']
         if 'AETROS_SSH_KEY_BASE64' in env['variables']: del env['variables']['AETROS_SSH_KEY_BASE64']

@@ -157,7 +157,8 @@ class Git:
                     start = time.time()
                     self.command_exec(['push', '-f', 'origin', self.ref_head])
                     self.last_push_time = time.time() - start
-
+            except GitCommandException:
+                pass
             except SystemExit:
                 return
             except KeyboardInterrupt:
@@ -182,7 +183,7 @@ class Git:
 
         return ''.join(base_command)
 
-    def command_exec(self, command, inputdata=None, allowed_to_fail=False):
+    def command_exec(self, command, inputdata=None, allowed_to_fail=False, show_output=False):
         interrupted = False
 
         if isinstance(inputdata, six.string_types):
@@ -202,12 +203,15 @@ class Git:
         try:
             self.command_lock.acquire()
 
-            p = subprocess.Popen(
-                command, bufsize=0,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
-            )
-
-            stdoutdata, stderrdata = p.communicate(inputdata)
+            if show_output:
+                p = subprocess.Popen(command, bufsize=0, env=self.env)
+                p.wait()
+            else:
+                p = subprocess.Popen(
+                    command, bufsize=0,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
+                )
+                stdoutdata, stderrdata = p.communicate(inputdata)
         except KeyboardInterrupt:
             raise
         finally:
@@ -249,7 +253,7 @@ class Git:
                                       +"\nstdout: '" + str(stdoutdata)
                                       +"',\nstderr: '" + str(stderrdata)
                                       # +"', env="+str(self.env)
-                                      +", input="+str(inputdata))
+                                      +", input="+str(inputdata)[:50])
 
         return stdoutdata, p.returncode if p is not None else None, stderrdata
 
@@ -698,7 +702,7 @@ class Git:
         Push all changes to origin
         """
         try:
-            self.command_exec(['push', 'origin', '-f', self.ref_head])
+            self.command_exec(['push', 'origin', '-f', self.ref_head], show_output=True)
             return True
         except Exception as e:
             # this may fail due to:

@@ -1,3 +1,4 @@
+import collections
 import requests
 import six
 import sys
@@ -11,12 +12,12 @@ from aetros.utils import read_home_config, create_ssh_stream
 
 
 class ApiError(Exception):
-    def __init__(self, message, reason):
+    def __init__(self, message, error):
         self.message = message
-        self.reason = reason
+        self.error = error
 
     def __str__(self):
-        return self.message + ', Reason: ' + self.reason
+        return self.message + ', Reason: ' + self.error
 
 
 class ApiConnectionError(ApiError):
@@ -103,7 +104,7 @@ def raise_response_exception(message, response):
 
     if isinstance(content, six.string_types):
         try:
-            content_parsed = json.loads(content)
+            content_parsed = json.loads(content, object_pairs_hook=collections.OrderedDict)
             if 'error' in content_parsed:
                 error = content_parsed['error']
             if 'message' in content_parsed:
@@ -116,10 +117,10 @@ def raise_response_exception(message, response):
 
 
 def parse_json(content):
-    a = json.loads(content)
+    a = json.loads(content, object_pairs_hook=collections.OrderedDict)
 
     if isinstance(a, dict) and 'error' in a:
-        raise Exception('API request failed %s: %s.' % (a['error'], a['message']))
+        raise ApiError('API request failed %s: %s.' % (a['error'], a['message']), a['error'])
 
     return a
 

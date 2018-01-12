@@ -14,9 +14,6 @@ from aetros.const import JOB_STATUS
 from .backend import JobBackend
 from .Trainer import Trainer
 
-start_time = time.time()
-
-
 class GitCommandException(Exception):
     cmd = None
 
@@ -38,7 +35,7 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
         job_backend.fetch(id)
 
     job_backend.restart(id)
-    job_backend.start()
+    job_backend.start(collect_system=False)
     job_backend.set_status('PREPARE')
     job_backend.monitoring_thread.handle_max_time = False
 
@@ -53,15 +50,16 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
     if env_overwrite:
         env.update(env_overwrite)
 
-    if 'PYTHONPATH' not in env:
-        env['PYTHONPATH'] = os.getenv('PYTHONPATH', '')
-
-    env['PYTHONPATH'] += ':' + os.getcwd()
+    start_time = time.time()
     env['AETROS_MODEL_NAME'] = job_backend.model_name
     env['AETROS_JOB_ID'] = str(job_backend.job_id)
     env['DEBUG'] = os.getenv('DEBUG', '')
     env['AETROS_ATTY'] = '1'
     env['AETROS_GIT'] = job_backend.git.get_base_command()
+
+    env['PATH'] = os.getenv('PATH', '')
+    if 'PYTHONPATH' not in env:
+        env['PYTHONPATH'] = os.getenv('PYTHONPATH', '')
 
     if os.getenv('AETROS_SSH_KEY_BASE64'):
         env['AETROS_SSH_KEY_BASE64'] = os.getenv('AETROS_SSH_KEY_BASE64')
@@ -71,186 +69,91 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
     job_config = job_backend.job['config']
 
-    if 'command' not in job_config :
+    if 'command' not in job_config:
         job_backend.fail('No "command" given. See Configuration section in the documentation.')
 
-    command = job_config['command']
-    image = job_config['image']
+    job_commands = job_config['command']
+    docker_image = job_config['image']
 
     if job_backend.is_simple_model():
-        if image:
-            command = ['python']
+        if docker_image:
+            job_commands = ['python']
         else:
-            command = [sys.executable]
-        command += ['-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
+            job_commands = [sys.executable]
+        job_commands += ['-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
 
-    if command is None:
+    if job_commands is None:
         raise Exception('No command specified.')
+
+    if not isinstance(job_commands, list) and not isinstance(job_commands, dict):
+        job_commands = [job_commands]
 
     # replace {{batch_size}} parameters
     if isinstance(job_config['parameters'], dict):
         for key, value in six.iteritems(flatten_parameters(job_config['parameters'])):
-            if isinstance(command, list):
-                for pos, v in enumerate(command):
-                    if isinstance(command[pos], six.string_types):
-                        command[pos] = command[pos].replace('{{' + key + '}}', json.dumps(value))
-            elif isinstance(command, six.string_types):
-                command = command.replace('{{' + key + '}}', json.dumps(value))
+            if isinstance(job_commands, list):
+                for k, v in enumerate(job_commands):
+                    if isinstance(job_commands[k], six.string_types):
+                        job_commands[k] = job_commands[k].replace('{{' + key + '}}', json.dumps(value))
 
+            elif isinstance(job_commands, dict):
+                for k, v in six.iteritems(job_commands):
+                    if isinstance(job_commands[k], six.string_types):
+                        job_commands[k] = job_commands[k].replace('{{' + key + '}}', json.dumps(value))
+
+    job_backend.set_system_info('commands', job_commands)
     logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
 
     docker_image_built = False
+
     if job_config['dockerfile'] or job_config['install']:
-        dockerfile = job_config['dockerfile']
-        if isinstance(dockerfile, six.string_types) and os.path.exists(dockerfile):
-            pass
-        else:
-            if isinstance(dockerfile, six.string_types):
-                dockerfile_content = dockerfile
-            elif isinstance(dockerfile, list) and len(dockerfile) > 0:
-                dockerfile_content = "\n".join(dockerfile)
-            else:
-                if image is None:
-                    job_backend.fail("Image name missing, needed by `install` in aetros.yml")
-                dockerfile_content = 'FROM ' + image + '\nRUN '
-
-                if isinstance(job_config['install'], list):
-                    dockerfile_content += '\n RUN '.join(job_config['install'])
-                else:
-                    dockerfile_content += job_config['install']
-
-            dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in aetros.yml.\n' \
-                                 + dockerfile_content
-
-            with open('Dockerfile.aetros', 'w') as f:
-                f.write(dockerfile_content)
-
-            dockerfile = 'Dockerfile.aetros'
-            job_backend.commit_file('Dockerfile.aetros')
-
-        job_backend.set_system_info('image/dockerfile', dockerfile)
-
-        image = job_backend.model_name.lower()
-        docker_build = [
-            home_config['docker'],
-            'build',
-            '-t', image,
-            '-f', dockerfile,
-            '.',
-        ]
-
-        logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
-        job_backend.set_status('IMAGE BUILD')
-        p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-
-        if p.returncode:
-            job_backend.fail('Image build error')
-            sys.exit(p.returncode)
-
+        docker_image = docker_build_image(logger, home_config, job_backend)
         docker_image_built = True
 
-    docker_command = None
-    if image:
+    if docker_image:
         if not docker_image_built:
-            logger.info("Pull docker image: $ " + image)
-            job_backend.set_status('IMAGE PULL')
-            execute_command(args=[home_config['docker'], 'pull', image], bufsize=1,
-                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            docker_pull_image(logger, home_config, job_backend)
 
-        inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
-        inspections = json.loads(inspections.decode('utf-8'))
-        if inspections:
-            inspection = inspections[0]
-            with job_backend.git.batch_commit('Docker image'):
-                job_backend.set_system_info('image/id', inspection['Id'])
-                job_backend.set_system_info('image/docker_version', inspection['DockerVersion'])
-                job_backend.set_system_info('image/created', inspection['Created'])
-                job_backend.set_system_info('image/container', inspection['Container'])
-                job_backend.set_system_info('image/architecture', inspection['Architecture'])
-                job_backend.set_system_info('image/os', inspection['Os'])
-                job_backend.set_system_info('image/size', inspection['Size'])
-                job_backend.set_system_info('image/rootfs', inspection['RootFS'])
+        docker_image_information(logger, home_config, job_backend)
 
         # make sure old container is removed
         subprocess.Popen([home_config['docker'], 'rm', job_backend.job_id], stderr=subprocess.PIPE).wait()
 
-        docker_command = [home_config['docker'], 'run', '-t', '--name', job_backend.job_id]
-        docker_command += home_config['docker_options']
-
-        env['AETROS_GIT_WORK_DIR'] = '/job'
-        docker_command += ['--mount', 'type=bind,source='+job_backend.git.work_tree+',destination=/job']
-
-        env['AETROS_STORAGE_DIR'] = '/aetros'
-        docker_command += ['--mount', 'type=bind,source='+job_backend.git.git_path+',destination='+'/aetros/' + job_backend.model_name + '.git']
-
-        home_config_path = os.path.expanduser('~/aetros.yml')
-        if os.path.exists(home_config_path):
-            env['AETROS_HOME_CONFIG_FILE'] = '/aetros/aetros.yml'
-            docker_command += ['--mount', 'type=bind,source='+home_config_path+',destination='+'/aetros/aetros.yml']
-
-        docker_command += ['-w', '/job']
-
-        # make sure the docker command receives all environment variables
-        for k in six.iterkeys(env):
-            docker_command += ['-e', k]
-
-        if volumes:
-            for volume in volumes:
-                docker_command += ['-v', volume]
-
-        if 'resources' in job_backend.job:
-            assigned_resources = job_backend.job['resources']
-
-            cpus = 1
-            if 'cpu' in assigned_resources and assigned_resources['cpu']:
-                cpus = assigned_resources['cpu']
-            docker_command += ['--cpus', str(cpus)]
-
-            memory = 1
-            if 'memory' in assigned_resources and assigned_resources['memory']:
-                memory = assigned_resources['memory']
-
-            docker_command += ['--memory', str(memory * 1024 * 1024 * 1024)]
-
-        if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
-            # only supported on linux
-            docker_command += ['--runtime', 'nvidia']
-            docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
-            # support nvidia-docker1 as well
-            # docker_command += ['--device', '/dev/nvidia1']
-
-        docker_command.append(image)
+        command = docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env)
 
         # since linux doesnt handle SIGINT when pid=1 process has no signal listener,
         # we need to make sure, we attached one to the pid=1 process
-        trap = 'trapIt () { "$@"& pid="$!"; trap "kill -INT $pid" INT TERM; ' \
+        trap = 'trapIt () { "$@"& pid="$!"; trap "echo KILL IT $pid; kill -INT $pid" INT TERM; ' \
                'while kill -0 $pid > /dev/null 2>&1; do wait $pid; ec="$?"; done; exit $ec;};'
 
-        if isinstance(command, list):
-            command = ' '.join(command)
-
-        docker_command += ['sh', '-c', trap + 'trapIt ' + command]
-        command = docker_command
+        command.append(docker_image)
+        command += ['/bin/sh', '-c', trap + 'trapIt /bin/sh /job/aetros/command.sh']
     else:
         # non-docker
-        if not isinstance(command, list):
-            if os.environ.get('LD_LIBRARY_PATH', None):
-                # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
-                command = 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI; ' + command
 
-    job_backend.set_system_info('image/name', str(image))
+        # env['PYTHONPATH'] += ':' + os.getcwd()
+        job_backend.collect_system_information()
+        job_backend.collect_environment(env)
 
-    if not isinstance(command, list):
-        command = ['sh', '-c', command]
+        if os.environ.get('LD_LIBRARY_PATH', None):
+            # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
+            command = ['/bin/sh', '-c', 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI; /bin/sh "'+job_backend.git.work_tree+'/aetros/command.sh"']
+        else:
+            command = ['/bin/sh', job_backend.git.work_tree + '/job/aetros/command.sh']
+
+    logger.debug("$ %s " % (' '.join([json.dumps(a) for a in command])))
+    job_backend.set_system_info('image/name', str(docker_image))
 
     p = None
     exited = False
-    wait_stdout = None
-    wait_stderr = None
+    last_return_code = None
+    last_process = None
+    all_done = False
+    command_stats = None
     try:
         job_backend.set_status('STARTED')
-        logger.warning("$ %s " % (' '.join([json.dumps(a) for a in command])))
+        # logger.warning("$ %s " % (str(command),))
 
         # make sure maxTime limitation is correctly calculated
         job_backend.monitoring_thread.handle_max_time = True
@@ -268,65 +171,264 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         # only use full env when no image used
 
         command_env = env
-        if not docker_command:
+        if not docker_image:
             command_env = os.environ.copy()
             command_env.update(env)
             if os.environ.get('LD_LIBRARY_PATH', None):
                 command_env['LD_LIBRARY_PATH_ORI'] = command_env['LD_LIBRARY_PATH']
 
-        p = subprocess.Popen(args=command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs)
-        wait_stdout = sys.stdout.attach(p.stdout)
-        wait_stderr = sys.stderr.attach(p.stderr)
+        def write_command_sh(job_command):
+            f = open(job_backend.git.work_tree + '/aetros/command.sh', 'w+')
+            f.write(job_command)
+            f.close()
 
-        p.wait()
-        wait_stdout()
-        wait_stderr()
+        def exec_command(id, command, job_command):
+            write_command_sh(job_command)
+            print('$ ' + job_command.strip() + '\n')
+            args = [job_backend.job_id + '_' + str(id) if x == job_backend.job_id else x for x in command]
+            logger.debug('$ ' + ' '.join([json.dumps(a) for a in args]))
+            p = subprocess.Popen(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env,
+                **kwargs)
 
+            # todo, start docker cpu,memory, assigned GPU monitoring when docker_image
+
+            wait_stdout = sys.stdout.attach(p.stdout)
+            wait_stderr = sys.stderr.attach(p.stderr)
+            p.wait()
+            wait_stdout()
+            wait_stderr()
+            return p
+
+        done = 0
+        total = len(job_commands)
+        job_backend.set_system_info('command_stats', command_stats, True)
+        if isinstance(job_commands, list):
+            command_stats = [{'rc': None, 'started': None, 'ended': None} for x in job_commands]
+            for k, job_command in enumerate(job_commands):
+                job_backend.set_status('COMMAND #' + str(k))
+
+                command_stats[k]['started'] = time.time() - start_time
+                job_backend.set_system_info('command_stats', command_stats, True)
+
+                command_env['AETROS_JOB_NAME'] = 'command_' + str(k)
+                last_process = exec_command(k, command, job_command)
+                last_return_code = last_process.poll()
+
+                command_stats[k]['rc'] = last_return_code
+                command_stats[k]['ended'] = time.time() - start_time
+                job_backend.set_system_info('command_stats', command_stats, True)
+
+                if last_return_code == 0:
+                    done += 1
+                else:
+                    # one failed, so exit and don't execute next
+                    break
+
+        if isinstance(job_commands, dict):
+            command_stats = {}
+            for name, job_command in six.iteritems(job_commands):
+                command_stats[name] = {'rc': None, 'started': None, 'ended': None}
+
+            for name, job_command in six.iteritems(job_commands):
+                job_backend.set_status(name)
+
+                command_stats[name]['started'] = time.time() - start_time
+                job_backend.set_system_info('command_stats', command_stats, True)
+
+                # important to prefix it, otherwise name='master' would reset all stats in controller backend
+                command_env['AETROS_JOB_NAME'] = 'command_' + name
+                last_process = exec_command(name, command, job_command)
+                last_return_code = last_process.poll()
+
+                command_stats[name]['rc'] = last_return_code
+                command_stats[name]['ended'] = time.time() - start_time
+                job_backend.set_system_info('command_stats', command_stats, True)
+
+                if last_return_code == 0:
+                    done += 1
+                else:
+                    # one failed, so exit and don't execute next
+                    break
+
+        all_done = done == total
         exited = True
 
-        sys.exit(p.returncode)
+        if last_process:
+            sys.exit(last_process.poll())
+        else:
+            sys.exit(1)
+
     except SystemExit:
-        # We can not send a SIGINT to the child process
-        # as we don't know whether it received it already (pressing CTRL+C) or not (sending SIGINT to this process only
-        # instead of to the group), so we assume it received it. A second signal would force the exit.
-        # sys.__stdout__.write("SystemExit with " + str(p.returncode) + ', exited: ' + str(exited) + ", early: "+str(job_backend.in_early_stop)+"\n")
+        # since we started the command in a new process group, a SIGINT or CTRL+C on this process won't affect
+        # our actual command process. So we need to take care that we stop everything.
+        print("SystemExit, all-done=", str(all_done), 'last-process=', last_process is not None, last_process.poll() if last_process else None)
 
         # make sure the process dies
-        if docker_command:
+        if docker_image:
             # docker run does not proxy INT signals to the docker-engine,
             # so we need to do it on our own directly.
-            subprocess.Popen([home_config['docker'], 'kill', '--signal', 'INT', job_backend.job_id],
-                stderr=subprocess.PIPE, stdout=subprocess.PIPE).wait()
-            subprocess.Popen([home_config['docker'], 'wait', job_backend.job_id], stdout=subprocess.PIPE).wait()
-        elif not exited and p and p.poll() is None:
-            p.kill() # sends SIGINT
-            p.wait()
+            subprocess.Popen([home_config['docker'], 'stop', job_backend.job_id], stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE).wait()
+        elif not exited and last_process and last_process.poll() is None:
+            # wait for last command
+            last_process.kill()  # sends SIGINT
+            last_process.wait()
 
         if exited:
-            if p.returncode == 0:
+            if all_done:
                 job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_DONE)
-            elif p.returncode == 1:
+            elif last_return_code == 1:
                 job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_ABORTED)
             else:
                 job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_FAILED)
         else:
-            # master received SIGINT before the actual command exited.
+            # master received SIGINT before the all job commands exited.
             if not job_backend.in_early_stop:
-                # master did not receive early_stop signal (maxTime limitation)
-                # if not, the master received a stop signal by server or by hand (ctrl+c), so mark as aborted
+                # in_early_stop indicates whether we want to have a planned stop (maxTime limitation for example),
+                # which should mark the job as done, not as abort().
+                # if this is not set, we the master received a SIGINT without early_stop, so mark as aborted.
                 job_backend.abort()
             else:
                 # let the on_shutdown listener handle the rest
                 pass
 
-                # only
-                #     # check if there was a JobBackend in the command
-                #     # if so, we do not add any further stuff to the git
-                #     last_progress = job_backend.git.contents('aetros/job/status/progress.json')
-                #     if last_progress is not None and int(last_progress) > 2:
-                #         # make sure, we do not overwrite stuff written inside the sub-process by using our own
-                #         # on_shutdown listener.
-                #         job_backend.stop()
+
+def docker_pull_image(logger, home_config, job_backend):
+    image = job_backend.job['config']['image']
+
+    logger.info("Pull docker image: $ " + image)
+    job_backend.set_status('IMAGE PULL')
+
+    execute_command(args=[home_config['docker'], 'pull', image], bufsize=1, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE)
+
+
+def docker_image_information(logger, home_config, job_backend):
+    image = job_backend.job['config']['image']
+
+    inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
+    inspections = json.loads(inspections.decode('utf-8'))
+
+    if inspections:
+        inspection = inspections[0]
+        with job_backend.git.batch_commit('Docker image'):
+            job_backend.set_system_info('image/id', inspection['Id'])
+            job_backend.set_system_info('image/docker_version', inspection['DockerVersion'])
+            job_backend.set_system_info('image/created', inspection['Created'])
+            job_backend.set_system_info('image/container', inspection['Container'])
+            job_backend.set_system_info('image/architecture', inspection['Architecture'])
+            job_backend.set_system_info('image/os', inspection['Os'])
+            job_backend.set_system_info('image/size', inspection['Size'])
+            job_backend.set_system_info('image/rootfs', inspection['RootFS'])
+
+
+def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env):
+    docker_command = [home_config['docker'], 'run', '-t', '--name', job_backend.job_id]
+    docker_command += home_config['docker_options']
+
+    env['AETROS_GIT_WORK_DIR'] = '/job'
+    docker_command += ['--mount', 'type=bind,source=' + job_backend.git.work_tree + ',destination=/job']
+
+    if not os.path.exists(job_backend.git.work_tree + '/aetros/'):
+        os.makedirs(job_backend.git.work_tree + '/aetros/')
+
+    env['AETROS_STORAGE_DIR'] = '/aetros'
+    docker_command += ['--mount',
+        'type=bind,source=' + job_backend.git.git_path + ',destination=' + '/aetros/' + job_backend.model_name + '.git']
+
+    home_config_path = os.path.expanduser('~/aetros.yml')
+    if os.path.exists(home_config_path):
+        env['AETROS_HOME_CONFIG_FILE'] = '/aetros/aetros.yml'
+        docker_command += ['--mount', 'type=bind,source=' + home_config_path + ',destination=' + '/aetros/aetros.yml']
+
+    docker_command += ['-w', '/job']
+
+    # following makes no sense to pass to Docker
+    env_blacklist = ['PATH', 'PYTHONPATH']
+
+    # make sure the docker command receives all environment variables
+    for k in six.iterkeys(env):
+        if k in env_blacklist:
+            continue
+        docker_command += ['-e', k]
+
+    docker_command += ['-e', 'AETROS_JOB_NAME']
+
+    if volumes:
+        for volume in volumes:
+            docker_command += ['-v', volume]
+
+    if 'resources' in job_backend.job:
+        assigned_resources = job_backend.job['resources']
+
+        cpus = 1
+        if 'cpu' in assigned_resources and assigned_resources['cpu']:
+            cpus = assigned_resources['cpu']
+        docker_command += ['--cpus', str(cpus)]
+
+        memory = 1
+        if 'memory' in assigned_resources and assigned_resources['memory']:
+            memory = assigned_resources['memory']
+
+        docker_command += ['--memory', str(memory * 1024 * 1024 * 1024)]
+
+    if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
+        # only supported on linux
+        docker_command += ['--runtime', 'nvidia']
+        docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
+        # support nvidia-docker1 as well
+        # docker_command += ['--device', '/dev/nvidia1']
+
+    return docker_command
+
+
+def docker_build_image(logger, home_config, job_backend):
+    job_config = job_backend.job['config']
+    image = job_config['image']
+    dockerfile = job_config['dockerfile']
+
+    if isinstance(dockerfile, six.string_types) and os.path.exists(dockerfile):
+        pass
+    else:
+        if isinstance(dockerfile, six.string_types):
+            dockerfile_content = dockerfile
+        elif isinstance(dockerfile, list) and len(dockerfile) > 0:
+            dockerfile_content = "\n".join(dockerfile)
+        else:
+            if image is None:
+                job_backend.fail("Image name missing, needed by `install` in aetros.yml")
+            dockerfile_content = 'FROM ' + image + '\nRUN '
+
+            if isinstance(job_config['install'], list):
+                dockerfile_content += '\n RUN '.join(job_config['install'])
+            else:
+                dockerfile_content += job_config['install']
+
+        dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in aetros.yml.\n' + dockerfile_content
+
+        with open('Dockerfile.aetros', 'w') as f:
+            f.write(dockerfile_content)
+
+        dockerfile = 'Dockerfile.aetros'
+        job_backend.commit_file('Dockerfile.aetros')
+
+    job_backend.set_system_info('image/dockerfile', dockerfile)
+
+    image = job_backend.model_name.lower()
+    if 'category' in job_config:
+        image += '_' + job_config['category']
+
+    docker_build = [home_config['docker'], 'build', '-t', image, '-f', dockerfile, '.', ]
+
+    logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
+    job_backend.set_status('IMAGE BUILD')
+    p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    if p.returncode:
+        job_backend.fail('Image build error')
+        sys.exit(p.returncode)
+
+    return image
 
 
 def execute_command_stdout(command, input=None):
@@ -355,7 +457,7 @@ def execute_command(**kwargs):
 
 def git_execute(logger, repo_path, args):
     args = ['git', '--git-dir', repo_path + '/.git', '--work-tree', repo_path] + args
-    logger.info("$ %s" % (' '.join(args), ))
+    logger.info("$ %s" % (' '.join(args),))
 
     p = execute_command(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
