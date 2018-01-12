@@ -124,7 +124,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
         # since linux doesnt handle SIGINT when pid=1 process has no signal listener,
         # we need to make sure, we attached one to the pid=1 process
-        trap = 'trapIt () { "$@"& pid="$!"; trap "echo KILL IT $pid; kill -INT $pid" INT TERM; ' \
+        trap = 'trapIt () { "$@"& pid="$!"; trap "kill -INT $pid" INT TERM; ' \
                'while kill -0 $pid > /dev/null 2>&1; do wait $pid; ec="$?"; done; exit $ec;};'
 
         command.append(docker_image)
@@ -185,7 +185,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         def exec_command(id, command, job_command):
             write_command_sh(job_command)
             print('$ ' + job_command.strip() + '\n')
-            args = [job_backend.job_id + '_' + str(id) if x == job_backend.job_id else x for x in command]
+            # args = [job_backend.job_id + '_' + str(id) if x == job_backend.job_id else x for x in command]
+            args = command
             logger.debug('$ ' + ' '.join([json.dumps(a) for a in args]))
             p = subprocess.Popen(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env,
                 **kwargs)
@@ -323,7 +324,7 @@ def docker_image_information(logger, home_config, job_backend):
 
 
 def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env):
-    docker_command = [home_config['docker'], 'run', '-t', '--name', job_backend.job_id]
+    docker_command = [home_config['docker'], 'run', '-t', '--rm', '--name', job_backend.job_id]
     docker_command += home_config['docker_options']
 
     env['AETROS_GIT_WORK_DIR'] = '/job'

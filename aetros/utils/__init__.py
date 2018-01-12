@@ -186,6 +186,7 @@ def extract_parameters(full_definitions, overwritten = None, incoming_path = '')
 
     for parameter in full_definitions:
         param_type = parameter['type']
+        param_subtype = parameter['subtype'] if 'subtype' in parameter else None
 
         if 'defaultValue' in parameter:
             defaultValue = parameter['defaultValue']
@@ -209,7 +210,10 @@ def extract_parameters(full_definitions, overwritten = None, incoming_path = '')
             container[name] = str(value)
 #
         if param_type == 'number':
-            container[name] = float(value)
+            if param_subtype == 'int':
+                container[name] = int(value)
+            else:
+                container[name] = float(value)
 #
         if param_type == 'boolean':
             container[name] = bool(value)
@@ -290,6 +294,7 @@ def lose_parameters_to_full(parameters):
                 if not v:
                     definition['type'] = 'choice_string'
                     continue
+
                 if isinstance(v[0], six.string_types):
                     definition['type'] = 'choice_string'
                 else:
@@ -322,6 +327,9 @@ def lose_parameters_to_full(parameters):
                 definition['children'] = extract_from_parameters(v)
             else:
                 definition['type'] = type_of(v)
+                if isinstance(v, (int)):
+                    definition['subtype'] = 'int'
+
                 definition['defaultValue'] = v
 
             definitions.append(definition)

@@ -136,9 +136,9 @@ class RunCommand:
             create_info['config']['resources'] = {}
 
         if parsed_args.cpu or parsed_args.memory or parsed_args.gpu is not None or parsed_args.gpu_memory:
-            if parsed_args.cpu: create_info['config']['resources']['cpu'] = float(parsed_args.cpu)
+            if parsed_args.cpu: create_info['config']['resources']['cpu'] = int(parsed_args.cpu)
             if parsed_args.memory: create_info['config']['resources']['memory'] = float(parsed_args.memory)
-            if parsed_args.gpu is not None: create_info['config']['resources']['gpu'] = float(parsed_args.gpu)
+            if parsed_args.gpu is not None: create_info['config']['resources']['gpu'] = int(parsed_args.gpu)
             if parsed_args.gpu_memory: create_info['config']['resources']['gpu_memory'] = float(parsed_args.gpu_memory)
 
         if parsed_args.local:
@@ -152,6 +152,8 @@ class RunCommand:
                 create_info['resources_assigned'] = {'cpus': 1, 'memory': 1, 'gpus': []}
 
                 if 'gpu' in resources and resources['gpu'] > 0:
+                    # todo, check for actual gpu devices and make the mapping
+                    # if requested 2 GPUs and we have 3 GPUs with id [3,4,5], gpus should be [3,4]
                     create_info['resources_assigned']['gpus'] = [1] * resources['gpu']
                 if 'cpu' in resources:
                     create_info['resources_assigned']['cpus'] = resources['cpu']
