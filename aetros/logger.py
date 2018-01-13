@@ -61,11 +61,13 @@ class GeneralLogger(object):
                 if self.job_backend.write_log(self.buffer):
                     self.buffer = ''
 
-    def attach(self, buffer, read_line=False):
+    def attach(self, buffer, read_line=None):
         """
         Read buffer until end (read() returns '') and sends it to self.logger and self.job_backend.
 
-        :param buffer: a buffer instance with block read() method
+        :param buffer: a buffer instance with block read() or readline() method
+        :param read_line: callable or True to read line per line. If callable is given, it will be executed per line
+                          and ignores does not redirect the line to stdout/logger when callable returns False.
         """
 
         bid = id(buffer)
@@ -82,8 +84,13 @@ class GeneralLogger(object):
                     # buf = os.read(buffer.fileno(), 4096)
                     if read_line:
                         buf = buffer.readline()
+                        if callable(read_line):
+                            res = read_line(buf)
+                            if res is False:
+                                continue
                     else:
                         buf = buffer.read(1)
+
                     if buf == six.b(''):
                         break
 

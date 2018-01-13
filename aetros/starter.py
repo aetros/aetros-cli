@@ -184,6 +184,13 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             f.write(job_command)
             f.close()
 
+        def read_line(line):
+            line = line.strip()
+
+            if line[0:8] == six.b('{aetros:') and line[-1:] == six.b('}'):
+                if job_backend.handle_stdout_api(line):
+                    return False
+
         def exec_command(id, command, job_command):
             write_command_sh(job_command)
             print('$ ' + job_command.strip() + '\n')
@@ -195,7 +202,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
             # todo, start docker cpu,memory, assigned GPU monitoring when docker_image
 
-            wait_stdout = sys.stdout.attach(p.stdout)
+            wait_stdout = sys.stdout.attach(p.stdout, read_line=read_line)
             wait_stderr = sys.stderr.attach(p.stderr)
             p.wait()
             wait_stdout()

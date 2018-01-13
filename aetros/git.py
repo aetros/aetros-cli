@@ -125,6 +125,8 @@ class Git:
                 self.git_email = user['email']
             else:
                 self.go_offline()
+        except OSError:
+            self.go_offline()
         except ApiConnectionError as e:
             self.go_offline()
 

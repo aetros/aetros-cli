@@ -20,6 +20,8 @@ import six
 import PIL.Image
 import sys
 import msgpack
+from ruamel import yaml
+from ruamel.yaml.reader import ReaderError
 
 from aetros.JobModel import JobModel
 from aetros.const import JOB_STATUS, __version__
@@ -1075,12 +1077,12 @@ class JobBackend:
             self.set_system_info('stepSpeedLabel', speed_label, True)
             self.step_speed_label = speed_label
 
-    def set_speed(self, speed, speed_label=None):
+    def set_speed(self, speed, label=None):
         self.set_system_info('samplesPerSecond', speed, True)
 
-        if speed_label and self.step_speed_label != speed_label:
-            self.set_system_info('stepSpeedLabel', speed_label, True)
-            self.step_speed_label = speed_label
+        if label and self.step_speed_label != label:
+            self.set_system_info('stepSpeedLabel', label, True)
+            self.step_speed_label = label
 
     @property
     def job_settings(self):
@@ -1771,11 +1773,11 @@ class JobBackend:
     def job_add_status(self, key, value):
         self.git.commit_file('STATUS ' + str(value), 'aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))
 
-    def set_info(self, key, value, commit_end_of_job=False):
+    def set_info(self, name, value, commit_end_of_job=False):
         if commit_end_of_job:
-            self.git.store_file('aetros/job/info/' + key + '.json', json.dumps(value, default=invalid_json_values))
+            self.git.store_file('aetros/job/info/' + name + '.json', json.dumps(value, default=invalid_json_values))
         else:
-            self.git.commit_json_file('INFO ' + key, 'aetros/job/info/' + key, value)
+            self.git.commit_json_file('INFO ' + name, 'aetros/job/info/' + name, value)
 
     def set_graph(self, graph):
         self.git.commit_json_file('GRAPH', 'aetros/job/graph', graph)
@@ -1953,7 +1955,6 @@ class JobBackend:
             }
 
         with self.git.batch_commit('INSIGHT ' + str(x)):
-
             for image in converted_images:
                 self.git.commit_file('INSIGHT ' + str(image['id']), 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg', image['image'])
 
@@ -2006,3 +2007,95 @@ class JobBackend:
             cpu = cpuinfo.get_cpu_info()
             self.set_system_info('cpu_name', cpu['brand'])
             self.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpu['count']])
+
+    stdout_api_channels = {}
+
+    def handle_stdout_api(self, line):
+        try:
+            data = yaml.load(line, Loader=yaml.RoundTripLoader)
+        except ReaderError:
+            self.logger.warning("AETROS stdout API call mailformed '%s'" % (line, ))
+            return False
+
+        action = data['aetros']
+        del data['aetros']
+
+        def validate_action(requires_attributes):
+            for attr in requires_attributes:
+                if attr not in data:
+                    self.logger.warning("AETROS stdout API call %s requires value for '%s'. Following ignored: %s" % (action, attr, line))
+                    return False
+
+            return True
+
+        def failed(message):
+            self.logger.warning(
+                "AETROS stdout API call %s failed: %s. Following ignored: %s" % (action, message, line))
+
+        def default(attr, default=None):
+            return data[attr] if attr in data else default
+
+        if action == 'progress':
+            if validate_action(['epoch', 'total']):
+                self.progress(**data)
+                return True
+
+        if action == 'batch':
+            if validate_action(['batch', 'total', 'batch_size']):
+                self.batch(**data)
+                return True
+
+        if action == 'step':
+            if validate_action(['step', 'total']):
+                self.step(**data)
+                return True
+
+        if action == 'sample':
+            if validate_action(['step', 'total']):
+                self.sample(**data)
+                return True
+
+        if action == 'info':
+            if validate_action(['name', 'value']):
+                self.set_info(**data)
+                return True
+
+        if action == 'status':
+            if validate_action(['status']):
+                self.set_status(**data)
+                return True
+
+        if action == 'set_speed':
+            if validate_action(['speed']):
+                self.set_speed(**data)
+                return True
+
+        if action == 'create-channel':
+            if validate_action(['name']):
+                if data['name'] in self.stdout_api_channels:
+                    failed("Channel %s already defined. " % (data['name'], ))
+                else:
+                    self.stdout_api_channels[data['name']] = self.create_channel(**data)
+                    return True
+
+        if action == 'channel':
+            if validate_action(['name', 'x', 'y']):
+                if data['name'] not in self.stdout_api_channels:
+                    self.stdout_api_channels[data['name']] = self.create_channel(data['name'])
+
+                self.stdout_api_channels[data['name']].send(data['x'], data['y'])
+                return True
+
+        if action == 'insight':
+            if validate_action(['x']):
+
+                self.job_add_insight(data['x'])
+                return True
+
+        if action == 'abort':
+            self.abort()
+
+        if action == 'fail':
+            self.fail(default('message'))
+
+        return False
