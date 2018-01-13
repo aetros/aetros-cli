@@ -142,7 +142,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
             command = ['/bin/sh', '-c', 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI; /bin/sh "'+job_backend.git.work_tree+'/aetros/command.sh"']
         else:
-            command = ['/bin/sh', job_backend.git.work_tree + '/job/aetros/command.sh']
+            command = ['/bin/sh', job_backend.git.work_tree + '/aetros/command.sh']
 
     logger.debug("$ %s " % (' '.join([json.dumps(a) for a in command])))
     job_backend.set_system_info('image/name', str(docker_image))
