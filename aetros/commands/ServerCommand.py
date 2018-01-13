@@ -460,6 +460,8 @@ class ServerCommand:
 
         net_stats = psutil.net_io_counters(pernic=True)
         for id in self.nets:
+            if id not in net_stats:
+                continue
             net = net_stats[id]
             values['nets'][id] = {
                 'recv': net.bytes_recv,
