@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 from __future__ import absolute_import
 
+import re
 import time
 import json
 import os
@@ -420,8 +421,9 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
 
     image = job_backend.model_name.lower()
     if 'category' in job_config:
-        image += '_' + job_config['category']
+        image += '_' + job_config['category'].lower()
 
+    image = re.sub('[^A-Z_\-a-z0-9]+', '', image)
     docker_build = [home_config['docker'], 'build']
 
     if rebuild_image:

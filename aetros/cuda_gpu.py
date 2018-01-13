@@ -195,20 +195,24 @@ def get_libcudart():
     if libcudart is not None:
         return libcudart
 
-    system = platform.system()
-    if system == "Linux":
-        libcudart = ctypes.cdll.LoadLibrary("libcudart.so")
-    elif system == "Darwin":
-        libcudart = ctypes.cdll.LoadLibrary("libcudart.dylib")
-    elif system == "Windows":
-        libcudart = ctypes.windll.LoadLibrary("libcudart.dll")
-    else:
-        raise CudaNotImplementedException("Cannot identify system.")
+    try:
+        system = platform.system()
+        if system == "Linux":
+            libcudart = ctypes.cdll.LoadLibrary("libcudart.so")
+        elif system == "Darwin":
+            libcudart = ctypes.cdll.LoadLibrary("libcudart.dylib")
+        elif system == "Windows":
+            libcudart = ctypes.windll.LoadLibrary("libcudart.dll")
+        else:
+            raise CudaNotImplementedException("Cannot identify system.")
+    except OSError as e:
+        raise CudaNotImplementedException(e.message)
 
     version = ctypes.c_int()
     rc = libcudart.cudaRuntimeGetVersion(ctypes.byref(version))
     if rc != 0:
         raise ValueError("Could not get version")
+
     if version.value < 6050:
         raise CudaNotImplementedException("CUDA version must be >= 6.5")
 
