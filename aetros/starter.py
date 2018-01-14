@@ -153,6 +153,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
     last_process = None
     all_done = False
     command_stats = None
+    files = job_backend.file_list()
     try:
         job_backend.set_status('STARTED')
         # logger.warning("$ %s " % (str(command),))
@@ -289,6 +290,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             last_process.kill()  # sends SIGINT
             last_process.wait()
 
+        upload_output_files(job_backend, files)
+
         if exited:
             if all_done:
                 job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_DONE)
@@ -306,6 +309,20 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             else:
                 # let the on_shutdown listener handle the rest
                 pass
+
+
+def upload_output_files(job_backend, init_files):
+    files = job_backend.file_list()
+    added = 0
+    job_backend.set_status('UPLOAD JOB DATA')
+
+    for file in files:
+        if file not in init_files:
+            added += 1
+            print("Added job data: " + file)
+            job_backend.git.add_file_path(file, job_backend.git.work_tree)
+
+    job_backend.git.commit_index('UPLOAD JOB DATA')
 
 
 def docker_pull_image(logger, home_config, job_backend):

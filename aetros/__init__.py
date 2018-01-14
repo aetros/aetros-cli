@@ -64,6 +64,7 @@ def main(args=None):
     from aetros.commands.JobDiffCommand import JobDiffCommand
     from aetros.commands.JobCheckoutCommand import JobCheckoutCommand
     from aetros.commands.JobFilesCommand import JobFilesCommand
+    from aetros.commands.JobCommitsCommand import JobCommitsCommand
     from aetros.commands.JobsCommand import JobsCommand
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.PredictCommand import PredictCommand
@@ -94,6 +95,7 @@ def main(args=None):
         'job-diff': JobDiffCommand,
         'job-checkout': JobCheckoutCommand,
         'job-files': JobFilesCommand,
+        'job-commits': JobCommitsCommand,
         'add': AddCommand,
         'init': InitCommand,
         'gpu': GPUCommand,

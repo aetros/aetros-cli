@@ -920,11 +920,6 @@ class JobBackend:
     def on_registration(self, params):
         if not self.registered:
             self.registered = True
-
-            if self.is_master_process():
-                self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
-                self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
-
             self.logger.debug('Git backend start')
             self.git.start()
         else:
@@ -1279,6 +1274,9 @@ class JobBackend:
             if self.git.online:
                 self.git.push()
 
+            self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
+            self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
+
             self.start_monitoring()
 
             # log stdout to Git by using self.write_log -> git:stream_file
@@ -1456,9 +1454,6 @@ class JobBackend:
 
         if self.monitoring_thread:
             self.monitoring_thread.stop()
-
-        if self.is_master_process():
-            self.set_status('STOPPED', add_section=False)
 
         self.logger.debug("stop: " + str(progress))
 
@@ -1901,7 +1896,37 @@ class JobBackend:
                 json.dumps(result, default=invalid_json_values)
             )
 
-    def add_files(self, working_tree):
+    def file_list(self):
+        """
+        Lists all files in the working directory.
+        """
+        blacklist = ['.git', 'aetros']
+        working_tree = self.git.work_tree
+
+        def recursive(path='.'):
+            if os.path.basename(path) in blacklist:
+                return 0, 0
+
+            if os.path.isdir(path):
+                files = []
+                for file in os.listdir(path):
+                    if path and path != '.':
+                        file = path + '/' + file
+
+                    added_files = recursive(file)
+                    files += added_files
+
+                return files
+            else:
+                if is_ignored(path, self.config['ignore']):
+                    return []
+
+                return [os.path.relpath(path, working_tree)]
+
+        return recursive(working_tree)
+
+
+    def add_files(self, working_tree, report=False, message='COMMIT FILES'):
         """
         Commits all files from limited in aetros.yml. `files` is a whitelist, `exclude_files` is a blacklist.
         If both are empty, we commit all files smaller than 10MB.
@@ -1909,7 +1934,9 @@ class JobBackend:
         """
         blacklist = ['.git', 'aetros']
 
-        def add_resursiv(path = '.'):
+        def add_resursiv(path = '.', report=report):
+            self.logger.debug("add_resursiv " + path + ' => ' + str(is_ignored(path, self.config['ignore'])))
+
             if os.path.basename(path) in blacklist:
                 return 0, 0
 
@@ -1930,12 +1957,14 @@ class JobBackend:
                     return 0, 0
 
                 self.logger.debug("added file to job " + path)
+                if report:
+                    print("Added output job file: " + os.path.relpath(path, working_tree))
+
                 self.git.add_file_path(path, working_tree)
 
                 return 1, os.path.getsize(path)
 
-        with self.git.batch_commit('COMMIT FILES'):
-            return add_resursiv()
+        return add_resursiv(working_tree, report=report)
 
     def job_add_insight(self, x, images, confusion_matrix):
         converted_images = []
