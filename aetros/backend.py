@@ -2051,7 +2051,7 @@ class JobBackend:
                 return True
 
         if action == 'sample':
-            if validate_action(['step', 'total']):
+            if validate_action(['sample', 'total']):
                 self.sample(**data)
                 return True
 
