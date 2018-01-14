@@ -458,8 +458,7 @@ def is_ignored(path, ignore_patters):
 def git_local_job_ids(home_config, model):
     git_dir = os.path.normpath(home_config['storage_dir'] + '/' + model + '.git')
 
-    output = subprocess.check_output([home_config['git'], '--bare', '--git-dir', git_dir, 'show-ref'])\
-        .decode('utf-8')
+    output = subprocess.check_output([home_config['git'], '--bare', '--git-dir', git_dir, 'show-ref']).decode('utf-8')
 
     job_ids = []
 

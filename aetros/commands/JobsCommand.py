@@ -26,7 +26,7 @@ class JobsCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' jobs')
-        parser.add_argument('--local', '-l', action='store_true', help="Local only jobs view")
+        parser.add_argument('--all', '-a', action='store_true', help="Show remote jobs as well")
         parser.add_argument('--model', help="Model name like peter/mnist. Per default from configuration.")
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory or directories above.")
 
@@ -37,14 +37,6 @@ class JobsCommand:
         model = parsed_args.model if parsed_args.model else config['model']
         if not model:
             print("No model defined. Use --model or switch into a directory where a model is set up.")
-            sys.exit(1)
-
-        git_dir = os.path.normpath(home_config['storage_dir'] + '/' + model + '.git')
-        git_remote_url = 'git@%s:%s.git' % (home_config['host'], model)
-
-        if parsed_args.local and not os.path.isdir(git_dir):
-            self.logger.error("Git repository for model %s in %s not found." % (parsed_args.id, git_dir))
-            self.logger.error("You seem not to have any job created on this machine for model " + model)
             sys.exit(1)
 
         print("Show jobs of model " + model + ' ('+home_config['host']+')')
@@ -65,10 +57,12 @@ class JobsCommand:
         for job_id in remote_job_ids:
             if job_id in job_map:
                 job_map[job_id]['remote'] = Color('{autogreen}Yes{/autogreen}')
-            elif not parsed_args.local:
+            elif parsed_args.all:
                 job_map[job_id] = {'local': Color('{autored}No{/autored}'), 'remote': Color('{autogreen}Yes{/autogreen}')}
 
         print("%d jobs found. (%d synced to remote)" % (len(job_map), len(remote_job_ids)))
+        if not parsed_args.all:
+            print("Use --all to show remote jobs as well.")
 
         table_data = [['Short Job ID', 'Local', 'Remote', 'Long Job ID']]
 
