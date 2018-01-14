@@ -1907,7 +1907,7 @@ class JobBackend:
         If both are empty, we commit all files smaller than 10MB.
         :return:
         """
-        blacklist = ['.git', '.aetros']
+        blacklist = ['.git', 'aetros']
 
         def add_resursiv(path = '.'):
             if os.path.basename(path) in blacklist:
