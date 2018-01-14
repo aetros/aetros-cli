@@ -65,7 +65,7 @@ class JobsCommand:
         for job_id in remote_job_ids:
             if job_id in job_map:
                 job_map[job_id]['remote'] = Color('{autogreen}Yes{/autogreen}')
-            elif parsed_args.local:
+            elif not parsed_args.local:
                 job_map[job_id] = {'local': Color('{autored}No{/autored}'), 'remote': Color('{autogreen}Yes{/autogreen}')}
 
         print("%d jobs found. (%d synced to remote)" % (len(job_map), len(remote_job_ids)))
