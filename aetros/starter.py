@@ -277,9 +277,13 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         if docker_image:
             # docker run does not proxy INT signals to the docker-engine,
             # so we need to do it on our own directly.
-            print("stop docker container " + job_backend.job_id)
-            execute_command_stdout([home_config['docker'], 'stop', '-t', '5', job_backend.job_id])
-            print("stopped")
+            p = subprocess.Popen(args=[home_config['docker'], 'inspect', job_backend.job_id],
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            p.wait()
+            if p.poll() == 0:
+                print("stop docker container " + job_backend.job_id)
+                subprocess.Popen(args=[home_config['docker'], 'stop', '-t', '5', job_backend.job_id]).wait()
+                print("stopped")
         elif not exited and last_process and last_process.poll() is None:
             # wait for last command
             last_process.kill()  # sends SIGINT
