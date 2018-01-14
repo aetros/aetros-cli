@@ -1901,7 +1901,7 @@ class JobBackend:
                 json.dumps(result, default=invalid_json_values)
             )
 
-    def add_files(self):
+    def add_files(self, working_tree):
         """
         Commits all files from limited in aetros.yml. `files` is a whitelist, `exclude_files` is a blacklist.
         If both are empty, we commit all files smaller than 10MB.
@@ -1930,8 +1930,8 @@ class JobBackend:
                     return 0, 0
 
                 self.logger.debug("added file to job " + path)
-                with open(path, 'r') as f:
-                    self.git.add_file(path, f.read())
+                self.git.add_file_path(path, working_tree)
+
                 return 1, os.path.getsize(path)
 
         with self.git.batch_commit('COMMIT FILES'):

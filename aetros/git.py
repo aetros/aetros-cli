@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 
 import six
@@ -336,12 +337,13 @@ class Git:
 
             # make sure we have checked out all files we have added until now. Important for simple models,
             # so we have the actual model.py and dataset scripts.
-            if not os.path.exists(self.work_tree):
-                os.makedirs(self.work_tree)
+            if os.path.exists(self.work_tree):
+                shutil.rmtree(self.work_tree)
 
-            # updates index and working tree
-            # this leaves other files in self.work_tree alone, which is necessary because this is also the working tree
-            # of files checked out by start.py (custom models)
+            os.makedirs(self.work_tree)
+
+            # make the working tree reflect exactly the tree of ref_head.
+            # since we removed the dir before, we have exactly the tree of the reference
             self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
 
     def read_tree(self, ref):
@@ -354,24 +356,24 @@ class Git:
         self.command_exec(['read-tree', ref])
         self.git_last_commit = self.command_exec(['rev-parse', ref])[0].decode('utf-8').strip()
 
-    def restart_job(self):
-        if not self.job_id:
-            raise Exception('Could not restart unknown job. fetch_job() it first.')
-
-        self.command_exec(['update-ref', self.ref_head, self.job_id])
-        self.dirty = True
-
-        self.command_exec(['read-tree', self.ref_head])
-
-        # make sure we have checked out all files we have added until now. Important for simple models, so we have the
-        # actual model.py and dataset scripts.
-        if not os.path.exists(self.work_tree):
-            os.makedirs(self.work_tree)
-
-        # updates index and working tree
-        # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
-        # of files checked out by start.py (custom models)
-        self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+    # def restart_job(self):
+    #     if not self.job_id:
+    #         raise Exception('Could not restart unknown job. fetch_job() it first.')
+    #
+    #     self.command_exec(['update-ref', self.ref_head, self.job_id])
+    #     self.dirty = True
+    #
+    #     self.command_exec(['read-tree', self.ref_head])
+    #
+    #     # make sure we have checked out all files we have added until now. Important for simple models, so we have the
+    #     # actual model.py and dataset scripts.
+    #     if not os.path.exists(self.work_tree):
+    #         os.makedirs(self.work_tree)
+    #
+    #     # updates index and working tree
+    #     # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
+    #     # of files checked out by start.py (custom models)
+    #     self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
 
     def create_task_id(self, job_id, data):
         """
@@ -678,6 +680,15 @@ class Git:
         """
         blob_id = self.write_blob(content)
         self.add_index('100644', blob_id, path)
+
+    def add_file_path(self, path, work_tree):
+        """
+        Add a new file as blob in the storage and add its tree entry into the index.
+
+        :param path: str
+        :param content: str
+        """
+        self.command_exec(['--work-tree', work_tree, 'add', '-f', path])
 
     def add_local_file(self, path):
         with open(path, 'r') as f:

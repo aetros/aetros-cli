@@ -79,7 +79,7 @@ class RunCommand:
             ignore = config['ignore']
         job.job = {'config': {'ignore': ignore}}
 
-        files_added, size_added = job.add_files()
+        files_added, size_added = job.add_files(os.getcwd())
 
         print("%d files added (%s)" % (files_added, human_size(size_added, 2)))
 

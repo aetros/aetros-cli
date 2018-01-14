@@ -373,8 +373,10 @@ class ServerCommand:
             else:
                 kwargs['preexec_fn'] = os.setsid
 
+            stdout = subprocess.PIPE if self.show_stdout else open(os.devnull, 'r+b', 0)
+
             process = subprocess.Popen(args, bufsize=1, env=my_env, stdin=DEVNULL,
-                stderr=subprocess.PIPE, stdout=subprocess.PIPE, **kwargs)
+                stderr=stdout, stdout=stdout, **kwargs)
 
             if self.show_stdout:
                 self.general_logger_stdout.attach(process.stdout, read_line=True)
