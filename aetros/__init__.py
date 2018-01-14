@@ -17,8 +17,13 @@ command_summaries = [
     ['server', 'Spawns a job server that handles jobs managed through AETROS Trainer.'],
     ['run', 'Executes a command on an AETROS server.'],
     ['api', 'Executes a API call through SSH connection.'],
-    ['push-job', 'Pushes a local job to AETROS Trainer.'],
-    ['pull-job', 'Pulls a job to local Git repository.'],
+    ['model', 'Information about current model.'],
+    ['jobs', 'List all job ids.'],
+    ['job-push', 'Pushes a local job to AETROS Trainer.'],
+    ['job-pull', 'Pulls a job to local Git repository.'],
+    ['job-diff', 'Prints an unified diff of two jobs.'],
+    ['job-checkout', 'Checks all files from a job out to a directory.'],
+    ['job-files', 'List all files of a job.'],
     ['add', 'Adds a local file to a job tree.'],
     ['init', 'Creates a new model and places a aetros.yml in current working directory pointing to this model.'],
     ['id', 'Shows under which account the machine is authenticated.'],
@@ -53,8 +58,13 @@ def main(args=None):
         sys.exit(0)
 
     from aetros.commands.ApiCommand import ApiCommand
-    from aetros.commands.PushJobCommand import PushJobCommand
-    from aetros.commands.PullJobCommand import PullJobCommand
+    from aetros.commands.ModelCommand import ModelCommand
+    from aetros.commands.JobPushCommand import JobPushCommand
+    from aetros.commands.JobPullCommand import JobPullCommand
+    from aetros.commands.JobDiffCommand import JobDiffCommand
+    from aetros.commands.JobCheckoutCommand import JobCheckoutCommand
+    from aetros.commands.JobFilesCommand import JobFilesCommand
+    from aetros.commands.JobsCommand import JobsCommand
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.PredictCommand import PredictCommand
     from aetros.commands.PredictionServerCommand import PredictionServerCommand
@@ -77,8 +87,13 @@ def main(args=None):
         'run': RunCommand,
         'api': ApiCommand,
         'id': IdCommand,
-        'push-job': PushJobCommand,
-        'pull-job': PullJobCommand,
+        'model': ModelCommand,
+        'jobs': JobsCommand,
+        'job-push': JobPushCommand,
+        'job-pull': JobPullCommand,
+        'job-diff': JobDiffCommand,
+        'job-checkout': JobCheckoutCommand,
+        'job-files': JobFilesCommand,
         'add': AddCommand,
         'init': InitCommand,
         'gpu': GPUCommand,

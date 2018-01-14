@@ -13,6 +13,7 @@ import paramiko
 import six
 import sys
 import ruamel.yaml as yaml
+import subprocess
 
 start_time = time.time()
 last_time = None
@@ -454,10 +455,81 @@ def is_ignored(path, ignore_patters):
     return ignored
 
 
+def git_local_job_ids(home_config, model):
+    git_dir = os.path.normpath(home_config['storage_dir'] + '/' + model + '.git')
+
+    output = subprocess.check_output([home_config['git'], '--bare', '--git-dir', git_dir, 'show-ref'])\
+        .decode('utf-8')
+
+    job_ids = []
+
+    for line in output.split('\n'):
+        if not ' ' in line:
+            continue
+        target, ref_name = line.split(' ')
+        if ref_name.startswith('refs/aetros/job/'):
+            job_ids.append(ref_name[len('refs/aetros/job/'):])
+
+    return job_ids
+
+
+def git_remote_job_ids(home_config, model):
+    git_remote_url = 'git@%s:%s.git' % (home_config['host'], model)
+    output = subprocess.check_output([home_config['git'], 'ls-remote', git_remote_url]).decode('utf-8')
+    job_ids = []
+
+    for line in output.split('\n'):
+        if not '\t' in line:
+            continue
+        target, ref_name = line.split('\t')
+        if ref_name.startswith('refs/aetros/job/'):
+            job_ids.append(ref_name[len('refs/aetros/job/'):])
+
+    return job_ids
+
+
+def git_has_local_job(home_config, model, job_id):
+    job_ids = git_local_job_ids(home_config, model)
+    for full_job_id in job_ids:
+        if full_job_id.startswith(job_id):
+            return full_job_id
+
+
+def git_has_remote_job(home_config, model, job_id):
+    job_ids = git_remote_job_ids(home_config, model)
+    for full_job_id in job_ids:
+        if full_job_id.startswith(job_id):
+            return full_job_id
+
+
+def find_config(path = None):
+    if path:
+        if not os.path.exists(path):
+            return None
+
+        return read_config(path)
+    else:
+        path = find_config_path()
+        if path:
+            return read_config(path)
+
+
+def find_config_path():
+    path = os.path.abspath(os.getcwd())
+    while True:
+        if os.path.exists(path+'/aetros.yml'):
+            return path+'/aetros.yml'
+        else:
+            new_path = os.path.realpath(path + '/..')
+            if new_path == path:
+                return None
+            path = new_path
+
 def read_config(path = 'aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))
 
     config = {
+        'model': None,
         'dockerfile': None,
         'command': None,
         'install': None,

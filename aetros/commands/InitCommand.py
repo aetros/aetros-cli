@@ -38,6 +38,9 @@ class InitCommand:
                 print("failed: aetros.yml already exists with a linked model to " + config['model'])
                 sys.exit(1)
 
+        if not parsed_args.private:
+            print("Warning: creating public model. Use --private to create private models.")
+
         try:
             name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.private)
         except api.ApiError as e:

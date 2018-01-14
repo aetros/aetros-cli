@@ -25,7 +25,7 @@ class IdCommand:
 
         user = api.user()
 
-        print("Key installed of account %s (%s) on %s" % (user['username'], user['name'], config['host']))
+        print("Logged in as %s (%s) on %s" % (user['username'], user['name'], config['host']))
 
         if len(user['accounts']) > 0:
             for orga in six.itervalues(user['accounts']):
