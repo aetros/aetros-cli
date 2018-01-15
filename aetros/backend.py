@@ -5,6 +5,7 @@ import atexit
 import inspect
 import os
 import socket
+import traceback
 
 from threading import Thread, Lock
 
@@ -12,6 +13,7 @@ import collections
 import coloredlogs
 import logging
 
+import math
 import requests
 import signal
 import json
@@ -31,6 +33,7 @@ from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
     read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, create_ssh_stream
 from aetros.MonitorThread import MonitoringThread
+import subprocess
 
 if not isinstance(sys.stdout, GeneralLogger):
     sys.stdout = GeneralLogger(redirect_to=sys.__stdout__)
@@ -58,6 +61,42 @@ on_shutdown.started_jobs = []
 
 atexit.register(on_shutdown)
 
+
+def Popen(**kwargs):
+    """
+    Executes a command using subprocess.Popen and redirects output to AETROS and stdout.
+    Parses stdout as well for stdout API calls.
+
+    Use read_line argument to read stdout of command's stdout line by line.
+    Use returned process stdin to communicate with the command.
+
+    :return: subprocess.Popen
+    """
+    p = subprocess.Popen(**kwargs)
+    wait_stdout = None
+    wait_stderr = None
+
+    read_line = None
+    if 'read_line' in kwargs:
+        read_line = kwargs['read_line']
+
+    if p.stdout:
+        wait_stdout = sys.stdout.attach(p.stdout, read_line=read_line)
+    if p.stderr:
+        wait_stderr = sys.stderr.attach(p.stderr)
+
+    original_wait = p.wait
+    def wait():
+        original_wait()
+
+        if wait_stdout:
+            wait_stdout()
+        if wait_stderr:
+            wait_stderr()
+
+    p.wait = wait
+
+    return p
 
 def dict_factory(cursor, row):
     d = {}
@@ -482,9 +521,12 @@ class BackendClient:
 
     def handle_messages(self, messages):
         for message in messages:
-            if not self.external_stopped and 'stop' == message['a']:
-                self.external_stopped = True
-                self.event_listener.fire('stop', message['force'])
+            if not isinstance(message, dict): continue
+
+            if 'a' in message:
+                if not self.external_stopped and 'stop' == message['a']:
+                    self.external_stopped = True
+                    self.event_listener.fire('stop', message['force'])
 
     def wait_for_at_least_one_message(self):
         """
@@ -576,7 +618,6 @@ class JobClient(BackendClient):
                 self.event_listener.fire('registration_failed', {'reason': message['reason']})
                 return False
 
-
             if 'registered' == message['a']:
                 self.registered = True
                 self.event_listener.fire('registration')
@@ -592,10 +633,12 @@ class JobClient(BackendClient):
             if self.external_stopped:
                 continue
 
-            if 'parameter-changed' == message['a']:
+            if not isinstance(message, dict): continue
+
+            if 'a' in message and 'parameter-changed' == message['a']:
                 self.event_listener.fire('parameter_changed', {'values': message['values']})
 
-            if 'action' == message['type']:
+            if 'type' in message and 'action' == message['type']:
                 self.event_listener.fire('action', message)
 
 
@@ -818,8 +861,11 @@ class JobBackend:
 
         self.client = None
         self.stream_log = None
+        self.speed_stream = None
         self.parameter_change_callback = None
 
+        self.last_speed = 0
+        self.last_speed_time = 0
         self.last_step_time = time.time()
         self.last_step = 0
 
@@ -846,6 +892,9 @@ class JobBackend:
 
         # whether it has started once
         self.started = False
+
+        # whether we are in paused state
+        self.is_paused = False
 
         # whether on_shutdown has been called and thus the python interpreter is dying.
         self.in_shutdown = False
@@ -1045,6 +1094,7 @@ class JobBackend:
 
                 if size:
                     self.set_system_info('samplesPerSecond', steps_per_second * size, True)
+                    self.report_speed(steps_per_second * size)
 
                 epochs_per_second = steps_per_second / total  # all batches
                 self.set_system_info('epochsPerSecond', epochs_per_second, True)
@@ -1075,10 +1125,18 @@ class JobBackend:
 
     def set_speed(self, speed, label=None):
         self.set_system_info('samplesPerSecond', speed, True)
+        self.report_speed(speed)
 
         if label and self.step_speed_label != label:
             self.set_system_info('stepSpeedLabel', label, True)
             self.step_speed_label = label
+
+    def report_speed(self, speed):
+        self.last_speed = speed
+        self.last_speed_time = time.time()
+
+        x = math.ceil(time.time()-self.start_time)
+        self.speed_stream.write(json.dumps([x, speed])[1:-1] + "\n")
 
     @property
     def job_settings(self):
@@ -1283,6 +1341,11 @@ class JobBackend:
 
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
+            self.speed_stream = self.git.stream_file('aetros/job/speed.csv')
+
+            header = ["x", "speed"]
+            self.speed_stream.write(json.dumps(header)[1:-1] + "\n")
+
             if isinstance(sys.stdout, GeneralLogger):
                 sys.stdout.job_backend = self
                 sys.stdout.flush()
@@ -1298,6 +1361,10 @@ class JobBackend:
 
             if isinstance(sys.stderr, GeneralLogger) and not sys.stderr.job_backend:
                 sys.stderr.disable_buffer()
+
+    def set_paused(self, v):
+        self.is_paused = v
+        self.set_system_info('paused', self.is_paused, True)
 
     def is_master_process(self):
         """
@@ -1815,42 +1882,68 @@ class JobBackend:
 
         args = {}
         inspect_args = inspect.getargspec(callback)
-        start_default_idx = len(inspect_args.args) - len(inspect_args.defaults)
+        if inspect_args.args:
+            defaults = inspect_args.defaults if inspect_args.defaults else []
 
-        for idx, name in enumerate(inspect_args.args):
-            args[name] = {'default': None, 'type': 'mixed'}
+            start_default_idx = len(inspect_args.args) - len(defaults)
 
-            if idx >= start_default_idx:
-                default_value = inspect_args.defaults[idx - start_default_idx]
-                arg_type = 'mixed'
-                if isinstance(default_value, six.string_types): arg_type = 'string'
-                if isinstance(default_value, int): arg_type = 'integer'
-                if isinstance(default_value, float): arg_type = 'float'
-                if isinstance(default_value, bool): arg_type = 'bool'
+            for idx, name in enumerate(inspect_args.args):
+                args[name] = {'default': None, 'type': 'mixed'}
 
-                args[name] = {'default': default_value, 'type': arg_type}
+                if idx >= start_default_idx:
+                    default_value = defaults[idx - start_default_idx]
+                    arg_type = 'mixed'
+                    if isinstance(default_value, six.string_types): arg_type = 'string'
+                    if isinstance(default_value, int): arg_type = 'integer'
+                    if isinstance(default_value, float): arg_type = 'float'
+                    if isinstance(default_value, bool): arg_type = 'bool'
+
+                    args[name] = {'default': default_value, 'type': arg_type}
 
         value = {
             'label': label,
             'description': description,
-            'args': args
+            'args': args,
+            'instance': self.name
         }
 
         self.git.store_file('aetros/job/actions/' + name + '/config.json', json.dumps(value, default=invalid_json_values))
 
-        value['callback'] = callback
         self.registered_actions[name] = value
+        value['callback'] = callback
+
+    def on_pause(self):
+        pass
+
+    def on_continue(self):
+        pass
 
     def on_action(self, params):
         action_id = params['id']
         action_name = params['name']
         action_value = params['value']
 
+        self.logger.debug("Trigger action: " + str(params))
+        self.logger.info("Trigger action %s(%s)" %( action_name, str(action_value)))
+
+        if action_name in ['pause', 'continue']:
+            try:
+                if action_name == 'pause': return self.on_pause()
+                if action_name == 'continue': return self.on_continue()
+            except SystemExit:
+                raise
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                traceback.print_exc()
+                self.logger.warning("Trigger action %s failed: %s" % (action_name, type(e).__name__ + ': ' + str(e)))
+
         if action_name not in self.registered_actions:
             self.logger.warning('Received action ' + str(action_name) + ' but no callback registered.')
             return
 
-        callback = self.registered_actions[action_name]['callback']
+        config = self.registered_actions[action_name]
+        callback = config['callback']
 
         action = {
             'name': action_name,
@@ -1875,8 +1968,15 @@ class JobBackend:
                 json.dumps(result, default=invalid_json_values)
             )
 
+        kwargs = {}
         try:
-            result = callback(action_value, done)
+            if action_value:
+                kwargs = action_value
+
+            if 'done' in config['args']:
+                kwargs['done'] = done
+
+            result = callback(**kwargs)
             # returning done as result marks this as async call
 
             if result is not done:
@@ -1888,8 +1988,12 @@ class JobBackend:
         except KeyboardInterrupt:
             raise
         except Exception as e:
+            traceback.print_exc()
+            self.logger.warning("Trigger action %s(%s) failed: %s" % (action_name, str(kwargs), type(e).__name__+': '+ str(e)))
+
             result = {
-                'exception': str(e),
+                'exception': type(e).__name__,
+                'message': str(e),
                 'time': time.time()
             }
 

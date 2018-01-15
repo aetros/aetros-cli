@@ -207,7 +207,6 @@ class JobModel:
         return image
 
     def get_model_provider(self):
-
         sys.path.append('./')
 
         model = __import__('model', '')

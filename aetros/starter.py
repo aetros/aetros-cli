@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import psutil
+import signal
 import six
 
 from aetros.logger import GeneralLogger
@@ -115,6 +116,35 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
     job_backend.collect_device_information(gpu_devices)
 
+    state = {'last_process': None}
+    job_backend.set_system_info('processRunning', False, True)
+
+    def pause():
+        if not state['last_process'] or state['last_process'].poll() is not None:
+            # no running process
+            return
+
+        if docker_image:
+            if docker_pause(logger, home_config, job_backend):
+                job_backend.set_paused(True)
+        else:
+            os.killpg(os.getpgid(state['last_process'].pid), signal.SIGSTOP)
+            job_backend.set_paused(True)
+
+    def cont():
+        if not state['last_process'] or state['last_process'].poll() is not None:
+            # no running process
+            return
+
+        job_backend.set_paused(False)
+        if docker_image:
+            docker_continue(logger, home_config, job_backend)
+        else:
+            os.killpg(os.getpgid(state['last_process'].pid), signal.SIGCONT)
+
+    job_backend.on_pause = pause
+    job_backend.on_continue = cont
+
     if docker_image:
         if not docker_image_built:
             docker_pull_image(logger, home_config, job_backend)
@@ -180,7 +210,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
     p = None
     exited = False
     last_return_code = None
-    last_process = None
+    state['last_process'] = None
     all_done = False
     command_stats = None
     files = job_backend.file_list()
@@ -227,16 +257,20 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             print('$ ' + job_command.strip() + '\n')
             args = command
             logger.debug('$ ' + ' '.join([json.dumps(a) for a in args]))
-            p = subprocess.Popen(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env,
-                **kwargs)
-            wait_stdout = sys.stdout.attach(p.stdout, read_line=read_line)
-            wait_stderr = sys.stderr.attach(p.stderr)
-            p.wait()
+            state['last_process'] = subprocess.Popen(
+                args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
+            )
+            job_backend.set_system_info('processRunning', True, True)
+            print("Job started with pid=" + str(state['last_process'].pid))
+            wait_stdout = sys.stdout.attach(state['last_process'].stdout, read_line=read_line)
+            wait_stderr = sys.stderr.attach(state['last_process'].stderr)
+            state['last_process'].wait()
+            job_backend.set_system_info('processRunning', True, False)
             wait_stdout()
             wait_stderr()
             # make sure a new line is printed after a command
             print("")
-            return p
+            return state['last_process']
 
         done = 0
         total = len(job_commands)
@@ -250,8 +284,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
                 job_backend.set_system_info('command_stats', command_stats, True)
 
                 command_env['AETROS_JOB_NAME'] = 'command_' + str(k)
-                last_process = exec_command(k, command, job_command)
-                last_return_code = last_process.poll()
+                p = exec_command(k, command, job_command)
+                last_return_code = p.poll()
 
                 command_stats[k]['rc'] = last_return_code
                 command_stats[k]['ended'] = time.time() - start_time
@@ -276,8 +310,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
                 # important to prefix it, otherwise name='master' would reset all stats in controller backend
                 command_env['AETROS_JOB_NAME'] = 'command_' + name
-                last_process = exec_command(name, command, job_command)
-                last_return_code = last_process.poll()
+                p = exec_command(name, command, job_command)
+                last_return_code = p.poll()
 
                 command_stats[name]['rc'] = last_return_code
                 command_stats[name]['ended'] = time.time() - start_time
@@ -292,15 +326,20 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         all_done = done == total
         exited = True
 
-        if last_process:
-            sys.exit(last_process.poll())
+        if state['last_process']:
+            sys.exit(state['last_process'].poll())
         else:
             sys.exit(1)
 
     except SystemExit:
         # since we started the command in a new process group, a SIGINT or CTRL+C on this process won't affect
         # our actual command process. So we need to take care that we stop everything.
-        print("SystemExit, all-done=", str(all_done), 'last-process=', last_process is not None, last_process.poll() if last_process else None)
+        print("SystemExit, exited=%s, all-done=%s, has-last-process=%s, pid=%s" %(
+            str(exited),
+            str(all_done),
+            state['last_process'] is not None,
+            state['last_process'].poll() if state['last_process'] else None
+        ))
 
         # make sure the process dies
         if docker_image:
@@ -310,13 +349,11 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
                 stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             p.wait()
             if p.poll() == 0:
-                print("stop docker container " + job_backend.job_id)
                 subprocess.Popen(args=[home_config['docker'], 'stop', '-t', '5', job_backend.job_id]).wait()
-                print("stopped")
-        elif not exited and last_process and last_process.poll() is None:
+        elif not exited and state['last_process'] and state['last_process'].poll() is None:
             # wait for last command
-            last_process.kill()  # sends SIGINT
-            last_process.wait()
+            os.killpg(os.getpgid(state['last_process'].pid), signal.SIGINT)
+            state['last_process'].wait()
 
         upload_output_files(job_backend, files)
 
@@ -384,6 +421,27 @@ def docker_image_information(logger, home_config, job_backend):
             job_backend.set_system_info('image/size', inspection['Size'])
             job_backend.set_system_info('image/rootfs', inspection['RootFS'])
 
+
+def docker_pause(logger, home_config, job_backend):
+    docker_command = [home_config['docker'], 'pause', job_backend.job_id]
+
+    p = subprocess.Popen(docker_command)
+    p.wait()
+
+    return True if p.poll() == 0 else False
+
+
+def docker_continue(logger, home_config, job_backend):
+    docker_command = [home_config['docker'], 'unpause', job_backend.job_id]
+
+    p = subprocess.Popen(docker_command)
+    p.wait()
+
+    return True if p.poll() == 0 else False
+
+def docker_send_signal(logger, home_config, job_backend, signal):
+    docker_command = [home_config['docker'], 'kill', '-s', signal, job_backend.job_id]
+    execute_command_stdout(docker_command)
 
 def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env):
     docker_command = [home_config['docker'], 'run', '-t', '--rm', '--name', job_backend.job_id]

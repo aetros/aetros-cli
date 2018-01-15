@@ -14,6 +14,7 @@ import psutil
 from threading import Thread
 
 import aetros.cuda_gpu
+import numpy as np
 
 
 class MonitoringThread(Thread):
@@ -61,7 +62,6 @@ class MonitoringThread(Thread):
         self.running = False
 
     def run(self):
-
         def docker_stats_reader(response):
             previous_cpu = 0
             previous_system = 0
@@ -92,6 +92,10 @@ class MonitoringThread(Thread):
 
         while self.running:
             self.handle_early_stop()
+
+            if self.job_backend.is_paused:
+                time.sleep(1)
+                continue
 
             self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))
 
@@ -127,8 +131,8 @@ class MonitoringThread(Thread):
                 self.job_backend.early_stop()
 
     def monitor(self, cpu_util, mem_util):
-
         x = math.ceil(time.time()-self.handle_max_time_time)
+
         row = [x, cpu_util, mem_util]
 
         try:
