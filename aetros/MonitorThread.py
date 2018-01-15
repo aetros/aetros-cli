@@ -2,6 +2,7 @@ from __future__ import division
 from __future__ import absolute_import
 
 import json
+import random
 import time
 import math
 
@@ -11,7 +12,6 @@ import docker.errors
 import psutil
 
 from threading import Thread
-import numpy as np
 
 import aetros.cuda_gpu
 
@@ -37,8 +37,10 @@ class MonitoringThread(Thread):
                 for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
                     if gpu_id in gpu_devices:
                         header.append("memory_gpu" + str(gpu['id']))
-
         except aetros.cuda_gpu.CudaNotImplementedException: pass
+
+        if job_backend.get_job_model().has_dpu():
+            header += ['dpu0']
 
         self.stream.write(json.dumps(header)[1:-1] + "\n")
         self.started = start_time or time.time()
@@ -64,12 +66,10 @@ class MonitoringThread(Thread):
             previous_cpu = 0
             previous_system = 0
 
-            print("Debug: thread started")
             stream = self.docker_api._stream_helper(response)
 
             try:
                 for line in stream:
-                    print("Debug: line incoming")
                     data = json.loads(line)
                     cpu_util = 0
                     cpu_delta = data['cpu_stats']['cpu_usage']['total_usage'] - previous_cpu
@@ -128,7 +128,8 @@ class MonitoringThread(Thread):
 
     def monitor(self, cpu_util, mem_util):
 
-        row = [math.ceil(time.time()-self.handle_max_time_time), cpu_util, mem_util]
+        x = math.ceil(time.time()-self.handle_max_time_time)
+        row = [x, cpu_util, mem_util]
 
         try:
             if self.gpu_devices:
@@ -146,6 +147,7 @@ class MonitoringThread(Thread):
                     row.append(gpu_memory_use)
         except aetros.cuda_gpu.CudaNotImplementedException: pass
 
-        self.stream.write(json.dumps(row)[1:-1] + "\n")
+        if self.job_backend.get_job_model().has_dpu():
+            row += [80 + random.randint(-10, 20)]
 
-        pass
+        self.stream.write(json.dumps(row)[1:-1] + "\n")

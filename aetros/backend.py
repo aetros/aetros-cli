@@ -2021,7 +2021,7 @@ class JobBackend:
         env['pip_packages'] = sorted([[i.key, i.version] for i in pip.get_installed_distributions()])
         self.set_system_info('environment', env)
 
-    def collect_gpu_device_information(self, gpu_ids):
+    def collect_device_information(self, gpu_ids):
         import aetros.cuda_gpu
         try:
             self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
@@ -2034,6 +2034,9 @@ class JobBackend:
 
             self.set_system_info('gpus', gpus)
         except CudaNotImplementedException: pass
+
+        if self.get_job_model().has_dpu():
+            self.set_system_info('dpus', [{'memory': 64*1024*1024*1024}])
 
     def collect_system_information(self):
         import psutil

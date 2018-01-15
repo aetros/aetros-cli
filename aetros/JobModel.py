@@ -47,6 +47,16 @@ class JobModel:
 
         return None
 
+    @property
+    def resources(self):
+        if 'resources' in self.config:
+            return self.config['resources']
+
+        return {}
+
+    def has_dpu(self):
+        return 'dpu' in self.resources and self.resources['dpu'] > 0
+
     def get_batch_size(self):
         return self.job['config']['batchSize']
 

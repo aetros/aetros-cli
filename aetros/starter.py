@@ -113,7 +113,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         docker_image = docker_build_image(logger, home_config, job_backend, rebuild_image)
         docker_image_built = True
 
-    job_backend.collect_gpu_device_information(gpu_devices)
+    job_backend.collect_device_information(gpu_devices)
 
     if docker_image:
         if not docker_image_built:
@@ -350,7 +350,10 @@ def upload_output_files(job_backend, init_files):
             print("Added job data: " + file)
             job_backend.git.add_file_path(file, job_backend.git.work_tree)
 
-    job_backend.git.commit_index('UPLOAD JOB DATA')
+    if added:
+        job_backend.git.commit_index('UPLOAD JOB DATA')
+    else:
+        print("No job output data found.")
 
 
 def docker_pull_image(logger, home_config, job_backend):
