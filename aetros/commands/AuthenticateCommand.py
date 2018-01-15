@@ -70,13 +70,17 @@ class AuthenticateCommand:
         print("\n   https://" + host + "/confirm-machine/" + token)
         print("\nWaiting for confirmation ...")
 
+        key_prefix = home_config['host'] + '_'
+
         while True:
             time.sleep(3)
             response = api.http_request('machine-token/authorized?id=' + token, method='post')
             if response['status'] == 'confirmed':
+
+
                 print("\n" + response['username'] + ' confirmed the public key. Test with "aetros id" or "ssh git@'+host+'".')
-                private_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa')
-                public_key_path = os.path.expanduser('~/.ssh/aetros_' + response['username']+'_rsa.pub')
+                private_key_path = os.path.expanduser('~/.ssh/' + key_prefix + response['username']+'_rsa')
+                public_key_path = os.path.expanduser('~/.ssh/' + key_prefix + response['username']+'_rsa.pub')
 
                 if not os.path.exists(os.path.dirname(private_key_path)):
                     os.makedirs(os.path.dirname(private_key_path))
@@ -96,7 +100,7 @@ class AuthenticateCommand:
                     os.makedirs(os.path.dirname(ssh_config_path))
 
                 host_section = 'host '+host+'\n'
-                identity_section = '    IdentityFile ~/.ssh/aetros_' + response['username']+'_rsa\n'
+                identity_section = '    IdentityFile ~/.ssh/' + key_prefix + response['username']+'_rsa\n'
 
                 if os.path.exists(ssh_config_path):
                     import re
