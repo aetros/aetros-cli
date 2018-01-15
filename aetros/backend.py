@@ -25,6 +25,7 @@ from ruamel.yaml.reader import ReaderError
 
 from aetros.JobModel import JobModel
 from aetros.const import JOB_STATUS, __version__
+from aetros.cuda_gpu import CudaNotImplementedException
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
@@ -1277,7 +1278,8 @@ class JobBackend:
             self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
             self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
 
-            self.start_monitoring()
+            if collect_system:
+                self.start_monitoring()
 
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
@@ -1338,9 +1340,9 @@ class JobBackend:
             if working_dir:
                 os.chdir(current_dir)
 
-    def start_monitoring(self, start_time=None):
+    def start_monitoring(self, start_time=None, gpu_devices=None, docker_container=None):
         if not self.monitoring_thread:
-            self.monitoring_thread = MonitoringThread(self, start_time)
+            self.monitoring_thread = MonitoringThread(self, start_time, gpu_devices, docker_container)
             self.monitoring_thread.daemon = True
             self.monitoring_thread.start()
 
@@ -2019,6 +2021,20 @@ class JobBackend:
         env['pip_packages'] = sorted([[i.key, i.version] for i in pip.get_installed_distributions()])
         self.set_system_info('environment', env)
 
+    def collect_gpu_device_information(self, gpu_ids):
+        import aetros.cuda_gpu
+        try:
+            self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
+
+            gpus = {}
+            if gpu_ids:
+                for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
+                    if gpu_id in gpu_ids:
+                        gpus[gpu_id] = gpu
+
+            self.set_system_info('gpus', gpus)
+        except CudaNotImplementedException: pass
+
     def collect_system_information(self):
         import psutil
 
@@ -2026,11 +2042,6 @@ class JobBackend:
 
         with self.git.batch_commit('JOB_SYSTEM_INFORMATION'):
             self.set_system_info('memory_total', mem.total)
-
-            import aetros.cuda_gpu
-            try:
-                self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
-            except Exception: pass
 
             import cpuinfo
             cpu = cpuinfo.get_cpu_info()

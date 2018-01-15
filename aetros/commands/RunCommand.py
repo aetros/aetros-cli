@@ -157,9 +157,12 @@ class RunCommand:
                 create_info['resources_assigned'] = {'cpus': 1, 'memory': 1, 'gpus': []}
 
                 if 'gpu' in resources and resources['gpu'] > 0:
-                    # todo, check for actual gpu devices and make the mapping
-                    # if requested 2 GPUs and we have 3 GPUs with id [3,4,5], gpus should be [3,4]
-                    create_info['resources_assigned']['gpus'] = [1] * resources['gpu']
+                    # if requested 2 GPUs and we have 3 GPUs with id [0,1,2], gpus should be [0,1]
+                    parsed_args.gpu_device = []
+                    for i in range(0, resources['gpu']):
+                        parsed_args.gpu_device.append(i)
+
+                    create_info['resources_assigned']['gpus'] = parsed_args.gpu_device
                 if 'cpu' in resources:
                     create_info['resources_assigned']['cpus'] = resources['cpu']
                 if 'memory' in resources:

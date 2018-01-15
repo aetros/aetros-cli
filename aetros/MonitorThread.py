@@ -3,17 +3,26 @@ from __future__ import absolute_import
 
 import json
 import time
+import math
+
+import docker
+import docker.utils
+import docker.errors
 import psutil
+
 from threading import Thread
 import numpy as np
+
 import aetros.cuda_gpu
 
 
 class MonitoringThread(Thread):
-    def __init__(self, job_backend, start_time=None):
+    def __init__(self, job_backend, start_time=None, gpu_devices=None, docker_container=None):
         Thread.__init__(self)
 
         self.job_backend = job_backend
+        self.gpu_devices = gpu_devices
+        self.docker_container = docker_container
         self.max_minutes = 0
 
         job = self.job_backend.job
@@ -24,59 +33,119 @@ class MonitoringThread(Thread):
 
         header = ["second", "cpu", "memory"]
         try:
-            for gpu in aetros.cuda_gpu.get_ordered_devices():
-                header.append("memory_gpu" + str(gpu['id']))
+            if self.gpu_devices:
+                for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
+                    if gpu_id in gpu_devices:
+                        header.append("memory_gpu" + str(gpu['id']))
+
         except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         self.stream.write(json.dumps(header)[1:-1] + "\n")
-        self.second = 0
         self.started = start_time or time.time()
         self.running = True
         self.early_stopped = False
         self.handle_max_time = True
         self.handle_max_time_time = self.started
+        self.client = docker.from_env()
+        self.docker_api = docker.APIClient(**docker.utils.kwargs_from_env())
+        self.stat_stream = None
+
+        self.docker_last_last_reponse = None
+        self.docker_last_stream_data = 0
+        self.docker_last_mem = None
+        self.docker_last_cpu = None
 
     def stop(self):
         self.running = False
 
     def run(self):
+
+        def docker_stats_reader(response):
+            previous_cpu = 0
+            previous_system = 0
+
+            print("Debug: thread started")
+            stream = self.docker_api._stream_helper(response)
+
+            try:
+                for line in stream:
+                    print("Debug: line incoming")
+                    data = json.loads(line)
+                    cpu_util = 0
+                    cpu_delta = data['cpu_stats']['cpu_usage']['total_usage'] - previous_cpu
+                    system_delta = data['cpu_stats']['system_cpu_usage'] - previous_system
+
+                    previous_cpu = data['cpu_stats']['cpu_usage']['total_usage']
+                    previous_system = data['cpu_stats']['system_cpu_usage']
+
+                    if cpu_delta > 0 and system_delta > 0:
+                        cpu_util = (cpu_delta / system_delta) * len(data['cpu_stats']['cpu_usage']['percpu_usage']) * 100
+
+                    mem_util = data['memory_stats']['usage'] / data['memory_stats']['limit'] * 100
+                    self.docker_last_stream_data = time.time()
+                    self.docker_last_cpu = cpu_util
+                    self.docker_last_mem = mem_util
+            except docker.errors.NotFound:
+                return
+
+        docker_reader = None
+
         while self.running:
-            self.monitor()
-            time.sleep(0.01)
+            self.handle_early_stop()
 
-    def monitor(self):
-        if self.early_stopped:
-            return
+            self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))
 
-        cpu_util = np.mean(psutil.cpu_percent(interval=1, percpu=True)) #blocks 1sec
-        mem = psutil.virtual_memory()
+            if self.docker_container:
+                if docker_reader and self.docker_last_last_reponse and time.time()-self.docker_last_stream_data > 3:
+                    self.docker_last_last_reponse.close()
+                    docker_reader.join()
 
-        if not self.running:
-            return
+                if not docker_reader or not docker_reader.isAlive():
+                    url = self.docker_api._url("/containers/{0}/stats", self.docker_container)
+                    self.docker_last_last_reponse = self.docker_api._get(url, stream=True)
 
-        if self.handle_max_time and self.max_minutes > 0:
+                    docker_reader = Thread(target=docker_stats_reader, args=[self.docker_last_last_reponse])
+                    docker_reader.daemon = True
+                    docker_reader.start()
+
+                if self.docker_last_cpu is not None:
+                    self.monitor(self.docker_last_cpu, self.docker_last_mem)
+
+                time.sleep(1)
+            else:
+                cpu_util = np.mean(psutil.cpu_percent(interval=1, percpu=True))  # blocks 1sec
+                mem_util = psutil.virtual_memory().percent
+                self.monitor(cpu_util, mem_util) #takes always at least 1sec, no need for sleep
+                time.sleep(0.01)
+
+    def handle_early_stop(self):
+        if not self.early_stopped and self.handle_max_time and self.max_minutes > 0:
             minutes_run = (time.time() - self.handle_max_time_time) / 60
             if minutes_run > self.max_minutes:
                 self.early_stopped = True
                 self.job_backend.logger.warning("Max time of "+str(self.max_minutes)+" minutes reached.")
                 self.job_backend.early_stop()
 
-        row = [self.second, cpu_util, mem.percent]
+    def monitor(self, cpu_util, mem_util):
+
+        row = [math.ceil(time.time()-self.handle_max_time_time), cpu_util, mem_util]
 
         try:
-            for gpu in aetros.cuda_gpu.get_ordered_devices():
-                gpu_memory_use = None
-                info = aetros.cuda_gpu.get_memory(gpu['device'])
+            if self.gpu_devices:
+                for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
+                    if gpu_id not in self.gpu_devices:
+                        continue
 
-                if info is not None:
-                    free, total = info
-                    gpu_memory_use = (total-free) / total*100
+                    gpu_memory_use = None
+                    info = aetros.cuda_gpu.get_memory(gpu['device'])
 
-                row.append(gpu_memory_use)
+                    if info is not None:
+                        free, total = info
+                        gpu_memory_use = (total-free) / total*100
+
+                    row.append(gpu_memory_use)
         except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         self.stream.write(json.dumps(row)[1:-1] + "\n")
-        self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))
 
-        self.second += 1
         pass

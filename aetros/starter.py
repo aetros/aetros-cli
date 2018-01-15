@@ -7,11 +7,12 @@ import json
 import os
 import subprocess
 import sys
+import psutil
 import six
 
 from aetros.logger import GeneralLogger
 from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters, get_ssh_key_for_host
-from aetros.const import JOB_STATUS
+from aetros.const import JOB_STATUS, __version__
 from .backend import JobBackend
 from .Trainer import Trainer
 
@@ -38,7 +39,6 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
     job_backend.restart(id)
     job_backend.start(collect_system=False)
     job_backend.set_status('PREPARE')
-    job_backend.monitoring_thread.handle_max_time = False
 
     start_command(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
 
@@ -113,6 +113,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         docker_image = docker_build_image(logger, home_config, job_backend, rebuild_image)
         docker_image_built = True
 
+    job_backend.collect_gpu_device_information(gpu_devices)
+
     if docker_image:
         if not docker_image_built:
             docker_pull_image(logger, home_config, job_backend)
@@ -131,12 +133,40 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
         command.append(docker_image)
         command += ['/bin/sh', '-c', trap + 'trapIt /bin/sh /job/aetros/command.sh']
+
+        with job_backend.git.batch_commit('JOB_SYSTEM_INFORMATION'):
+            aetros_environment = {'aetros_version': __version__, 'variables': env}
+            job_backend.set_system_info('environment', aetros_environment)
+
+            memory = psutil.virtual_memory().total
+            if 'resources_assigned' in job_backend.job:
+                assigned_resources = job_backend.job['resources_assigned']
+                memory = 1 * 1024 * 1024 * 1024
+                if 'memory' in assigned_resources and assigned_resources['memory']:
+                    memory = assigned_resources['memory'] * 1024 * 1024 * 1024
+
+            job_backend.set_system_info('memory_total', memory)
+
+            import cpuinfo
+            cpu = cpuinfo.get_cpu_info()
+            job_backend.set_system_info('cpu_name', cpu['brand'])
+            cpus = cpu['count']
+
+            if 'resources_assigned' in job_backend.job:
+                assigned_resources = job_backend.job['resources_assigned']
+                cpus = 1
+                if 'cpu' in assigned_resources and assigned_resources['cpu']:
+                    cpus = assigned_resources['cpu']
+
+            job_backend.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpus])
+
+        job_backend.start_monitoring(gpu_devices=gpu_devices, docker_container=job_backend.job_id)
     else:
         # non-docker
-
         # env['PYTHONPATH'] += ':' + os.getcwd()
         job_backend.collect_system_information()
         job_backend.collect_environment(env)
+        job_backend.start_monitoring(gpu_devices=gpu_devices)
 
         if os.environ.get('LD_LIBRARY_PATH', None):
             # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
@@ -195,19 +225,17 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         def exec_command(id, command, job_command):
             write_command_sh(job_command)
             print('$ ' + job_command.strip() + '\n')
-            # args = [job_backend.job_id + '_' + str(id) if x == job_backend.job_id else x for x in command]
             args = command
             logger.debug('$ ' + ' '.join([json.dumps(a) for a in args]))
             p = subprocess.Popen(args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env,
                 **kwargs)
-
-            # todo, start docker cpu,memory, assigned GPU monitoring when docker_image
-
             wait_stdout = sys.stdout.attach(p.stdout, read_line=read_line)
             wait_stderr = sys.stderr.attach(p.stderr)
             p.wait()
             wait_stdout()
             wait_stderr()
+            # make sure a new line is printed after a command
+            print("")
             return p
 
         done = 0
@@ -390,8 +418,8 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_device
         for volume in volumes:
             docker_command += ['-v', volume]
 
-    if 'resources' in job_backend.job:
-        assigned_resources = job_backend.job['resources']
+    if 'resources_assigned' in job_backend.job:
+        assigned_resources = job_backend.job['resources_assigned']
 
         cpus = 1
         if 'cpu' in assigned_resources and assigned_resources['cpu']:
