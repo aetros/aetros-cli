@@ -38,6 +38,9 @@ class HomeConfigCommand:
             except Exception:
                 raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
 
+        if not config:
+            config = {}
+
         config[parsed_args.name] = parsed_args.value
 
         with open(path, 'w+') as f:
