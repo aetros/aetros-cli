@@ -1,7 +1,7 @@
 from __future__ import division
 from __future__ import absolute_import
 
-import json
+import simplejson
 import random
 import time
 import math
@@ -43,7 +43,7 @@ class MonitoringThread(Thread):
         if job_backend.get_job_model().has_dpu():
             header += ['dpu0']
 
-        self.stream.write(json.dumps(header)[1:-1] + "\n")
+        self.stream.write(simplejson.dumps(header)[1:-1] + "\n")
         self.started = start_time or time.time()
         self.running = True
         self.early_stopped = False
@@ -70,7 +70,10 @@ class MonitoringThread(Thread):
 
             try:
                 for line in stream:
-                    data = json.loads(line)
+                    data = simplejson.loads(line)
+                    if 'cpu_stats' not in data or not data['cpu_stats']:
+                        return
+
                     cpu_util = 0
                     cpu_delta = data['cpu_stats']['cpu_usage']['total_usage'] - previous_cpu
                     system_delta = data['cpu_stats']['system_cpu_usage'] - previous_system
@@ -97,7 +100,7 @@ class MonitoringThread(Thread):
                 time.sleep(1)
                 continue
 
-            self.job_backend.git.store_file('aetros/job/times/elapsed.json', json.dumps(time.time() - self.started))
+            self.job_backend.git.store_file('aetros/job/times/elapsed.json', simplejson.dumps(time.time() - self.started))
 
             if self.docker_container:
                 if docker_reader and self.docker_last_last_reponse and time.time()-self.docker_last_stream_data > 3:
@@ -154,4 +157,4 @@ class MonitoringThread(Thread):
         if self.job_backend.get_job_model().has_dpu():
             row += [80 + random.randint(-10, 20)]
 
-        self.stream.write(json.dumps(row)[1:-1] + "\n")
+        self.stream.write(simplejson.dumps(row)[1:-1] + "\n")

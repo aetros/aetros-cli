@@ -1,6 +1,6 @@
 from __future__ import print_function, division
 from __future__ import absolute_import
-import json
+import simplejson
 import os
 
 from aetros.Trainer import is_generator
@@ -48,8 +48,8 @@ def job_start(job_backend, trainer, keras_callback):
     job_backend.set_status('LOAD DATA')
     datasets = job_model.get_datasets(trainer)
 
-    print('trainer.input_shape = %s\n' % (json.dumps(trainer.input_shape, default=invalid_json_values),))
-    print('trainer.classes = %s\n' % (json.dumps(trainer.classes, default=invalid_json_values),))
+    print('trainer.input_shape = %s\n' % (simplejson.dumps(trainer.input_shape, default=invalid_json_values),))
+    print('trainer.classes = %s\n' % (simplejson.dumps(trainer.classes, default=invalid_json_values),))
 
     multiple_inputs = len(datasets) > 1
     insights_x = [] if multiple_inputs else None

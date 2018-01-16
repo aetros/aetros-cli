@@ -16,8 +16,9 @@ import logging
 import math
 import requests
 import signal
-import json
 import time
+
+import simplejson
 import six
 import PIL.Image
 import sys
@@ -129,21 +130,21 @@ class ApiClient:
     def get(self, url, params=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
+            kwargs['json'] = simplejson.loads(simplejson.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
 
         return requests.get(self.get_url(url), params=params, **kwargs)
 
     def post(self, url, data=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
+            kwargs['json'] = simplejson.loads(simplejson.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
 
         return requests.post(self.get_url(url), data=data, **kwargs)
 
     def put(self, url, data=None, **kwargs):
         json_chunk = kwargs.get('json')
         if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = json.loads(json.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
+            kwargs['json'] = simplejson.loads(simplejson.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
 
         return requests.put(self.get_url(url), data=data, **kwargs)
 
@@ -713,7 +714,7 @@ class JobLossChannel:
         self.stream.write('"x","training","validation"\n')
 
     def send(self, x, training_loss, validation_loss):
-        line = json.dumps([x, training_loss, validation_loss])[1:-1]
+        line = simplejson.dumps([x, training_loss, validation_loss])[1:-1]
 
         self.lock.acquire()
         try:
@@ -801,7 +802,7 @@ class JobChannel:
         if self.kpi:
             self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpi/name', name)
 
-        line = json.dumps(['x'] + [str(x['name']) for x in traces])[1:-1]
+        line = simplejson.dumps(['x'] + [str(x['name']) for x in traces])[1:-1]
         self.stream.write(line + "\n")
 
     def send(self, x, y):
@@ -817,7 +818,7 @@ class JobChannel:
             if not isinstance(v, (int, float)) and not isinstance(v, six.string_types):
                 raise Exception('Could not send channel value for ' + self.name+' since type ' + type(y).__name__+' is not supported. Use int, float or string values.')
 
-        line = json.dumps([x] + y)[1:-1]
+        line = simplejson.dumps([x] + y)[1:-1]
 
         self.lock.acquire()
         try:
@@ -827,7 +828,7 @@ class JobChannel:
             self.lock.release()
 
         if self.kpi:
-            self.job_backend.git.store_file('aetros/job/kpi/last.json', json.dumps(y[self.kpiTrace]))
+            self.job_backend.git.store_file('aetros/job/kpi/last.json', simplejson.dumps(y[self.kpiTrace]))
 
 
 class JobBackend:
@@ -991,6 +992,12 @@ class JobBackend:
           str(self.git.last_push_time),
         ))
 
+    def on_force_exit(self):
+        """
+        External hook.
+        """
+        pass
+
     def on_sigint(self, sig, frame):
         """
         We got SIGINT signal.
@@ -1093,7 +1100,6 @@ class JobBackend:
                 self.last_step_time = time.time()
 
                 if size:
-                    self.set_system_info('samplesPerSecond', steps_per_second * size, True)
                     self.report_speed(steps_per_second * size)
 
                 epochs_per_second = steps_per_second / total  # all batches
@@ -1113,7 +1119,7 @@ class JobBackend:
                     if epochs_per_second != 0:
                         eta += (total_epochs - (current_epochs - 1)) / epochs_per_second
 
-                self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
+                self.git.store_file('aetros/job/times/eta.json', simplejson.dumps(eta))
 
         if label and self.step_label != label:
             self.set_system_info('stepLabel', label, True)
@@ -1123,27 +1129,34 @@ class JobBackend:
             self.set_system_info('stepSpeedLabel', speed_label, True)
             self.step_speed_label = speed_label
 
-    def set_speed(self, speed, label=None):
+    def report_speed(self, speed, x=None, label=None):
+        if not self.is_master_process():
+            self.stdout_api_call('speed', x=x, speed=speed, label=label)
+            return
+
+        self.last_speed = speed
+        self.last_speed_time = time.time()
+
+        if x is None:
+            x = math.ceil(time.time()-self.start_time)
+
         self.set_system_info('samplesPerSecond', speed, True)
-        self.report_speed(speed)
+        self.speed_stream.write(simplejson.dumps([x, speed])[1:-1] + "\n")
 
         if label and self.step_speed_label != label:
             self.set_system_info('stepSpeedLabel', label, True)
             self.step_speed_label = label
 
-    def report_speed(self, speed):
-        self.last_speed = speed
-        self.last_speed_time = time.time()
-
-        x = math.ceil(time.time()-self.start_time)
-        self.speed_stream.write(json.dumps([x, speed])[1:-1] + "\n")
+    def stdout_api_call(self, command, **kwargs):
+        action = {'aetros': command}
+        action.update(kwargs)
+        print(simplejson.dumps(action) + '\n')
 
     @property
     def job_settings(self):
         if 'settings' in self.job['config']:
             return self.job['config']['settings']
         return {}
-
 
     def set_parameter_change_callback(self, callback):
         self.parameter_change_callback = callback
@@ -1179,7 +1192,7 @@ class JobBackend:
                     'steps': self.steps,
                     'eta': self.eta,
                 }
-                self.git.store_file('aetros/job/progress/' + self.id + '.json', json.dumps(info))
+                self.git.store_file('aetros/job/progress/' + self.id + '.json', simplejson.dumps(info))
 
             def label(self, label):
                 self._label = label
@@ -1241,7 +1254,7 @@ class JobBackend:
             if epoch > total:
                 eta = 0
 
-            self.git.store_file('aetros/job/times/eta.json', json.dumps(eta))
+            self.git.store_file('aetros/job/times/eta.json', simplejson.dumps(eta))
 
             if time_per_epoch > 0:
                 self.set_system_info('epochsPerSecond', 1 / time_per_epoch, True)
@@ -1342,9 +1355,8 @@ class JobBackend:
             # log stdout to Git by using self.write_log -> git:stream_file
             self.stream_log = self.git.stream_file('aetros/job/log.txt')
             self.speed_stream = self.git.stream_file('aetros/job/speed.csv')
-
             header = ["x", "speed"]
-            self.speed_stream.write(json.dumps(header)[1:-1] + "\n")
+            self.speed_stream.write(simplejson.dumps(header)[1:-1] + "\n")
 
             if isinstance(sys.stdout, GeneralLogger):
                 sys.stdout.job_backend = self
@@ -1570,7 +1582,7 @@ class JobBackend:
         # and do last git push.
         if self.is_master_process() and progress is not None:
             # if not master process, the master process will set it
-            self.git.commit_file('STOP', 'aetros/job/status/progress.json', json.dumps(progress, default=invalid_json_values))
+            self.git.commit_file('STOP', 'aetros/job/status/progress.json', simplejson.dumps(progress, default=invalid_json_values))
 
         if not force_exit and was_online:
             # both sides should have same blobs, so we do now our final push
@@ -1588,6 +1600,7 @@ class JobBackend:
         self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
         if force_exit:
+            self.on_force_exit()
             os._exit(exit_code)
         elif not self.in_shutdown:
             sys.exit(exit_code)
@@ -1719,7 +1732,7 @@ class JobBackend:
             return self.job['model']
 
         config = read_config(self.config_path, logger=self.logger)
-        self.logger.debug('config: ' + json.dumps(config))
+        self.logger.debug('config: ' + simplejson.dumps(config))
 
         if model_name is None:
             model_name = os.getenv('AETROS_MODEL_NAME')
@@ -1774,7 +1787,7 @@ class JobBackend:
             raise Exception('Could not load aetros/job.json from git repository. Make sure you have created the job correctly.')
 
         with open(self.git.work_tree + '/aetros/job.json') as f:
-            self.job = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
+            self.job = simplejson.loads(f.read(), object_pairs_hook=collections.OrderedDict)
 
         if not self.job:
             raise Exception('Could not parse aetros/job.json from git repository. Make sure you have created the job correctly.')
@@ -1828,18 +1841,18 @@ class JobBackend:
                 'backend': keras.backend.backend(),
                 'image_data_format': image_data_format
             }
-            self.git.commit_file('Added weights', 'aetros/weights/latest.json', json.dumps(info))
+            self.git.commit_file('Added weights', 'aetros/weights/latest.json', simplejson.dumps(info))
             if push:
                 self.git.push()
 
         # todo, implement optional saving of self.get_job_model().get_weights_filepath_best()
 
     def job_add_status(self, key, value):
-        self.git.commit_file('STATUS ' + str(value), 'aetros/job/status/' + key + '.json', json.dumps(value, default=invalid_json_values))
+        self.git.commit_file('STATUS ' + str(value), 'aetros/job/status/' + key + '.json', simplejson.dumps(value, default=invalid_json_values))
 
     def set_info(self, name, value, commit_end_of_job=False):
         if commit_end_of_job:
-            self.git.store_file('aetros/job/info/' + name + '.json', json.dumps(value, default=invalid_json_values))
+            self.git.store_file('aetros/job/info/' + name + '.json', simplejson.dumps(value, default=invalid_json_values))
         else:
             self.git.commit_json_file('INFO ' + name, 'aetros/job/info/' + name, value)
 
@@ -1848,7 +1861,7 @@ class JobBackend:
 
     def set_system_info(self, key, value, commit_end_of_job=False):
         if commit_end_of_job:
-            self.git.store_file('aetros/job/system/' + key + '.json', json.dumps(value, default=invalid_json_values))
+            self.git.store_file('aetros/job/system/' + key + '.json', simplejson.dumps(value, default=invalid_json_values))
         else:
             self.git.commit_json_file('SYSTEM_INFO ' + key, 'aetros/job/system/' + key, value)
 
@@ -1907,7 +1920,7 @@ class JobBackend:
             'instance': self.name
         }
 
-        self.git.store_file('aetros/job/actions/' + name + '/config.json', json.dumps(value, default=invalid_json_values))
+        self.git.store_file('aetros/job/actions/' + name + '/config.json', simplejson.dumps(value, default=invalid_json_values))
 
         self.registered_actions[name] = value
         value['callback'] = callback
@@ -1953,7 +1966,7 @@ class JobBackend:
 
         self.git.store_file(
             'aetros/job/actions/' + str(action_name) + '/result/' + str(action_id) + '.json',
-            json.dumps(action, default=invalid_json_values)
+            simplejson.dumps(action, default=invalid_json_values)
         )
 
         def done(value):
@@ -1965,7 +1978,7 @@ class JobBackend:
 
             self.git.store_file(
                 'aetros/job/actions/' + str(action_name) + '/result/' + str(action_id) + '.json',
-                json.dumps(result, default=invalid_json_values)
+                simplejson.dumps(result, default=invalid_json_values)
             )
 
         kwargs = {}
@@ -1999,7 +2012,7 @@ class JobBackend:
 
             self.git.store_file(
                 'aetros/job/actions/' + str(action_name) + '/result/' + str(action_id) + '.json',
-                json.dumps(result, default=invalid_json_values)
+                simplejson.dumps(result, default=invalid_json_values)
             )
 
     def file_list(self):
@@ -2212,9 +2225,9 @@ class JobBackend:
                 self.set_status(**data)
                 return True
 
-        if action == 'set_speed':
-            if validate_action(['speed']):
-                self.set_speed(**data)
+        if action == 'speed':
+            if validate_action(['x', 'speed']):
+                self.report_speed(**data)
                 return True
 
         if action == 'create-channel':

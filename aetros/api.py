@@ -5,11 +5,10 @@ import sys
 
 from requests.auth import HTTPBasicAuth
 from six.moves.urllib.parse import urlencode
-import json
+import simplejson
 
 from aetros.logger import drain_stream
 from aetros.utils import read_home_config, create_ssh_stream
-
 
 class ApiError(Exception):
     def __init__(self, message, error):
@@ -78,10 +77,10 @@ def request(path, query=None, body=None, method='get', config=None):
         method = 'post'
 
     ssh_stream = create_ssh_stream(config)
-    stdin, stdout, stderr = ssh_stream.exec_command('api ' + method + ' ' + json.dumps(path))
+    stdin, stdout, stderr = ssh_stream.exec_command('api ' + method + ' ' + simplejson.dumps(path))
 
     if body is not None:
-        input = six.b(json.dumps(body))
+        input = six.b(simplejson.dumps(body))
         stdin.write(input)
         stdin.flush()
         stdin.channel.shutdown_write()
@@ -104,7 +103,7 @@ def raise_response_exception(message, response):
 
     if isinstance(content, six.string_types):
         try:
-            content_parsed = json.loads(content, object_pairs_hook=collections.OrderedDict)
+            content_parsed = simplejson.loads(content, object_pairs_hook=collections.OrderedDict)
             if 'error' in content_parsed:
                 error = content_parsed['error']
             if 'message' in content_parsed:
@@ -117,7 +116,7 @@ def raise_response_exception(message, response):
 
 
 def parse_json(content):
-    a = json.loads(content, object_pairs_hook=collections.OrderedDict)
+    a = simplejson.loads(content)
 
     if isinstance(a, dict) and 'error' in a:
         raise ApiError('API request failed %s: %s.' % (a['error'], a['message']), a['error'])

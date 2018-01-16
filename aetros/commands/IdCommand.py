@@ -25,6 +25,8 @@ class IdCommand:
 
         user = api.user()
 
+        print(user['username'])
+
         print("Logged in as %s (%s) on %s" % (user['username'], user['name'], config['host']))
 
         if len(user['accounts']) > 0:

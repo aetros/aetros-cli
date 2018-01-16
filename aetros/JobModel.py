@@ -1,11 +1,12 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-import json
 import os
 import sys
 import tempfile
 import urllib
+
+import simplejson
 from PIL import Image
 import numpy as np
 import collections
@@ -219,7 +220,7 @@ class JobModel:
     def layers(self):
         if self._layers is None:
             with open(self.get_layers_path(), 'r') as f:
-                self._layers = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
+                self._layers = simplejson.loads(f.read(), object_pairs_hook=collections.OrderedDict)
 
         return self._layers
 
@@ -231,7 +232,7 @@ class JobModel:
             def read_dataset(id):
                 dataset_json_path = os.path.normpath(self.get_dataset_dir() + '/' + id + '.json')
                 with open(dataset_json_path, 'r') as f:
-                    self._datasets[id] = json.loads(f.read(), object_pairs_hook=collections.OrderedDict)
+                    self._datasets[id] = simplejson.loads(f.read(), object_pairs_hook=collections.OrderedDict)
 
             for owner in os.listdir(self.get_dataset_dir()):
                 path = os.path.normpath(self.get_dataset_dir() + '/' + owner + '/dataset/')
@@ -258,7 +259,7 @@ class JobModel:
             if 'datasetId' in layer and layer['datasetId']:
 
                 if layer['datasetId'] not in self.datasets:
-                    raise Exception('Dataset %s not found in datasets %s' % (layer['datasetId'], json.dumps(self.datasets.keys())))
+                    raise Exception('Dataset %s not found in datasets %s' % (layer['datasetId'], simplejson.dumps(self.datasets.keys())))
 
                 dataset = self.datasets[layer['datasetId']]
                 if not dataset:

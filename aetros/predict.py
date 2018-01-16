@@ -1,7 +1,7 @@
 from __future__ import print_function
 from __future__ import absolute_import
 
-import json
+import simplejson
 import numpy as np
 import os
 
@@ -51,4 +51,4 @@ def predict(logger, job_id, file_paths, weights_path=None):
 
     prediction = job_model.predict(trainer, np.array(inputs))
 
-    print(json.dumps(prediction, indent=4, default=invalid_json_values))
+    print(simplejson.dumps(prediction, indent=4, default=invalid_json_values))

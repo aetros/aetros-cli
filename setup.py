@@ -26,6 +26,7 @@ setup(name='aetros',
                         'terminaltables>=3.1.0',
                         'colorclass>=2.2.0',
                         'docker>=2.7.0',
+                        'simplejson>=3.13.2',
                         'py-cpuinfo>=3.3.0',
                         'msgpack-python>=0.4.8'),
       packages=find_packages())

@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
-import json
+import simplejson
 import os
 import sys
 import urllib
@@ -113,7 +113,7 @@ class PredictionServerCommand:
                     start = time.time()
 
                     if not path and not paths and not uploads and not inputs:
-                        return json.dumps({'error': 'not_input_given'})
+                        return simplejson.dumps({'error': 'not_input_given'})
 
                     if path and not paths and not uploads and not inputs:
                         paths = [path]
@@ -149,11 +149,11 @@ class PredictionServerCommand:
                     self.lock.release()
                 except Exception as e:
                     self.lock.release()
-                    return json.dumps({'error': type(e).__name__, 'message': e.message})
+                    return simplejson.dumps({'error': type(e).__name__, 'message': e.message})
 
                 result['prediction'] = prediction
 
-                return json.dumps(result)
+                return simplejson.dumps(result)
 
         cherrypy.config.update({
             'server.socket_host': host,

@@ -3,7 +3,7 @@ from __future__ import absolute_import
 
 import re
 import time
-import json
+import simplejson
 import os
 import subprocess
 import sys
@@ -79,10 +79,12 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
     if job_backend.is_simple_model():
         if docker_image:
-            job_commands = ['python']
+            simple_command = ['python']
         else:
-            job_commands = [sys.executable]
-        job_commands += ['-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
+            simple_command = [sys.executable]
+
+        simple_command += ['-m', 'aetros', 'start-simple', job_backend.model_name + '/' + job_backend.job_id]
+        job_commands = {'run': ' '.join(simple_command)}
 
     if job_commands is None:
         raise Exception('No command specified.')
@@ -96,12 +98,12 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             if isinstance(job_commands, list):
                 for k, v in enumerate(job_commands):
                     if isinstance(job_commands[k], six.string_types):
-                        job_commands[k] = job_commands[k].replace('{{' + key + '}}', json.dumps(value))
+                        job_commands[k] = job_commands[k].replace('{{' + key + '}}', simplejson.dumps(value))
 
             elif isinstance(job_commands, dict):
                 for k, v in six.iteritems(job_commands):
                     if isinstance(job_commands[k], six.string_types):
-                        job_commands[k] = job_commands[k].replace('{{' + key + '}}', json.dumps(value))
+                        job_commands[k] = job_commands[k].replace('{{' + key + '}}', simplejson.dumps(value))
 
     job_backend.set_system_info('commands', job_commands)
     logger.info("Switch working directory to " + work_tree)
@@ -165,7 +167,9 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         command += ['/bin/sh', '-c', trap + 'trapIt /bin/sh /job/aetros/command.sh']
 
         with job_backend.git.batch_commit('JOB_SYSTEM_INFORMATION'):
-            aetros_environment = {'aetros_version': __version__, 'variables': env}
+            aetros_environment = {'aetros_version': __version__, 'variables': env.copy()}
+            if 'AETROS_SSH_KEY' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY']
+            if 'AETROS_SSH_KEY_BASE64' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY_BASE64']
             job_backend.set_system_info('environment', aetros_environment)
 
             memory = psutil.virtual_memory().total
@@ -185,8 +189,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             if 'resources_assigned' in job_backend.job:
                 assigned_resources = job_backend.job['resources_assigned']
                 cpus = 1
-                if 'cpu' in assigned_resources and assigned_resources['cpu']:
-                    cpus = assigned_resources['cpu']
+                if 'cpus' in assigned_resources and assigned_resources['cpus']:
+                    cpus = assigned_resources['cpus']
 
             job_backend.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpus])
 
@@ -198,13 +202,9 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         job_backend.collect_environment(env)
         job_backend.start_monitoring(gpu_devices=gpu_devices)
 
-        if os.environ.get('LD_LIBRARY_PATH', None):
-            # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
-            command = ['/bin/sh', '-c', 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI; /bin/sh "'+job_backend.git.work_tree+'/aetros/command.sh"']
-        else:
-            command = ['/bin/sh', job_backend.git.work_tree + '/aetros/command.sh']
+        command = ['/bin/sh', job_backend.git.work_tree + '/aetros/command.sh']
 
-    logger.debug("$ %s " % (' '.join([json.dumps(a) for a in command])))
+    logger.debug("$ %s " % (' '.join([simplejson.dumps(a) for a in command])))
     job_backend.set_system_info('image/name', str(docker_image))
 
     p = None
@@ -214,6 +214,22 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
     all_done = False
     command_stats = None
     files = job_backend.file_list()
+
+
+    def on_force_exit():
+        # make sure the process dies
+
+        with open(os.devnull, 'r+b', 0) as DEVNULL:
+            if docker_image:
+                # docker run does not proxy INT signals to the docker-engine,
+                # so we need to do it on our own directly.
+                subprocess.Popen(args=[home_config['docker'], 'kill', job_backend.job_id], stdout=DEVNULL, stderr=DEVNULL).wait()
+            elif not exited and state['last_process'] and state['last_process'].poll() is None:
+                # wait for last command
+                os.killpg(os.getpgid(state['last_process'].pid), signal.SIGKILL)
+
+    job_backend.on_force_exit = on_force_exit
+
     try:
         job_backend.set_status('STARTED')
         # logger.warning("$ %s " % (str(command),))
@@ -242,6 +258,11 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
         def write_command_sh(job_command):
             f = open(job_backend.git.work_tree + '/aetros/command.sh', 'w+')
+
+            if not docker_image:
+                # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
+                f.write('export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI;\n')
+
             f.write(job_command)
             f.close()
 
@@ -252,11 +273,15 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
                 if job_backend.handle_stdout_api(line):
                     return False
 
+            if line[0:10] == six.b('{"aetros":') and line[-1:] == six.b('}'):
+                if job_backend.handle_stdout_api(line):
+                    return False
+
         def exec_command(id, command, job_command):
             write_command_sh(job_command)
             print('$ ' + job_command.strip() + '\n')
             args = command
-            logger.debug('$ ' + ' '.join([json.dumps(a) for a in args]))
+            logger.debug('$ ' + ' '.join([simplejson.dumps(a) for a in args]))
             state['last_process'] = subprocess.Popen(
                 args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
             )
@@ -407,7 +432,7 @@ def docker_image_information(logger, home_config, job_backend):
     image = job_backend.job['config']['image']
 
     inspections = execute_command_stdout([home_config['docker'], 'inspect', image])
-    inspections = json.loads(inspections.decode('utf-8'))
+    inspections = simplejson.loads(inspections.decode('utf-8'))
 
     if inspections:
         inspection = inspections[0]
@@ -439,9 +464,11 @@ def docker_continue(logger, home_config, job_backend):
 
     return True if p.poll() == 0 else False
 
+
 def docker_send_signal(logger, home_config, job_backend, signal):
     docker_command = [home_config['docker'], 'kill', '-s', signal, job_backend.job_id]
     execute_command_stdout(docker_command)
+
 
 def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env):
     docker_command = [home_config['docker'], 'run', '-t', '--rm', '--name', job_backend.job_id]
@@ -483,8 +510,8 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_device
         assigned_resources = job_backend.job['resources_assigned']
 
         cpus = 1
-        if 'cpu' in assigned_resources and assigned_resources['cpu']:
-            cpus = assigned_resources['cpu']
+        if 'cpus' in assigned_resources and assigned_resources['cpus']:
+            cpus = assigned_resources['cpus']
         docker_command += ['--cpus', str(cpus)]
 
         memory = 1

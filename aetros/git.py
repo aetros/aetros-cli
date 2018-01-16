@@ -1,4 +1,4 @@
-import json
+import simplejson
 import os
 import shutil
 import subprocess
@@ -381,7 +381,7 @@ class Git:
         as job_id's and added aetros/task.json file. As parent commit the job_id is used.
         """
         self.read_tree(job_id)
-        self.add_file('aetros/task.json', json.dumps(data, indent=4))
+        self.add_file('aetros/task.json', simplejson.dumps(data, indent=4))
         tree_id = self.write_tree()
 
         task_id = self.command_exec(['commit-tree', '-m', "TASK_CREATED", tree_id, '-p', job_id])[0].decode('utf-8').strip()
@@ -397,7 +397,7 @@ class Git:
         root commit is the actual job id. A reference is then created to the newest (head) commit of this commit history.
         The reference will always be updated once a new commit is added.
         """
-        self.add_file('aetros/job.json', json.dumps(data, indent=4))
+        self.add_file('aetros/job.json', simplejson.dumps(data, indent=4))
         tree_id = self.write_tree()
 
         self.job_id = self.command_exec(['commit-tree', '-m', "JOB_CREATED", tree_id])[0].decode('utf-8').strip()
@@ -669,7 +669,7 @@ class Git:
         return self.command_exec(['write-tree'])[0].decode('utf-8').strip()
 
     def commit_json_file(self, message, path, content):
-        return self.commit_file(message, path + '.json', json.dumps(content, default=invalid_json_values))
+        return self.commit_file(message, path + '.json', simplejson.dumps(content, default=invalid_json_values))
 
     def add_file(self, path, content):
         """

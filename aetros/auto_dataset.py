@@ -2,7 +2,7 @@ from __future__ import division
 from __future__ import absolute_import
 from __future__ import print_function
 import hashlib
-import json
+import simplejson
 import random
 import shutil
 # import urllib
@@ -466,7 +466,7 @@ def get_images(job_model, dataset, node, trainer):
     classes_changed = False
     config_changed = False
     had_previous = False
-    classes_md5 = hashlib.md5(json.dumps(classes, default=invalid_json_values, sort_keys=True).encode('utf-8')).hexdigest()
+    classes_md5 = hashlib.md5(simplejson.dumps(classes, default=invalid_json_values, sort_keys=True).encode('utf-8')).hexdigest()
 
     validationFactor = 0.2
 
@@ -474,7 +474,7 @@ def get_images(job_model, dataset, node, trainer):
     if os.path.isdir(dataset_path):
         if os.path.isfile(meta_information_file):
             with open(meta_information_file) as f:
-                meta = json.load(f)
+                meta = simplejson.load(f)
                 if meta:
                     had_previous = True
                     if 'classes_md5' in meta and meta['classes_md5'] != classes_md5:
@@ -562,7 +562,7 @@ def get_images(job_model, dataset, node, trainer):
                     'classes_md5': classes_md5,
                     'config': config
                 }
-                json.dump(meta, f, default=invalid_json_values)
+                simplejson.dump(meta, f, default=invalid_json_values)
 
         except KeyboardInterrupt:
             controller['running'] = False
