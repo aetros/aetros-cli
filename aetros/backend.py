@@ -63,7 +63,7 @@ on_shutdown.started_jobs = []
 atexit.register(on_shutdown)
 
 
-def Popen(**kwargs):
+def Popen(*args, **kwargs):
     """
     Executes a command using subprocess.Popen and redirects output to AETROS and stdout.
     Parses stdout as well for stdout API calls.
@@ -73,7 +73,7 @@ def Popen(**kwargs):
 
     :return: subprocess.Popen
     """
-    p = subprocess.Popen(**kwargs)
+    p = subprocess.Popen(*args, **kwargs)
     wait_stdout = None
     wait_stderr = None
 
