@@ -24,6 +24,7 @@ command_summaries = [
     ['job-diff', 'Prints an unified diff of two jobs.'],
     ['job-checkout', 'Checks all files from a job out to a directory.'],
     ['job-files', 'List all files of a job.'],
+    ['home-config', 'Changes the global configuration in ~/aetros.yml.'],
     ['add', 'Adds a local file to a job tree.'],
     ['init', 'Creates a new model and places a aetros.yml in current working directory pointing to this model.'],
     ['id', 'Shows under which account the machine is authenticated.'],
@@ -65,6 +66,7 @@ def main(args=None):
     from aetros.commands.JobCheckoutCommand import JobCheckoutCommand
     from aetros.commands.JobFilesCommand import JobFilesCommand
     from aetros.commands.JobCommitsCommand import JobCommitsCommand
+    from aetros.commands.HomeConfigCommand import HomeConfigCommand
     from aetros.commands.JobsCommand import JobsCommand
     from aetros.commands.ServerCommand import ServerCommand
     from aetros.commands.PredictCommand import PredictCommand
@@ -96,6 +98,7 @@ def main(args=None):
         'job-checkout': JobCheckoutCommand,
         'job-files': JobFilesCommand,
         'job-commits': JobCommitsCommand,
+        'home-config': HomeConfigCommand,
         'add': AddCommand,
         'init': InitCommand,
         'gpu': GPUCommand,

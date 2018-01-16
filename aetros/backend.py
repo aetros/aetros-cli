@@ -1419,9 +1419,9 @@ class JobBackend:
             if working_dir:
                 os.chdir(current_dir)
 
-    def start_monitoring(self, start_time=None, gpu_devices=None, docker_container=None):
+    def start_monitoring(self, start_time=None, cpu_cores=1, gpu_devices=None, docker_container=None):
         if not self.monitoring_thread:
-            self.monitoring_thread = MonitoringThread(self, start_time, gpu_devices, docker_container)
+            self.monitoring_thread = MonitoringThread(self, cpu_cores, start_time, gpu_devices, docker_container)
             self.monitoring_thread.daemon = True
             self.monitoring_thread.start()
 

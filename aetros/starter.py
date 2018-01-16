@@ -194,7 +194,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
             job_backend.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpus])
 
-        job_backend.start_monitoring(gpu_devices=gpu_devices, docker_container=job_backend.job_id)
+        job_backend.start_monitoring(cpu_cores=cpus, gpu_devices=gpu_devices, docker_container=job_backend.job_id)
     else:
         # non-docker
         # env['PYTHONPATH'] += ':' + os.getcwd()

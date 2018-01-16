@@ -18,13 +18,14 @@ import numpy as np
 
 
 class MonitoringThread(Thread):
-    def __init__(self, job_backend, start_time=None, gpu_devices=None, docker_container=None):
+    def __init__(self, job_backend, cpu_cores=1, start_time=None, gpu_devices=None, docker_container=None):
         Thread.__init__(self)
 
         self.job_backend = job_backend
         self.gpu_devices = gpu_devices
         self.docker_container = docker_container
         self.max_minutes = 0
+        self.cpu_cores = cpu_cores
 
         job = self.job_backend.job
         if 'maxTime' in job['config'] and job['config']['maxTime'] > 0:
@@ -82,12 +83,13 @@ class MonitoringThread(Thread):
                     previous_system = data['cpu_stats']['system_cpu_usage']
 
                     if cpu_delta > 0 and system_delta > 0:
-                        cpu_util = (cpu_delta / system_delta) * len(data['cpu_stats']['cpu_usage']['percpu_usage']) * 100
+                        cpu_util = (cpu_delta / system_delta) * self.cpu_cores * 100
 
                     mem_util = data['memory_stats']['usage'] / data['memory_stats']['limit'] * 100
                     self.docker_last_stream_data = time.time()
                     self.docker_last_cpu = cpu_util
                     self.docker_last_mem = mem_util
+
             except docker.errors.NotFound:
                 return
 
