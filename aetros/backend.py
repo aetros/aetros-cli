@@ -73,14 +73,15 @@ def Popen(*args, **kwargs):
 
     :return: subprocess.Popen
     """
-    p = subprocess.Popen(*args, **kwargs)
-    wait_stdout = None
-    wait_stderr = None
 
     read_line = None
     if 'read_line' in kwargs:
         read_line = kwargs['read_line']
         del kwargs['read_line']
+
+    p = subprocess.Popen(*args, **kwargs)
+    wait_stdout = None
+    wait_stderr = None
 
     if p.stdout:
         wait_stdout = sys.stdout.attach(p.stdout, read_line=read_line)
