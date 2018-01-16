@@ -80,6 +80,7 @@ def Popen(*args, **kwargs):
     read_line = None
     if 'read_line' in kwargs:
         read_line = kwargs['read_line']
+        del kwargs['read_line']
 
     if p.stdout:
         wait_stdout = sys.stdout.attach(p.stdout, read_line=read_line)
