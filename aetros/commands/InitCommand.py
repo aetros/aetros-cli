@@ -46,6 +46,7 @@ class InitCommand:
         except api.ApiError as e:
             if e.error != 'already_exists':
                 raise e
+            print("Notice: Model already exists remotely.")
             name = parsed_args.name
 
         with open('aetros.yml', 'w') as f:

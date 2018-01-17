@@ -267,7 +267,6 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             print('$ ' + job_command.strip() + '\n')
             args = command
             logger.debug('$ ' + ' '.join([simplejson.dumps(a) for a in args]))
-            print(args)
             state['last_process'] = subprocess.Popen(
                 args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
             )
