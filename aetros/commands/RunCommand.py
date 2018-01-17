@@ -137,40 +137,12 @@ class RunCommand:
             for name in parsed_args.server:
                 create_info['config']['servers'].append(name)
 
-        if 'resources' not in create_info['config']:
-            create_info['config']['resources'] = {}
-
-        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu is not None or parsed_args.gpu_memory:
-            if parsed_args.cpu: create_info['config']['resources']['cpu'] = int(parsed_args.cpu)
-            if parsed_args.memory: create_info['config']['resources']['memory'] = float(parsed_args.memory)
-            if parsed_args.gpu is not None: create_info['config']['resources']['gpu'] = int(parsed_args.gpu)
-            if parsed_args.gpu_memory: create_info['config']['resources']['gpu_memory'] = float(parsed_args.gpu_memory)
-
-        if parsed_args.local:
-            # usually, the aetros server would assign resources at job root level from the assigned server
-            # but since it's started locally, we just use the requested one. User should know what they do.
-            # start.py will use 'config' stuff anyone for docker limitation, so we should make sure it is
-            # being displayed.
-
-            if 'image' in create_info['config'] and create_info['config']:
-                resources = create_info['config']['resources']
-                create_info['resources_assigned'] = {'cpus': 1, 'memory': 1, 'gpus': []}
-
-                if 'gpu' in resources and resources['gpu'] > 0:
-                    # if requested 2 GPUs and we have 3 GPUs with id [0,1,2], gpus should be [0,1]
-                    parsed_args.gpu_device = []
-                    for i in range(0, resources['gpu']):
-                        parsed_args.gpu_device.append(i)
-
-                    create_info['resources_assigned']['gpus'] = parsed_args.gpu_device
-                if 'cpu' in resources:
-                    create_info['resources_assigned']['cpus'] = resources['cpu']
-                if 'memory' in resources:
-                    create_info['resources_assigned']['memory'] = resources['memory']
-            else:
-                # since this runs on the host, extract machine hardware and put it in resources_assigned
-                # so we see it at the job.
-                pass
+        create_info['config']['resources'] = create_info['config'].get('resources', {})
+        resources = create_info['config']['resources']
+        resources['cpu'] = int(parsed_args.cpu or resources.get('cpu', 1))
+        resources['memory'] = int(parsed_args.memory or resources.get('memory', 1))
+        resources['gpu'] = int(parsed_args.gpu or resources.get('gpu', 0))
+        resources['gpu_memory'] = int(parsed_args.gpu_memory or resources.get('gpu_memory', 0))
 
         if parsed_args.local:
             create_info['server'] = 'local'
@@ -203,12 +175,16 @@ class RunCommand:
         print("Job %s/%s created." % (job.model_name, job.job_id))
 
         if parsed_args.local:
-            start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume, gpu_devices=parsed_args.gpu_device)
+            cpus = create_info['config']['resources']['cpu']
+            memory = create_info['config']['resources']['memory']
 
-            # todo handle dependencies?
-            # what to start first?
-            for task_id in tasks:
-                start()
+            if not parsed_args.gpu_device and create_info['config']['resources']['gpu'] > 0:
+                # if requested 2 GPUs and we have 3 GPUs with id [0,1,2], gpus should be [0,1]
+                parsed_args.gpu_device = []
+                for i in range(0, create_info['config']['resources']['gpu']):
+                    parsed_args.gpu_device.append(i)
+
+            start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume, cpus=cpus, memory=memory, gpu_devices=parsed_args.gpu_device)
 
         else:
             if parsed_args.volume:

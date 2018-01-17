@@ -44,6 +44,14 @@ class StartCommand:
         parsed_args = parser.parse_args(args)
 
         home_config = read_home_config()
+        model_name = parsed_args.name
+
+        if model_name.count('/') > 1:
+            # start a concret job, by server command
+            start(self.logger, model_name, cpus=int(parsed_args.cpu), memory=int(parsed_args.memory), gpu_devices=parsed_args.gpu_device)
+            return
+
+        # create a new job
 
         hyperparameter = {}
         if parsed_args.param:
@@ -83,30 +91,34 @@ class StartCommand:
             for name in parsed_args.server:
                 job_config['servers'].append(name)
 
-        if parsed_args.cpu or parsed_args.memory or parsed_args.gpu is not None or parsed_args.gpu_memory:
-            if parsed_args.cpu: job_config['resources']['cpu'] = float(parsed_args.cpu)
-            if parsed_args.memory: job_config['resources']['memory'] = float(parsed_args.memory)
-            if parsed_args.gpu is not None: job_config['resources']['gpu'] = float(parsed_args.gpu)
-            if parsed_args.gpu_memory: job_config['resources']['gpu_memory'] = float(parsed_args.gpu_memory)
+        job_config['resources'] = job_config.get('resources', {})
+        resources = job_config['resources']
+        resources['cpu'] = int(parsed_args.cpu or resources.get('cpu', 1))
+        resources['memory'] = int(parsed_args.memory or resources.get('memory', 1))
+        resources['gpu'] = int(parsed_args.gpu or resources.get('gpu', 0))
+        resources['gpu_memory'] = int(parsed_args.gpu_memory or resources.get('gpu_memory', 0))
 
-        model_name = parsed_args.name
+        try:
+            self.logger.debug("Create job ...")
+            created = api.create_job(model_name, parsed_args.local, hyperparameter, parsed_args.dataset, config=job_config)
+        except api.ApiError as e:
+            if 'Connection refused' in e.error:
+                self.logger.error("You are offline")
 
-        if model_name.count('/') == 1:
-            try:
-                self.logger.debug("Create job ...")
-                created = api.create_job(model_name, parsed_args.local, hyperparameter, parsed_args.dataset, config=job_config)
-            except api.ApiError as e:
-                if 'Connection refused' in e.error:
-                    self.logger.error("You are offline")
+            raise
 
-                raise
+        print("Job %s/%s created." % (model_name, created['id']))
 
-            print("Job %s/%s created." % (model_name, created['id']))
+        if parsed_args.local:
+            cpus = job_config['resources']['cpu']
+            memory = job_config['resources']['memory']
 
-            if parsed_args.local:
-                start(self.logger, model_name + '/' + created['id'], gpu_devices=parsed_args.gpu_device)
-            else:
-                print("Open http://%s/model/%s/job/%s to monitor it." % (home_config['host'], model_name, created['id']))
+            if not parsed_args.gpu_device and job_config['resources']['gpu'] > 0:
+                # if requested 2 GPUs and we have 3 GPUs with id [0,1,2], gpus should be [0,1]
+                parsed_args.gpu_device = []
+                for i in range(0, job_config['resources']['gpu']):
+                    parsed_args.gpu_device.append(i)
 
+            start(self.logger, model_name + '/' + created['id'], cpus=cpus, memory=memory, gpu_devices=parsed_args.gpu_device)
         else:
-            start(self.logger, model_name, gpu_devices=parsed_args.gpu_device)
+            print("Open http://%s/model/%s/job/%s to monitor it." % (home_config['host'], model_name, created['id']))

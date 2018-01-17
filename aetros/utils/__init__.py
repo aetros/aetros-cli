@@ -503,14 +503,14 @@ def git_has_remote_job(home_config, model, job_id):
 
 def find_config(path = None):
     if path:
-        if not os.path.exists(path):
-            return None
-
-        return read_config(path)
+        if os.path.exists(path):
+            return read_config(path)
     else:
         path = find_config_path()
         if path:
             return read_config(path)
+
+    return {'model': None}
 
 
 def find_config_path():
@@ -523,6 +523,7 @@ def find_config_path():
             if new_path == path:
                 return None
             path = new_path
+
 
 def read_config(path = 'aetros.yml', logger=None):
     path = os.path.normpath(os.path.expanduser(path))

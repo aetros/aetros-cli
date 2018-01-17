@@ -75,6 +75,9 @@ class MonitoringThread(Thread):
                     if 'cpu_stats' not in data or not data['cpu_stats']:
                         return
 
+                    if 'system_cpu_usage' not in data['cpu_stats']:
+                        return
+
                     cpu_util = 0
                     cpu_delta = data['cpu_stats']['cpu_usage']['total_usage'] - previous_cpu
                     system_delta = data['cpu_stats']['system_cpu_usage'] - previous_system

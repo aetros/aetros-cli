@@ -21,7 +21,7 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None):
+def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=1, memory=1, gpu_devices=None):
     """
     Starts the training process with all logging of a job_id
     """
@@ -41,10 +41,10 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, gpu_devices=None)
     job_backend.start(collect_system=False)
     job_backend.set_status('PREPARE')
 
-    start_command(logger, job_backend, env, volumes, gpu_devices=gpu_devices)
+    start_command(logger, job_backend, env, volumes, cpus=cpus, memory=memory, gpu_devices=gpu_devices)
 
 
-def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_devices=None):
+def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1, memory=1, gpu_devices=None):
     work_tree = job_backend.git.work_tree
     home_config = read_home_config()
 
@@ -148,6 +148,19 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
     job_backend.on_continue = cont
 
     if docker_image:
+        with job_backend.git.batch_commit('JOB_SYSTEM_INFORMATION'):
+            aetros_environment = {'aetros_version': __version__, 'variables': env.copy()}
+            if 'AETROS_SSH_KEY' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY']
+            if 'AETROS_SSH_KEY_BASE64' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY_BASE64']
+            job_backend.set_system_info('environment', aetros_environment)
+
+            job_backend.set_system_info('memory_total', memory * 1024 * 1024 * 1024)
+
+            import cpuinfo
+            cpu = cpuinfo.get_cpu_info()
+            job_backend.set_system_info('cpu_name', cpu['brand'])
+            job_backend.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpus])
+
         if not docker_image_built:
             docker_pull_image(logger, home_config, job_backend)
 
@@ -156,7 +169,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
         # make sure old container is removed
         subprocess.Popen([home_config['docker'], 'rm', job_backend.job_id], stderr=subprocess.PIPE).wait()
 
-        command = docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env)
+        command = docker_command_wrapper(logger, home_config, job_backend, volumes, cpus, memory, gpu_devices, env)
 
         # since linux doesnt handle SIGINT when pid=1 process has no signal listener,
         # we need to make sure, we attached one to the pid=1 process
@@ -165,34 +178,6 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
 
         command.append(docker_image)
         command += ['/bin/sh', '-c', trap + 'trapIt /bin/sh /job/aetros/command.sh']
-
-        with job_backend.git.batch_commit('JOB_SYSTEM_INFORMATION'):
-            aetros_environment = {'aetros_version': __version__, 'variables': env.copy()}
-            if 'AETROS_SSH_KEY' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY']
-            if 'AETROS_SSH_KEY_BASE64' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY_BASE64']
-            job_backend.set_system_info('environment', aetros_environment)
-
-            memory = psutil.virtual_memory().total
-            if 'resources_assigned' in job_backend.job:
-                assigned_resources = job_backend.job['resources_assigned']
-                memory = 1 * 1024 * 1024 * 1024
-                if 'memory' in assigned_resources and assigned_resources['memory']:
-                    memory = assigned_resources['memory'] * 1024 * 1024 * 1024
-
-            job_backend.set_system_info('memory_total', memory)
-
-            import cpuinfo
-            cpu = cpuinfo.get_cpu_info()
-            job_backend.set_system_info('cpu_name', cpu['brand'])
-            cpus = cpu['count']
-
-            if 'resources_assigned' in job_backend.job:
-                assigned_resources = job_backend.job['resources_assigned']
-                cpus = 1
-                if 'cpus' in assigned_resources and assigned_resources['cpus']:
-                    cpus = assigned_resources['cpus']
-
-            job_backend.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpus])
 
         job_backend.start_monitoring(cpu_cores=cpus, gpu_devices=gpu_devices, docker_container=job_backend.job_id)
     else:
@@ -282,11 +267,11 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, gpu_dev
             print('$ ' + job_command.strip() + '\n')
             args = command
             logger.debug('$ ' + ' '.join([simplejson.dumps(a) for a in args]))
+            print(args)
             state['last_process'] = subprocess.Popen(
                 args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
             )
             job_backend.set_system_info('processRunning', True, True)
-            print("Job started with pid=" + str(state['last_process'].pid))
             wait_stdout = sys.stdout.attach(state['last_process'].stdout, read_line=read_line)
             wait_stderr = sys.stderr.attach(state['last_process'].stderr)
             state['last_process'].wait()
@@ -470,7 +455,7 @@ def docker_send_signal(logger, home_config, job_backend, signal):
     execute_command_stdout(docker_command)
 
 
-def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_devices, env):
+def docker_command_wrapper(logger, home_config, job_backend, volumes, cpus, memory, gpu_devices, env):
     docker_command = [home_config['docker'], 'run', '-t', '--rm', '--name', job_backend.job_id]
     docker_command += home_config['docker_options']
 
@@ -506,19 +491,8 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, gpu_device
         for volume in volumes:
             docker_command += ['-v', volume]
 
-    if 'resources_assigned' in job_backend.job:
-        assigned_resources = job_backend.job['resources_assigned']
-
-        cpus = 1
-        if 'cpus' in assigned_resources and assigned_resources['cpus']:
-            cpus = assigned_resources['cpus']
-        docker_command += ['--cpus', str(cpus)]
-
-        memory = 1
-        if 'memory' in assigned_resources and assigned_resources['memory']:
-            memory = assigned_resources['memory']
-
-        docker_command += ['--memory', str(memory * 1024 * 1024 * 1024)]
+    docker_command += ['--cpus', str(cpus)]
+    docker_command += ['--memory', str(memory * 1024 * 1024 * 1024)]
 
     if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
         # only supported on linux

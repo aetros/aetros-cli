@@ -72,7 +72,7 @@ class Git:
 
         self.prepare_index_file()
 
-        if subprocess.Popen(['git', '--version'], stdout=subprocess.PIPE).wait() > 0:
+        if subprocess.Popen(['git', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait() > 0:
             raise Exception("Git binary not available. Please install Git v2 first.")
 
         self.delete_git_ssh = setup_git_ssh(config)

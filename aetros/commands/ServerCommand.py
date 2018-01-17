@@ -161,7 +161,7 @@ class ServerCommand:
             gpus = aetros.cuda_gpu.get_ordered_devices()
             for i in range(len(gpus)):
                 self.enabled_gpus.append(i)
-        except Exception: pass
+        except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         if parsed_args.max_gpus:
             self.enabled_gpus = []
@@ -360,6 +360,9 @@ class ServerCommand:
                 for gpu_id in resources_assigned['gpus']:
                     args += ['--gpu-device', gpu_id]
 
+            args += ['--cpu', str(resources_assigned['cpus'])]
+            args += ['--memory', str(resources_assigned['memory'])]
+
             args += [full_id]
             self.logger.info('$ ' + ' '.join(args))
             self.server.send_message({'type': 'job-executed', 'id': full_id})
@@ -409,7 +412,7 @@ class ServerCommand:
                 gpu['available'] = gpu_id in self.enabled_gpus
 
                 values['gpus'][gpu_id] = gpu
-        except Exception: pass
+        except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         for disk in psutil.disk_partitions():
             try:
@@ -452,7 +455,7 @@ class ServerCommand:
         try:
             for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
                 values['gpus'][gpu_id] = aetros.cuda_gpu.get_memory(gpu['device'])
-        except Exception: pass
+        except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         for disk in psutil.disk_partitions():
             try:
