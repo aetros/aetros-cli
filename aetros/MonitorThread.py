@@ -86,12 +86,14 @@ class MonitoringThread(Thread):
                     previous_system = data['cpu_stats']['system_cpu_usage']
 
                     if cpu_delta > 0 and system_delta > 0:
-                        cpu_util = (cpu_delta / system_delta) * self.cpu_cores * 100
+                        cpu_cores = len(data['cpu_stats']['cpu_usage']['percpu_usage'])
+
+                        cpu_util = (cpu_delta / system_delta) * cpu_cores / self.cpu_cores * 100
 
                     mem_util = data['memory_stats']['usage'] / data['memory_stats']['limit'] * 100
                     self.docker_last_stream_data = time.time()
-                    self.docker_last_cpu = cpu_util
-                    self.docker_last_mem = mem_util
+                    self.docker_last_cpu = min(cpu_util, 100)
+                    self.docker_last_mem = min(mem_util, 100)
 
             except docker.errors.NotFound:
                 return
