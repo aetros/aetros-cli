@@ -108,7 +108,7 @@ def create_ssh_stream(config, exit_on_failure=True):
     key_description = key_filename if key_filename else 'from server'
 
     try:
-        ssh_stream.connect(config['host'], key_filename=key_filename, username='git', compress=True, pkey=key)
+        ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=True, pkey=key)
     except Exception as e:
         if isinstance(e, paramiko.ssh_exception.AuthenticationException) or isinstance(e, paramiko.ssh_exception.SSHException):
             if exit_on_failure:
@@ -123,6 +123,7 @@ def create_ssh_stream(config, exit_on_failure=True):
 def setup_git_ssh(config):
     import tempfile
     ssh_command = config['ssh']
+    ssh_command += ' -p ' + str(config['ssh_port'])
     ssh_command += ' -o StrictHostKeyChecking=no'
 
     ssh_key = None
@@ -198,7 +199,7 @@ def read_home_config(path = None, logger=None):
         'docker_options': [],
         'http_port': 80,
         'https_port': 443,
-        'git_port': 22,
+        'ssh_port': 22,
         'ssl': True,
         'ssl_verify': True,
     }

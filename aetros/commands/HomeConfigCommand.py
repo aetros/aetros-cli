@@ -42,7 +42,7 @@ class HomeConfigCommand:
         if not config:
             config = {}
 
-        json = ['ssl_verify', 'http_port', 'https_port', 'ssl', 'git_port']
+        json = ['ssl_verify', 'http_port', 'https_port', 'ssl', 'ssh_port']
 
         if parsed_args.name in json:
             parsed_args.value = simplejson.loads(parsed_args.value)

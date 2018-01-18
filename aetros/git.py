@@ -1,3 +1,5 @@
+import traceback
+
 import simplejson
 import os
 import shutil
@@ -575,8 +577,13 @@ class Git:
             if not os.path.exists(os.path.dirname(full_path)):
                 os.makedirs(os.path.dirname(full_path))
 
-            open(full_path, 'w+').write(data)
-            self.store_files[path] = True
+            try:
+                open(full_path, 'w+').write(data)
+                self.store_files[path] = True
+            except IOError as e:
+                if 'No space left' in e.message:
+                    sys.stderr.write(traceback.format_exc())
+                    self.logger.error(e.message)
 
             if self.online:
                 self.client.send({'type': 'store-blob', 'path': path, 'data': data})
@@ -641,9 +648,13 @@ class Git:
                     if not handle.closed:
                         handle.write(data)
                         handle.flush()
+                except IOError as e:
+                    if 'No space left' in e.message:
+                        handle.close()
+                        sys.stderr.write(traceback.format_exc())
+                        self.git.logger.error(e.message)
                 finally:
                     self.git.stream_files_lock.release()
-
 
                 if self.git.online:
                     self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})

@@ -347,7 +347,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     except SystemExit:
         # since we started the command in a new process group, a SIGINT or CTRL+C on this process won't affect
         # our actual command process. So we need to take care that we stop everything.
-        print("SystemExit, exited=%s, all-done=%s, has-last-process=%s, pid=%s" %(
+        logger.debug("SystemExit, exited=%s, all-done=%s, has-last-process=%s, pid=%s" %(
             str(exited),
             str(all_done),
             state['last_process'] is not None,
