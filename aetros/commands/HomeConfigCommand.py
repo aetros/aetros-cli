@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 
+import simplejson
 from ruamel import yaml
 
 class HomeConfigCommand:
@@ -40,6 +41,9 @@ class HomeConfigCommand:
 
         if not config:
             config = {}
+
+        if parsed_args.name == 'ssl_verify':
+            parsed_args.value = simplejson.loads(parsed_args.value)
 
         config[parsed_args.name] = parsed_args.value
 
