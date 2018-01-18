@@ -40,7 +40,8 @@ def http_request(path, query='', json_body=None, method='get', config=None):
         else:
             path += '?' + query
 
-    url = 'https://' + config['host'] + '/api/' + path
+    url = config['url'] + '/api/' + path
+
     auth = None
     if 'auth_user' in config:
         auth = HTTPBasicAuth(config['auth_user'], config['auth_pw'])

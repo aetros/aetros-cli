@@ -67,7 +67,7 @@ class AuthenticateCommand:
 
         print("Open following link and login to confirm this machine's SSH key in your account.")
         print("Public Key Fingerprint: MD5:" + fingerprint)
-        print("\n   https://" + host + "/confirm-machine/" + token)
+        print("\n   " + home_config['url'] + "/confirm-machine/" + token)
         print("\nWaiting for confirmation ...")
 
         key_prefix = home_config['host'] + '_'

@@ -196,6 +196,10 @@ def read_home_config(path = None, logger=None):
         'git': 'git',
         'docker': 'docker',
         'docker_options': [],
+        'http_port': 80,
+        'https_port': 443,
+        'git_port': 22,
+        'ssl': True,
         'ssl_verify': True,
     }
 
@@ -211,6 +215,15 @@ def read_home_config(path = None, logger=None):
         config['ssh_key_base64'] = os.getenv('AETROS_SSH_KEY_BASE64')
 
     config['storage_dir'] = os.path.abspath(os.path.expanduser(config['storage_dir']))
+
+    http = 'https://'
+    host = config['host'] + ':' + str(config['https_port'])
+
+    if not config['ssl']:
+        http = 'http://'
+        host = config['host'] + ':' + str(config['http_port'])
+
+    config['url'] = http + host
 
     return config
 
