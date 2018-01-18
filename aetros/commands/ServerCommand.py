@@ -360,8 +360,8 @@ class ServerCommand:
                 for gpu_id in resources_assigned['gpus']:
                     args += ['--gpu-device', gpu_id]
 
-            args += ['--cpu', str(resources_assigned['cpus'])]
-            args += ['--memory', str(resources_assigned['memory'])]
+            args += ['--cpu', str(int(resources_assigned['cpus']))]
+            args += ['--memory', str(int(resources_assigned['memory']))]
 
             args += [full_id]
             self.logger.info('$ ' + ' '.join(args))

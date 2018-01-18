@@ -2,7 +2,7 @@ import unittest
 from aetros.utils import is_ignored, flatten_parameters, read_parameter_by_path
 
 
-class TestAetrosDataset(unittest.TestCase):
+class TestConfig(unittest.TestCase):
 
     def testReadParameter(self):
 

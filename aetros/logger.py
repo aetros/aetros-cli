@@ -1,6 +1,8 @@
 from __future__ import absolute_import
 
 import sys
+import traceback
+
 import six
 from threading import Timer, Thread, Lock
 
@@ -84,15 +86,19 @@ class GeneralLogger(object):
                     # buf = os.read(buffer.fileno(), 4096)
                     if read_line:
                         buf = buffer.readline()
+                        if buf == six.b(''):
+                            break
+
                         if callable(read_line):
                             res = read_line(buf)
                             if res is False:
                                 continue
+                            elif res is not None:
+                                buf = res
                     else:
                         buf = buffer.read(1)
-
-                    if buf == six.b(''):
-                        break
+                        if buf == six.b(''):
+                            break
 
                     self.attach_last_messages[bid] += buf
 
@@ -107,7 +113,7 @@ class GeneralLogger(object):
                 except Exception as e:
                     # we need to make sure, we continue to read otherwise the process of this buffer
                     # will block and we have a stuck process.
-                    sys.__stderr__.write(str(type(e))+': ' + str(e))
+                    sys.__stderr__.write(traceback.format_exc())
                     pass
 
             lock.release()
@@ -126,6 +132,9 @@ class GeneralLogger(object):
     def write(self, message):
         try:
             self.lock.acquire()
+
+            if six.b('') == message:
+                return
 
             if hasattr(message, 'decode'):
                 # don't decode string again

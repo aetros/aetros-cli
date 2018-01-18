@@ -1647,6 +1647,7 @@ class JobBackend:
         """
         Set an arbitrary status, visible in the big wheel of the job view.
         """
+        status = str(status)
         if add_section:
             self.section(status)
 
@@ -2172,13 +2173,7 @@ class JobBackend:
 
     stdout_api_channels = {}
 
-    def handle_stdout_api(self, line):
-        try:
-            data = yaml.load(line, Loader=yaml.RoundTripLoader)
-        except ReaderError:
-            self.logger.warning("AETROS stdout API call mailformed '%s'" % (line, ))
-            return False
-
+    def handle_stdout_api(self, data):
         action = data['aetros']
         del data['aetros']
 

@@ -35,6 +35,42 @@ def get_option(dict, key, default=None, type=None):
     return dict[key]
 
 
+def extract_api_calls(line, callback, failed_callback=None):
+    handled_calls = []
+    filtered_line = line
+
+    if hasattr(filtered_line, 'decode'):
+        filtered_line = filtered_line.decode('utf-8')
+
+    c = 0
+    while True:
+        start_pos = filtered_line.find('{aetros:')
+        end_pos = filtered_line.find('}\n')
+
+        if start_pos == -1 or end_pos == -1:
+            break
+
+        line = filtered_line[start_pos:end_pos+2]
+
+        try:
+            call = yaml.load(line, Loader=yaml.RoundTripLoader)
+            callback(call)
+            handled_calls.append(call)
+        except KeyboardInterrupt:
+            raise
+        except SystemExit:
+            raise
+        except:
+            if failed_callback: failed_callback(line)
+
+        filtered_line = filtered_line[0:start_pos] + filtered_line[end_pos+2:]
+        c += 1
+
+        if c > 10:
+            break
+
+    return handled_calls, filtered_line
+
 def unpack_simple_job_id(full_id):
     [owner, model, id] = unpack_full_job_id(full_id)
 

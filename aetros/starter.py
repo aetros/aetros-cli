@@ -2,6 +2,7 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 
 import re
+import shutil
 import time
 import simplejson
 import os
@@ -12,7 +13,8 @@ import signal
 import six
 
 from aetros.logger import GeneralLogger
-from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters, get_ssh_key_for_host
+from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters, get_ssh_key_for_host, \
+    extract_api_calls
 from aetros.const import JOB_STATUS, __version__
 from .backend import JobBackend
 from .Trainer import Trainer
@@ -56,6 +58,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     env['AETROS_MODEL_NAME'] = job_backend.model_name
     env['AETROS_JOB_ID'] = str(job_backend.job_id)
     env['DEBUG'] = os.getenv('DEBUG', '')
+    env['PYTHONUNBUFFERED'] = os.getenv('PYTHONUNBUFFERED', '1')
     env['AETROS_ATTY'] = '1'
     env['AETROS_GIT'] = job_backend.git.get_base_command()
 
@@ -111,7 +114,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
 
     docker_image_built = False
 
-    if job_config['dockerfile'] or job_config['install']:
+    if docker_image and (job_config['dockerfile'] or job_config['install']):
         rebuild_image = job_config['rebuild_image'] if 'rebuild_image' in job_config else False
         docker_image = docker_build_image(logger, home_config, job_backend, rebuild_image)
         docker_image_built = True
@@ -200,9 +203,13 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     command_stats = None
     files = job_backend.file_list()
 
+    def clean():
+        # clear working tree
+        shutil.rmtree(job_backend.git.work_tree)
 
     def on_force_exit():
         # make sure the process dies
+        clean()
 
         with open(os.devnull, 'r+b', 0) as DEVNULL:
             if docker_image:
@@ -251,16 +258,13 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             f.write(job_command)
             f.close()
 
+        def failed(line):
+            logger.warning("API call failed: " + line)
+
         def read_line(line):
-            line = line.strip()
+            handled, filtered_line = extract_api_calls(line, job_backend.handle_stdout_api, failed)
 
-            if line[0:8] == six.b('{aetros:') and line[-1:] == six.b('}'):
-                if job_backend.handle_stdout_api(line):
-                    return False
-
-            if line[0:10] == six.b('{"aetros":') and line[-1:] == six.b('}'):
-                if job_backend.handle_stdout_api(line):
-                    return False
+            return filtered_line
 
         def exec_command(id, command, job_command):
             write_command_sh(job_command)
@@ -383,6 +387,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             else:
                 # let the on_shutdown listener handle the rest
                 pass
+
+        clean()
 
 
 def upload_output_files(job_backend, init_files):

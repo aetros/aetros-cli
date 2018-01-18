@@ -30,10 +30,12 @@ class RunCommand:
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
                                          prog=aetros.const.__prog__ + ' run')
-        parser.add_argument('command', nargs='?', help="The command to run. Default read in aetros.yml")
-        parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in aetros.yml. If not specified, command is executed on the host.")
-        parser.add_argument('-s', '--server', action='append', help="Limits the server pool to this server. Default not limitation or read in aetros.yml. Multiple --server allowed.")
-        parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in aetros.yml")
+        parser.add_argument('command', nargs='?', help="The command to run. Default read in configuration file")
+        parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in configuration file. If not specified, command is executed on the host.")
+        parser.add_argument('--no-image', action='store_true', help="Forces not to use docker, even when image is defined in the configuration file.")
+        
+        parser.add_argument('-s', '--server', action='append', help="Limits the server pool to this server. Default not limitation or read in configuration file. Multiple --server allowed.")
+        parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in configuration file")
         parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
         parser.add_argument('--priority', help="Increases or decreases priority. Default is 0.")
@@ -132,6 +134,9 @@ class RunCommand:
             create_info['config']['dockerfile'] = None
             create_info['config']['image'] = parsed_args.image
 
+        if parsed_args.no_image:
+            create_info['config']['image'] = None
+
         if parsed_args.server:
             create_info['config']['servers'] = []
             for name in parsed_args.server:
@@ -148,7 +153,7 @@ class RunCommand:
             create_info['server'] = 'local'
 
         if parsed_args.config:
-            create_info['config']['config_path'] = parsed_args.config
+            create_info['config']['configPath'] = parsed_args.config
 
         create_info['config']['sourcesAttached'] = True
 
