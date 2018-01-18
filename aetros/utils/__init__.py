@@ -46,6 +46,8 @@ def extract_api_calls(line, callback, failed_callback=None):
     while True:
         start_pos = filtered_line.find('{aetros:')
         end_pos = filtered_line.find('}\n')
+        if -1 == end_pos:
+            end_pos = filtered_line.find('}\r')
 
         if start_pos == -1 or end_pos == -1:
             break
