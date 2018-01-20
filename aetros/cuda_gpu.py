@@ -205,8 +205,8 @@ def get_libcudart():
             libcudart = ctypes.windll.LoadLibrary("libcudart.dll")
         else:
             raise CudaNotImplementedException("Cannot identify system.")
-    except OSError as e:
-        raise CudaNotImplementedException(e.message)
+    except OSError:
+        raise CudaNotImplementedException()
 
     version = ctypes.c_int()
     rc = libcudart.cudaRuntimeGetVersion(ctypes.byref(version))
