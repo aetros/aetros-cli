@@ -48,7 +48,12 @@ class StartCommand:
 
         if model_name.count('/') > 1:
             # start a concret job, by server command
-            start(self.logger, model_name, cpus=int(parsed_args.cpu), memory=int(parsed_args.memory), gpu_devices=parsed_args.gpu_device)
+            gpu_devices = []
+            if parsed_args.gpu_device:
+                gpu_devices = [int(x) for x in parsed_args.gpu_device]
+
+            start(self.logger, model_name, cpus=int(parsed_args.cpu), memory=int(parsed_args.memory),
+                gpu_devices=gpu_devices)
             return
 
         # create a new job
