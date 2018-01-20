@@ -6,6 +6,7 @@ import socket
 
 import os
 import paramiko
+import requests
 import six
 import sys
 
@@ -46,7 +47,7 @@ class AuthenticateCommand:
 
         if key_exists_and_valid:
             choice = six.moves.input("You have already configured a valid SSH (ssk_key: "+installed_key+") "
-                                     "for "+host+".\nWant to create a new key? (y/N): ").lower()
+                                     "for "+host+".\nWant to create a new key? The old won't be removed. (y/N): ").lower()
             if choice != 'y' and choice != 'yes':
                 print("Aborted.")
                 sys.exit(1)
@@ -57,13 +58,22 @@ class AuthenticateCommand:
         ).decode()
         ssh_key_public = 'rsa ' + ssh_key.get_base64()
 
-        fingerprint = hashlib.md5(ssh_key.__str__()).hexdigest()
+        string_key = ssh_key.__str__()
+
+        if not isinstance(string_key, six.binary_type):
+            string_key = string_key.encode('utf-8')
+        md5 = hashlib.md5(string_key)
+
+        fingerprint  = md5.hexdigest()
         fingerprint = ':'.join(a + b for a, b in zip(fingerprint[::2], fingerprint[1::2]))
 
-        token = api.http_request('machine-token', None, {
-            'host': socket.getfqdn(),
-            'key': ssh_key_public
-        })
+        try:
+            token = api.http_request('machine-token', None, {
+                'host': socket.getfqdn(),
+                'key': ssh_key_public
+            })
+        except requests.exceptions.SSLError:
+            sys.exit(1)
 
         print("Open following link and login to confirm this machine's SSH key in your account.")
         print("Public Key Fingerprint: MD5:" + fingerprint)

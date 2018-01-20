@@ -229,7 +229,8 @@ class Git:
             stderrdata = stderrdata.decode('utf-8')
         except Exception: pass
 
-        self.logger.debug("Git command: " + (' '.join(command)))
+        if os.getenv('DEBUG', 0) == '2':
+            self.logger.debug("Git command: " + (' '.join(command)))
 
         # When working on Git in several threads, sometimes it can not get the lock file, like:
         #

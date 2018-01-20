@@ -183,7 +183,8 @@ def read_home_config(path = None, logger=None):
             logger and logger.debug('Home config loaded from ' + os.path.realpath(path))
             custom_config = yaml.safe_load(f)
         except Exception:
-            raise Exception('Could not load aetros home config at ' + os.path.realpath(path))
+            sys.stderr.write('Error: could not load aetros home config at ' + os.path.realpath(path) + '\n')
+            raise
 
         if custom_config is None:
             custom_config = {}
@@ -218,11 +219,14 @@ def read_home_config(path = None, logger=None):
     config['storage_dir'] = os.path.abspath(os.path.expanduser(config['storage_dir']))
 
     http = 'https://'
-    host = config['host'] + ':' + str(config['https_port'])
+
+    if config['https_port'] != 80:
+        host = config['host'] + ':' + str(config['https_port'])
 
     if not config['ssl']:
         http = 'http://'
-        host = config['host'] + ':' + str(config['http_port'])
+        if config['http_port'] != 443:
+            host = config['host'] + ':' + str(config['http_port'])
 
     config['url'] = http + host
 

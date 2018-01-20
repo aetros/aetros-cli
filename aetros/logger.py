@@ -90,7 +90,7 @@ class GeneralLogger(object):
                             break
 
                         if callable(read_line):
-                            res = read_line(buf)
+                            res = six.b(read_line(buf))
                             if res is False:
                                 continue
                             elif res is not None:

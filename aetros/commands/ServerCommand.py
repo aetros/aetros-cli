@@ -207,7 +207,14 @@ class ServerCommand:
                 'key': self.ssh_key_public,
             }
 
-            response = aetros.api.http_request('server/ssh-key', json_body=data, method='post')
+            try:
+                response = aetros.api.http_request('server/ssh-key', json_body=data, method='post')
+            except aetros.api.ApiError as e:
+                if 'access_denied' in e.error:
+                    print("error: Could not connect to " + self.config['url'] +
+                          ': Access denied. --generate-ssh-key seems to be wrong. Incorrect host? See "aetros id"')
+                    sys.exit(1)
+                raise
 
             ssh_key_registered = response == True
 

@@ -23,7 +23,7 @@ class ApiConnectionError(ApiError):
     pass
 
 
-def http_request(path, query='', json_body=None, method='get', config=None):
+def http_request(path, query='', json_body=None, method='get', config=None, handle_common_errors=True):
     config = read_home_config() if config is None else config
 
     try:
@@ -49,14 +49,23 @@ def http_request(path, query='', json_body=None, method='get', config=None):
     if json_body is not None and method == 'get':
         method = 'post'
 
-    response = requests.request(
-        method, url, data=json_body,
-        auth=auth, verify=config['ssl_verify'],
-        headers={'Accept': 'application/json'}
-    )
+
+    try:
+        response = requests.request(
+            method, url, data=json_body,
+            auth=auth, verify=config['ssl_verify'],
+            headers={'Accept': 'application/json'}
+        )
+    except requests.exceptions.SSLError:
+        if not handle_common_errors:
+            raise
+
+        print("Error: Could not connect to " + url + ". Make sure to install a valid SSL cert or disable ssl check by"
+                                                     "setting aetros home-config ssl_verify false")
+        sys.exit(1)
 
     if response.status_code >= 400:
-        raise_response_exception('Failed request ' + path, response)
+        raise_response_exception('Failed request ' + url, response)
 
     return parse_json(response.content.decode('utf-8'))
 
@@ -91,8 +100,7 @@ def request(path, query=None, body=None, method='get', config=None):
 
     if len(stderr) > 0:
         stderr = stderr.decode('utf-8')
-
-        raise ApiError('Could not request api: ' + path, stderr)
+        raise ApiError('Could not request api: ' + config['host'] + path, stderr)
 
     return stdout
 
@@ -145,6 +153,6 @@ def create_job(model_name, local=False, parameters=None, dataset_id=None, config
     return parse_json(content)
 
 
-def create_model(model_name, private = False):
-    content = request('model/create', None, {'name': model_name, 'private': private}, 'put')
+def create_model(model_name, space=None, private = False):
+    content = request('model/create', None, {'name': model_name, 'space': space, 'private': private}, 'put')
     return parse_json(content)
