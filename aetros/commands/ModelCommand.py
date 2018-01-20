@@ -28,5 +28,5 @@ class ModelCommand:
             print("No model configuration file (aetros.yml). Switch to a directory first..")
             sys.exit(1)
 
-        config = find_config()
+        config = find_config(error_on_missing=True)
         print("Model %s in %s used in all aetros commands." % (config['model'], os.path.dirname(config_path)))

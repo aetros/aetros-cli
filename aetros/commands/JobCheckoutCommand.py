@@ -40,8 +40,8 @@ class JobCheckoutCommand:
         model = parsed_args.model if parsed_args.model else config['model']
 
         if not model:
-            print("No model defined. Use --model or switch into a directory where a model is set up.")
-            sys.exit(1)
+            print("No model defined. Use --model or switch into a directory where you executed 'aetros init model-name'.")
+            sys.exit(2)
 
         target = os.path.normpath(os.path.abspath(parsed_args.target if parsed_args.target else os.getcwd()))
         git_dir = os.path.normpath(home_config['storage_dir'] + '/' + model + '.git')

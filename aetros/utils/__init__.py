@@ -557,7 +557,7 @@ def git_has_remote_job(home_config, model, job_id):
             return full_job_id
 
 
-def find_config(path = None):
+def find_config(path = None, error_on_missing=False):
     if path:
         if os.path.exists(path):
             return read_config(path)
@@ -565,6 +565,11 @@ def find_config(path = None):
         path = find_config_path()
         if path:
             return read_config(path)
+
+    if error_on_missing:
+        sys.stderr.write('Error: No AETROS Trainer model name given. Specify it in aetros.yml '
+                         '"model: user/model-name" or use "aetros init model-name".\n')
+        sys.exit(2)
 
     return {'model': None}
 

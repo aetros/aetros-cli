@@ -1741,8 +1741,9 @@ class JobBackend:
             model_name = os.getenv('AETROS_MODEL_NAME')
 
         if model_name is None:
-            if 'model' not in config:
-                raise Exception('No AETROS Trainer model name given. Specify it in aetros.yml `model: model/name`.')
+            if 'model' not in config or not config['model']:
+                sys.stderr.write('Error: No AETROS Trainer model name given. Specify it in aetros.yml `model: user/model-name` or use "aetros init model-name".\n')
+                sys.exit(2)
 
             self.model_name = config['model']
         else:
@@ -2087,6 +2088,9 @@ class JobBackend:
                 return 1, os.path.getsize(path)
 
         return add_resursiv(working_tree, report=report)
+
+    def job_add_insight(self, x, images, confusion_matrix):
+        pass
 
     def job_add_insight(self, x, images, confusion_matrix):
         converted_images = []

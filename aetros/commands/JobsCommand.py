@@ -37,8 +37,8 @@ class JobsCommand:
         model = parsed_args.model if parsed_args.model else config['model']
 
         if not model:
-            print("No model defined. Use --model or switch into a directory where a model is set up.")
-            sys.exit(1)
+            print("No model defined. Use --model or switch into a directory where you executed 'aetros init model-name'.")
+            sys.exit(2)
 
         print("Show jobs of model " + model + ' ('+home_config['host']+')')
 

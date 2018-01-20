@@ -15,7 +15,7 @@ from aetros.starter import start
 
 from aetros.backend import JobBackend
 from aetros import api
-from aetros.utils import read_config, human_size, lose_parameters_to_full, extract_parameters, stop_time
+from aetros.utils import read_config, human_size, lose_parameters_to_full, extract_parameters, stop_time, find_config
 
 
 class RunCommand:
@@ -59,7 +59,14 @@ class RunCommand:
 
         parsed_args = parser.parse_args(args)
 
-        config = read_config(parsed_args.config or 'aetros.yml')
+        config = find_config()
+
+        if config['model'] and not parsed_args.model:
+            parsed_args.model = config['model']
+
+        if not parsed_args.model:
+            print("No model defined. Use --model or switch into a directory where you executed 'aetros init model-name'.")
+            sys.exit(2)
 
         env = {}
         if parsed_args.e:
@@ -71,8 +78,8 @@ class RunCommand:
                     v = os.getenv(k)
                 env[k] = v
 
-        if 'command' not in config and not parsed_args.command:
-            self.logger.error('No "command" given in aetros.yml or as argument.')
+        if ('command' not in config or not config['command']) and not parsed_args.command:
+            self.logger.error('No command given. Define the command in aetros.yml or use command argument.')
             sys.exit(1)
 
         job = JobBackend(parsed_args.model, self.logger, parsed_args.config or 'aetros.yml')
