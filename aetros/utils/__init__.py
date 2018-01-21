@@ -66,11 +66,11 @@ def extract_api_calls(line, callback):
 
         try:
             call = yaml.load(line, Loader=yaml.RoundTripLoader)
-            callback(call)
-            handled_calls.append(call)
-        except KeyboardInterrupt:
-            raise
-        except SystemExit:
+            if callback(call) is False:
+                failed_calls.append({'line': line, 'exception': Exception('Unknown API call.')})
+            else:
+                handled_calls.append(call)
+        except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:
             sys.__stderr__.write(traceback.format_exc())
