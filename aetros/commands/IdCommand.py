@@ -18,7 +18,7 @@ class IdCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                                         prog=aetros.const.__prog__ + ' run')
+                                         prog=aetros.const.__prog__ + ' id')
 
         parsed_args = parser.parse_args(args)
         config = read_home_config()

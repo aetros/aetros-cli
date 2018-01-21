@@ -17,7 +17,7 @@ class ApiCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                description="You can provide json in stdin to issue a POST call", prog=aetros.const.__prog__ + ' run')
+                description="You can provide json in stdin to issue a POST call", prog=aetros.const.__prog__ + ' api')
         parser.add_argument('path', nargs='?', help="Request path + query, e.g. model/settings?name=owner/name")
         parser.add_argument('--method', nargs='?', help="Per default GET, if stdin data is given a POST. Alternatively provide a HTTP verb.")
 

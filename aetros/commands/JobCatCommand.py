@@ -21,7 +21,7 @@ class JobCatCommand:
     def main(self, args):
         import aetros.const
 
-        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' job-files')
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' job-cat')
         parser.add_argument('job_id', help="Short or long job id like ed4d6a204")
         parser.add_argument('path', help="Path to file")
         parser.add_argument('--model', help="Model name like peter/mnist. Per default from found configuration.")

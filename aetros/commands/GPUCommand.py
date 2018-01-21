@@ -15,7 +15,7 @@ class GPUCommand:
         import aetros.cuda_gpu
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                                         prog=aetros.const.__prog__ + ' run')
+                                         prog=aetros.const.__prog__ + ' gpu')
 
         try:
             print("CUDA version: " +str(aetros.cuda_gpu.get_version()))

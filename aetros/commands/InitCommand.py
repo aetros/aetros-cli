@@ -22,7 +22,7 @@ class InitCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-            prog=aetros.const.__prog__ + ' run')
+            prog=aetros.const.__prog__ + ' init')
         parser.add_argument('name', help="Model name")
         parser.add_argument('directory', nargs='?', help="Directory, default in current.")
         parser.add_argument('--organisation', '-o', help="Create the model in given space. If space does not exist, create it.")

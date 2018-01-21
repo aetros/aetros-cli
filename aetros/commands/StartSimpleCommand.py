@@ -20,7 +20,7 @@ class StartSimpleCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                                         prog=aetros.const.__prog__ + ' run', description="Internal usage.")
+                                         prog=aetros.const.__prog__ + ' start-simple', description="Internal usage.")
 
         parser.add_argument('id', nargs='?', help='Job id, e.g. user/modelname/0db75a64acb74c27bd72c22e359de7a4c44a20e5 to start a pre-created job.')
         parser.add_argument('--fetch', action='store_true', help="Fetch job from server.")

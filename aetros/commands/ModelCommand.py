@@ -18,7 +18,7 @@ class ModelCommand:
         import aetros.const
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-                                         prog=aetros.const.__prog__ + ' run')
+                                         prog=aetros.const.__prog__ + ' model')
 
         parsed_args = parser.parse_args(args)
 

@@ -19,7 +19,7 @@ class PredictionServerCommand:
     def main(self, args):
         import aetros.const
 
-        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' server')
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' prediction-server')
         parser.add_argument('id', nargs='?', help='job id')
         parser.add_argument('--weights', help="Weights path. Per default we try to find it in the ./weights/ folder or download it.")
         parser.add_argument('--latest', action="store_true", help="Instead of best epoch we upload latest weights.")
