@@ -1,20 +1,16 @@
 import unittest
-from collections import OrderedDict
 import ruamel.yaml as yaml
+import json
 from aetros.utils import lose_parameters_to_full
 
 class TestAetrosParametersLose(unittest.TestCase):
 
-    def __init__(self, methodName='runTest'):
-        super(TestAetrosParameters, self).__init__(methodName)
-        self.maxDiff = None
-
     def assertParametersConverted(self, actual, expected):
-        print(yaml.load(expected, Loader=yaml.RoundTripLoader)['parameters'])
-        print(lose_parameters_to_full(yaml.load(actual, Loader=yaml.RoundTripLoader)['parameters']))
+        print('expected: ' + json.dumps(yaml.safe_load(expected)['parameters']))
+        print('actual:   ' + json.dumps(lose_parameters_to_full(yaml.safe_load(actual)['parameters'])))
         self.assertEquals(
-            yaml.load(expected, Loader=yaml.RoundTripLoader),
-            {'parameters': lose_parameters_to_full(yaml.load(actual, Loader=yaml.RoundTripLoader)['parameters'])}
+            yaml.safe_load(expected),
+            {'parameters': lose_parameters_to_full(yaml.safe_load(actual)['parameters'])}
         )
 
     def testHyperParameters1(self):
@@ -206,6 +202,7 @@ parameters:
           children: 
             - name: lr
               type: number
+              subtype: int
               defaultValue: 1
 """
 
@@ -246,6 +243,7 @@ parameters:
           children: 
             - name: lr
               type: number
+              subtype: int
               defaultValue: 1
 """
 
