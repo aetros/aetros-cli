@@ -33,7 +33,7 @@ $ sudo pip install aetros --upgrade
 
 ### Requirement
 
-For simple models (where we generate the Keras code for you), you need to install Keras 2, Tensorflow and Python 2.7/3.
+For simple models (where we generate the Keras code for you), you need to install Keras 2 (<=2.1.2), Tensorflow and Python 2.7/3.
 
 For custom models (where you start any command and might integrate our Python SDK), you only need Python 2/3.
 
