@@ -50,7 +50,7 @@ class InitCommand:
         config = {}
 
         if os.path.exists(path+'aetros.yml'):
-            with open(path+'aetros.yml', 'r') as f:
+            with open(path+'/aetros.yml', 'r') as f:
                 config = yaml.load(f)
 
             if isinstance(config, dict) and 'model' in config and not parsed_args.force:
@@ -72,8 +72,18 @@ class InitCommand:
 
         config['model'] = name
 
-        with open(path + 'aetros.yml', 'w+') as f:
+        with open(path + '/aetros.yml', 'w+') as f:
             yaml.dump(config, f)
 
         print("aetros.yml created and linked with model " + name + ' in ' + path)
         print("Open AETROS Trainer to see the model at https://" + home_config['host'] + '/model/' + name)
+
+        git_remote_url = 'git@%s:%s.git' % (home_config['host'], name)
+
+        print("Use git to store your source code. Each model has its own Git repository.")
+        print("  $ cd " + path)
+        print("  $ git init")
+        print("  $ git remote add origin " + git_remote_url)
+        print("  $ git add .")
+        print("  $ git commit -m 'first commit'")
+        print("  $ git push origin master")

@@ -73,7 +73,7 @@ class GeneralLogger(object):
         """
 
         bid = id(buffer)
-        self.attach_last_messages[bid] = six.b('')
+        self.attach_last_messages[bid] = b''
 
         lock = Lock()
 
@@ -86,7 +86,7 @@ class GeneralLogger(object):
                     # buf = os.read(buffer.fileno(), 4096)
                     if read_line:
                         buf = buffer.readline()
-                        if buf == six.b(''):
+                        if buf == b'':
                             break
 
                         if callable(read_line):
@@ -94,10 +94,12 @@ class GeneralLogger(object):
                             if res is False:
                                 continue
                             elif res is not None:
-                                buf = six.b(res)
+                                buf = res
+                                if hasattr(buf, 'encode'):
+                                    buf = buf.encode("utf-8", 'replace')
                     else:
-                        buf = buffer.read(1)
-                        if buf == six.b(''):
+                        buf = buffer.read()
+                        if buf == b'':
                             break
 
                     self.attach_last_messages[bid] += buf
@@ -106,15 +108,13 @@ class GeneralLogger(object):
                         self.attach_last_messages[bid] = self.attach_last_messages[bid][-20 * 1024:]
 
                     self.write(buf)
-                except ValueError as e:
-                    if 'operation on closed' in e.message:
-                        break
-
-                except Exception as e:
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except Exception:
                     # we need to make sure, we continue to read otherwise the process of this buffer
                     # will block and we have a stuck process.
-                    sys.__stderr__.write(traceback.format_exc())
-                    pass
+                    sys.__stderr__.write(traceback.format_exc() + '\n')
+                    sys.__stderr__.flush()
 
             lock.release()
 
@@ -133,13 +133,13 @@ class GeneralLogger(object):
         try:
             self.lock.acquire()
 
-            if six.b('') == message:
+            if b'' == message:
                 return
 
             if hasattr(message, 'decode'):
                 # don't decode string again
                 # necessary for Python3
-                message = message.decode('utf-8')
+                message = message.decode("utf-8", 'replace')
 
             self.logger.write(message)
             self.logger.flush()
@@ -158,7 +158,12 @@ class GeneralLogger(object):
                 if not self.last_timer:
                     self.last_timer = Timer(1.0, self.send_buffer)
                     self.last_timer.start()
-        except Exception as e:
-            sys.__stderr__.write(str(e))
+
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            sys.__stderr__.write(traceback.format_exc() + '\n')
+            sys.__stderr__.flush()
         finally:
-            self.lock.release()
+            if self.lock.locked():
+                self.lock.release()

@@ -371,13 +371,12 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             os.killpg(os.getpgid(state['last_process'].pid), signal.SIGINT)
             state['last_process'].wait()
 
-        upload_output_files(job_backend, files)
+        if 'output' in job_config and job_config['output']:
+            upload_output_files(job_backend, job_config['output'])
 
         if exited:
             if all_done:
                 job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_DONE)
-            elif last_return_code == 1:
-                job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_ABORTED)
             else:
                 job_backend.stop(progress=JOB_STATUS.PROGRESS_STATUS_FAILED)
         else:
@@ -394,21 +393,23 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
         clean()
 
 
-def upload_output_files(job_backend, init_files):
-    files = job_backend.file_list()
-    added = 0
+def upload_output_files(job_backend, files):
+    if not files:
+        return
+
+    if isinstance(files, six.string_types):
+        files = [files]
+
     job_backend.set_status('UPLOAD JOB DATA')
 
     for file in files:
-        if file not in init_files:
-            added += 1
-            print("Added job data: " + file)
-            job_backend.git.add_file_path(file, job_backend.git.work_tree)
+        path = job_backend.git.work_tree + '/' + file
+        if os.path.exists(path):
+            job_backend.git.add_file_path(file, job_backend.git.work_tree, verbose=True)
+        else:
+            print("Warning: Job output file %s does not exist." % (file, ))
 
-    if added:
-        job_backend.git.commit_index('UPLOAD JOB DATA')
-    else:
-        print("No job output data found.")
+    job_backend.git.commit_index('UPLOAD JOB DATA')
 
 
 def docker_pull_image(logger, home_config, job_backend):

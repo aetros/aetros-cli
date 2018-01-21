@@ -59,7 +59,7 @@ class RunCommand:
 
         parsed_args = parser.parse_args(args)
 
-        config = find_config()
+        config = find_config(parsed_args.config)
 
         if config['model'] and not parsed_args.model:
             parsed_args.model = config['model']
@@ -82,7 +82,7 @@ class RunCommand:
             self.logger.error('No command given. Define the command in aetros.yml or use command argument.')
             sys.exit(1)
 
-        job = JobBackend(parsed_args.model, self.logger, parsed_args.config or 'aetros.yml')
+        job = JobBackend(parsed_args.model, self.logger)
         ignore = []
         if 'ignore' in config:
             ignore = config['ignore']

@@ -280,7 +280,9 @@ class BackendClient:
                 self.connected = False
 
                 try:
+                    self.logger.debug('Client: ssh_tream close')
                     self.ssh_stream.close()
+                except (KeyboardInterrupt, SystemExit): raise
                 except Exception: pass
 
                 self.connection_tries += 1
@@ -332,7 +334,9 @@ class BackendClient:
         # make sure ssh connection is closed, so we can recover
         try:
             if self.ssh_stream:
+                self.logger.debug('Client: ssh_tream close')
                 self.ssh_stream.close()
+        except (KeyboardInterrupt, SystemExit): raise
         except Exception: pass
 
         if self.expect_close:
@@ -351,7 +355,7 @@ class BackendClient:
 
         if error:
             import traceback
-            self.logger.debug(traceback.format_exc())
+            sys.stderr.write(traceback.format_exc() + '\n')
 
             if hasattr(error, 'message'):
                 self.logger.error(message + ": " + str(error.message))
@@ -466,7 +470,9 @@ class BackendClient:
 
         if self.ssh_stream:
             try:
+                self.logger.debug('Client: ssh_tream close')
                 self.ssh_stream.close()
+            except (KeyboardInterrupt, SystemExit): raise
             except Exception: pass
 
         if self.online:
@@ -508,7 +514,7 @@ class BackendClient:
             self.ssh_stream_stdin.flush()
 
             return len(msg)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, SystemExit):
 
             if message['_sent']:
                 return len(msg)
@@ -545,7 +551,7 @@ class BackendClient:
 
             if chunk == '':
                 # happens only when connection broke. If nothing is to be received, it hangs instead.
-                self.connection_error('Connection broken')
+                self.connection_error('Connection broken w')
                 return False
 
             unpacker.feed(chunk)
@@ -2107,7 +2113,7 @@ class JobBackend:
                 if report:
                     print("Added output job file: " + os.path.relpath(path, working_tree))
 
-                self.git.add_file_path(path, working_tree)
+                self.git.add_file_path(path, working_tree, verbose=False)
 
                 return 1, os.path.getsize(path)
 

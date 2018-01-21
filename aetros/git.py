@@ -194,8 +194,8 @@ class Git:
     def command_exec(self, command, inputdata=None, allowed_to_fail=False, show_output=False):
         interrupted = False
 
-        if isinstance(inputdata, six.string_types):
-            inputdata = six.b(inputdata)
+        if inputdata is not None and not isinstance(inputdata, six.binary_type):
+            inputdata = inputdata.encode("utf-8", 'replace')
 
         if command[0] != 'git':
             base_command = ['git', '--bare', '--git-dir', self.git_path]
@@ -211,15 +211,17 @@ class Git:
         try:
             self.command_lock.acquire()
 
+            p = subprocess.Popen(
+                command, bufsize=0,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
+            )
+            stdoutdata, stderrdata = p.communicate(inputdata)
+
             if show_output:
-                p = subprocess.Popen(command, bufsize=0, env=self.env)
-                p.wait()
-            else:
-                p = subprocess.Popen(
-                    command, bufsize=0,
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
-                )
-                stdoutdata, stderrdata = p.communicate(inputdata)
+                if stdoutdata:
+                    sys.stdout.write(stdoutdata)
+                if stderrdata:
+                    sys.stderr.write(stderrdata)
         except KeyboardInterrupt:
             raise
         finally:
@@ -579,13 +581,16 @@ class Git:
             if not os.path.exists(os.path.dirname(full_path)):
                 os.makedirs(os.path.dirname(full_path))
 
+            if hasattr(data, 'encode'):
+                data = data.encode("utf-8", 'replace')
+
             try:
-                open(full_path, 'w+').write(data)
+                open(full_path, 'wb').write(data)
                 self.store_files[path] = True
             except IOError as e:
-                if 'No space left' in e.message:
-                    sys.stderr.write(traceback.format_exc())
-                    self.logger.error(e.message)
+                if 'No space left' in e.__str__():
+                    sys.stderr.write(traceback.format_exc()+'\n')
+                    self.logger.error(e.__str__())
 
             if self.online:
                 self.client.send({'type': 'store-blob', 'path': path, 'data': data})
@@ -633,7 +638,7 @@ class Git:
         if not os.path.exists(os.path.dirname(full_path)):
             os.makedirs(os.path.dirname(full_path))
 
-        handle = open(full_path, 'w+')
+        handle = open(full_path, 'wb')
         self.streamed_files[path] = handle
 
         class Stream():
@@ -645,16 +650,20 @@ class Git:
                     # already committed to server
                     return
 
+                if hasattr(data, 'encode'):
+                    data = data.encode("utf-8", 'replace')
+
                 try:
                     self.git.stream_files_lock.acquire()
                     if not handle.closed:
                         handle.write(data)
                         handle.flush()
                 except IOError as e:
-                    if 'No space left' in e.message:
-                        handle.close()
-                        sys.stderr.write(traceback.format_exc())
-                        self.git.logger.error(e.message)
+                    handle.close()
+
+                    if 'No space left' in e.__str__():
+                        sys.stderr.write(traceback.format_exc() + '\n')
+                        self.git.logger.error(e.__str__())
                 finally:
                     self.git.stream_files_lock.release()
 
@@ -694,14 +703,18 @@ class Git:
         blob_id = self.write_blob(content)
         self.add_index('100644', blob_id, path)
 
-    def add_file_path(self, path, work_tree):
+    def add_file_path(self, path, work_tree, verbose=True):
         """
         Add a new file as blob in the storage and add its tree entry into the index.
 
         :param path: str
         :param content: str
         """
-        self.command_exec(['--work-tree', work_tree, 'add', '-f', path])
+        args = ['--work-tree', work_tree, 'add', '-f']
+        if verbose:
+            args.append('--verbose')
+        args.append(path)
+        self.command_exec(args, show_output=verbose)
 
     def add_local_file(self, path):
         with open(path, 'r') as f:
@@ -710,7 +723,7 @@ class Git:
     def commit_file(self, message, path, content):
         """
         Add a new file as blob in the storage, add its tree entry into the index and commit the index.
-         
+
         :param message: str
         :param path: str
         :param content: str
