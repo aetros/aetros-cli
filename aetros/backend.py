@@ -1255,23 +1255,23 @@ class JobBackend:
 
         return self.progresses[id]
 
-    def epoch(self, epoch, total):
+    def epoch(self, epoch=None, total=None):
         self.progress(epoch, total)
 
-    def progress(self, epoch, total):
-        self.current_epoch = epoch
-        self.total_epochs = total
+    def progress(self, epoch=None, total=None):
+        self.current_epoch = self.current_epoch if epoch is None else epoch
+        self.total_epochs = self.total_epochs if total is None else total
         epoch_limit = False
 
-        if 'maxEpochs' in self.job['config'] and self.job['config']['maxEpochs'] > 0:
+        if 'maxEpochs' in self.job['config'] and isinstance(self.job['config']['maxEpochs'], int) and self.job['config']['maxEpochs'] > 0:
             epoch_limit = True
             self.total_epochs = self.job['config']['maxEpochs']
 
-        if epoch is not 0 and self.last_progress_call:
+        if self.current_epoch is not 0 and self.last_progress_call:
             # how long took it since the last call?
             time_per_epoch = time.time() - self.last_progress_call
-            eta = time_per_epoch * (self.total_epochs - epoch)
-            if epoch > total:
+            eta = time_per_epoch * (self.total_epochs - self.current_epoch)
+            if self.current_epoch > self.total_epochs:
                 eta = 0
 
             self.git.store_file('aetros/job/times/eta.json', simplejson.dumps(eta))
@@ -1279,12 +1279,12 @@ class JobBackend:
             if time_per_epoch > 0:
                 self.set_system_info('epochsPerSecond', 1 / time_per_epoch, True)
 
-        self.set_system_info('epoch', epoch, True)
+        self.set_system_info('epoch', self.current_epoch, True)
         self.set_system_info('epochs', self.total_epochs, True)
         self.last_progress_call = time.time()
 
         if epoch_limit and self.total_epochs > 0:
-            if epoch >= self.total_epochs:
+            if self.current_epoch >= self.total_epochs:
                 self.logger.warning("Max epoch of "+str(self.total_epochs)+" reached")
                 self.early_stop()
                 return
@@ -2214,27 +2214,25 @@ class JobBackend:
         def validate_action(requires_attributes):
             for attr in requires_attributes:
                 if attr not in data:
-                    self.logger.warning("AETROS stdout API call %s requires value for '%s'. Following ignored: %s" % (action, attr, line))
+                    self.logger.warning("AETROS stdout API call %s requires value for '%s'. Following ignored: %s" % (action, attr, str(data)))
                     return False
 
             return True
 
         def failed(message):
             self.logger.warning(
-                "AETROS stdout API call %s failed: %s. Following ignored: %s" % (action, message, line))
+                "AETROS stdout API call %s failed: %s Following ignored: %s" % (action, message, str(data)))
 
         def default(attr, default=None):
             return data[attr] if attr in data else default
 
-        if action == 'epoch':
-            if validate_action(['epoch', 'total']):
-                self.progress(**data)
-                return True
+        if action == 'epoch' or action == 'progress':
+            if 'epoch' not in data and 'total' not in data:
+                failed("requires value for 'epoch' or 'total'")
+                return False
 
-        if action == 'progress':
-            if validate_action(['epoch', 'total']):
-                self.progress(**data)
-                return True
+            self.progress(**data)
+            return True
 
         if action == 'batch':
             if validate_action(['batch', 'total', 'batch_size']):

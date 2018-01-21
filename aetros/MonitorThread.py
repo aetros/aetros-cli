@@ -28,7 +28,7 @@ class MonitoringThread(Thread):
         self.cpu_cores = cpu_cores
 
         job = self.job_backend.job
-        if 'maxTime' in job['config'] and job['config']['maxTime'] > 0:
+        if 'maxTime' in job['config'] and isinstance(job['config']['maxTime'], int) and job['config']['maxTime'] > 0:
             self.max_minutes = job['config']['maxTime']
 
         self.stream = self.job_backend.git.stream_file('aetros/job/monitoring.csv')

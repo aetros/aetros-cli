@@ -5,6 +5,7 @@ import os
 import re
 import time
 import datetime
+import traceback
 
 import numpy as np
 import signal
@@ -35,7 +36,8 @@ def get_option(dict, key, default=None, type=None):
     return dict[key]
 
 
-def extract_api_calls(line, callback, failed_callback=None):
+def extract_api_calls(line, callback):
+    failed_calls = []
     handled_calls = []
     filtered_line = line
 
@@ -49,13 +51,18 @@ def extract_api_calls(line, callback, failed_callback=None):
             start_pos = filtered_line.find('{"aetros":')
 
         end_pos = filtered_line.find('}\n')
+        eat_end = 2
         if -1 == end_pos:
-            end_pos = filtered_line.find('}\r')
+            end_pos = filtered_line.find('}\r\n')
+            eat_end = 3
+            if -1 == end_pos:
+                end_pos = filtered_line.find('}\r')
+                eat_end = 2
 
         if start_pos == -1 or end_pos == -1:
             break
 
-        line = filtered_line[start_pos:end_pos+2]
+        line = filtered_line[start_pos:end_pos+1]
 
         try:
             call = yaml.load(line, Loader=yaml.RoundTripLoader)
@@ -65,16 +72,20 @@ def extract_api_calls(line, callback, failed_callback=None):
             raise
         except SystemExit:
             raise
-        except:
-            if failed_callback: failed_callback(line)
+        except Exception as e:
+            sys.__stderr__.write(traceback.format_exc())
+            failed_calls.append({'line': line, 'exception': e})
 
-        filtered_line = filtered_line[0:start_pos] + filtered_line[end_pos+2:]
+        filtered_line = filtered_line[0:start_pos] + filtered_line[end_pos+eat_end:]
+
         c += 1
 
         if c > 10:
+            # allow max 10 in one line
             break
 
-    return handled_calls, filtered_line
+    return handled_calls, filtered_line, failed_calls
+
 
 def unpack_simple_job_id(full_id):
     [owner, model, id] = unpack_full_job_id(full_id)

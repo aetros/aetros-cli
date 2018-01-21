@@ -23,10 +23,12 @@ class InitCommand:
 
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
             prog=aetros.const.__prog__ + ' run')
-        parser.add_argument('name', nargs='?', help="Model name")
+        parser.add_argument('name', help="Model name")
+        parser.add_argument('directory', nargs='?', help="Directory, default in current.")
+        parser.add_argument('--organisation', '-o', help="Create the model in given space. If space does not exist, create it.")
         parser.add_argument('--space', '-s', help="Create the model in given space. If space does not exist, create it.")
         parser.add_argument('--private', action='store_true', help="Make the model private. Example: aetros init my-model --private")
-        parser.add_argument('--overwrite', '-o', action='store_true', help="Overwrite already existing configuration.")
+        parser.add_argument('--force', '-f', action='store_true', help="Force overwriting of already existing configuration file.")
 
         home_config = read_home_config()
         parsed_args = parser.parse_args(args)
@@ -34,32 +36,44 @@ class InitCommand:
             parser.print_help()
             sys.exit(1)
 
+        path = os.getcwd()
+        if parsed_args.directory:
+            path = os.path.abspath(parsed_args.directory)
+
+        if os.path.exists(path) and not os.path.isdir(path):
+            sys.stderr.write('Path already exist and is not a directory: ' + path)
+
+        if not os.path.exists(path):
+            os.makedirs(path)
+
         yaml = ruamel.yaml.YAML()
         config = {}
 
-        if os.path.exists('aetros.yml'):
-            with open('aetros.yml', 'r') as f:
+        if os.path.exists(path+'aetros.yml'):
+            with open(path+'aetros.yml', 'r') as f:
                 config = yaml.load(f)
 
-            if isinstance(config, dict) and 'model' in config and not parsed_args.overwrite:
-                print("failed: aetros.yml already exists with a linked model to " + config['model']+ '. Use -o to overwrite.')
+            if isinstance(config, dict) and 'model' in config and not parsed_args.force:
+                print("failed: aetros.yml already exists in with a linked model to " + config['model']+ '. Use -f to force.')
                 sys.exit(1)
 
         if not parsed_args.private:
             print("Warning: creating public model. Use --private to create private models.")
 
-        try:
-            name = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.space, parsed_args.private)
-        except api.ApiError as e:
-            if e.error != 'already_exists':
-                raise e
+        if '/' in parsed_args.name:
+            sys.stderr.write('No / allowed in name. Use -o if thie model should be created in an organisation.')
+            sys.exit(1)
+
+        response = api.create_model(parsed_args.name or (os.path.basename(os.getcwd())), parsed_args.organisation, parsed_args.space, parsed_args.private)
+        name = response['name']
+
+        if response['already_exists']:
             print("Notice: Model already exists remotely.")
-            name = parsed_args.name
 
         config['model'] = name
 
-        with open('aetros.yml', 'w+') as f:
+        with open(path + 'aetros.yml', 'w+') as f:
             yaml.dump(config, f)
 
-        print("aetros.yml created linked with model " + name + ' in ' + os.getcwd())
+        print("aetros.yml created and linked with model " + name + ' in ' + path)
         print("Open AETROS Trainer to see the model at https://" + home_config['host'] + '/model/' + name)

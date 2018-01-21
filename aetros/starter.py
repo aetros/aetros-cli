@@ -258,14 +258,14 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             f.write(job_command)
             f.close()
 
-        def failed(line):
-            logger.warning("API call failed: " + line)
-
         def read_line(line):
-            handled, filtered_line = extract_api_calls(line, job_backend.handle_stdout_api, failed)
+            handled, filtered_line, failed = extract_api_calls(line, job_backend.handle_stdout_api)
 
             for call in handled:
                 logger.debug('STDOUT API CALL: ' + str(call))
+
+            for fail in failed:
+                logger.warning('API call failed \'' + str(fail['line'])+'\': ' + str(fail['exception']))
 
             return filtered_line
 
@@ -545,7 +545,7 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
     job_backend.set_system_info('image/dockerfile', dockerfile)
 
     image = job_backend.model_name.lower()
-    if 'category' in job_config:
+    if 'category' in job_config and job_config['category']:
         image += '_' + job_config['category'].lower()
 
     image = re.sub('[^A-Z_\-a-z0-9]+', '', image)

@@ -153,6 +153,6 @@ def create_job(model_name, local=False, parameters=None, dataset_id=None, config
     return parse_json(content)
 
 
-def create_model(model_name, space=None, private = False):
-    content = request('model/create', None, {'name': model_name, 'space': space, 'private': private}, 'put')
+def create_model(model_name, organisation=None, space=None, private = False):
+    content = request('model/create', None, {'name': model_name, 'organisation': organisation, 'space': space, 'private': private}, 'put')
     return parse_json(content)
