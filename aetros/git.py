@@ -223,7 +223,8 @@ class Git:
         except KeyboardInterrupt:
             raise
         finally:
-            self.command_lock.release()
+            if self.command_lock.locked():
+                self.command_lock.release()
 
         try:
             stderrdata = stderrdata.decode('utf-8')

@@ -351,7 +351,7 @@ class BackendClient:
 
         if error:
             import traceback
-            traceback.print_exc()
+            self.logger.debug(traceback.format_exc())
 
             if hasattr(error, 'message'):
                 self.logger.error(message + ": " + str(error.message))
@@ -359,12 +359,9 @@ class BackendClient:
                 self.logger.error(message + ": " + str(error))
 
             if 'No authentication methods available' in str(error):
-                self.logger.error("Make sure you have ssh_key in your ~/aetros.yml configured.")
+                self.logger.error("Make sure you have authenticated your machine correctly using 'aetros authenticate'.")
         else:
             self.logger.error(message)
-
-        import traceback
-        self.logger.debug(traceback.format_exc())
 
         self.event_listener.fire('disconnect')
         self.connection_errors += 1
@@ -866,11 +863,14 @@ class JobBackend:
         self.stream_log = None
         self.speed_stream = None
         self.parameter_change_callback = None
+        self.lock = Lock()
 
         self.last_speed = 0
         self.last_speed_time = 0
         self.last_step_time = time.time()
         self.last_step = 0
+        self.made_steps_since_last_sync = 0
+        self.made_steps_size_since_last_sync = 0
 
         self.start_time = time.time()
         self.current_epoch = 0
@@ -1085,30 +1085,43 @@ class JobBackend:
         main progress circle (epoch, progress() method).
         """
 
-        time_diff = time.time() - self.last_step_time
+        self.lock.acquire()
+        try:
+            time_diff = time.time() - self.last_step_time
+            # print("steps %s/%s, size=%s, last_step=%s, made_steps=%s" % (str(step), str(total), str(size), str(self.last_step), str(step - self.last_step)))
 
-        if time_diff > 1 or step == total:  # only each second or last batch
-            with self.git.batch_commit('BATCH'):
-                if self.last_step > step:
-                    self.last_step = 0
+            if self.last_step > step:
+                # it restarted
+                self.last_step = 0
 
-                made_steps = step - self.last_step
-                self.last_step = step
+            made_steps_since_last_call = step - self.last_step
+            self.last_step = step
 
+            self.made_steps_since_last_sync += made_steps_since_last_call
+            self.made_steps_size_since_last_sync += made_steps_since_last_call * size
+
+            if time_diff >= 1 or step == total:  # only each second or last batch
                 self.set_system_info('step', step, True)
                 self.set_system_info('steps', total, True)
 
-                steps_per_second = made_steps / time_diff
+                steps_per_second = self.made_steps_since_last_sync / time_diff
+                samples_per_second = self.made_steps_size_since_last_sync / time_diff
                 self.last_step_time = time.time()
 
+                # print("  samples_per_second=%s, steps_per_second=%s, made_steps=%s, time_diff=%s, " %
+                #       (str(samples_per_second), str(steps_per_second), str(self.made_steps_since_last_sync), str(time_diff)))
+
                 if size:
-                    self.report_speed(steps_per_second * size)
+                    self.report_speed(samples_per_second)
 
                 epochs_per_second = steps_per_second / total  # all batches
                 self.set_system_info('epochsPerSecond', epochs_per_second, True)
 
                 current_epochs = self.current_epoch if self.current_epoch else 1
                 total_epochs = self.total_epochs if self.total_epochs else 1
+
+                self.made_steps_since_last_sync = 0
+                self.made_steps_size_since_last_sync = 0
 
                 eta = 0
                 if step < total:
@@ -1117,19 +1130,21 @@ class JobBackend:
                         eta = (total - step) / steps_per_second
 
                 # time until all epochs are done
-                if total_epochs - (current_epochs - 1) > 0:
+                if total_epochs - current_epochs > 0:
                     if epochs_per_second != 0:
-                        eta += (total_epochs - (current_epochs - 1)) / epochs_per_second
+                        eta += (total_epochs - (current_epochs)) / epochs_per_second
 
                 self.git.store_file('aetros/job/times/eta.json', simplejson.dumps(eta))
 
-        if label and self.step_label != label:
-            self.set_system_info('stepLabel', label, True)
-            self.step_label = label
+            if label and self.step_label != label:
+                self.set_system_info('stepLabel', label, True)
+                self.step_label = label
 
-        if speed_label and self.step_speed_label != speed_label:
-            self.set_system_info('stepSpeedLabel', speed_label, True)
-            self.step_speed_label = speed_label
+            if speed_label and self.step_speed_label != speed_label:
+                self.set_system_info('stepSpeedLabel', speed_label, True)
+                self.step_speed_label = speed_label
+        finally:
+            self.lock.release()
 
     def report_speed(self, speed, x=None, label=None):
         if not self.is_master_process():
@@ -1152,7 +1167,7 @@ class JobBackend:
     def stdout_api_call(self, command, **kwargs):
         action = {'aetros': command}
         action.update(kwargs)
-        print(simplejson.dumps(action) + '\n')
+        print(simplejson.dumps(action))
 
     @property
     def job_settings(self):
@@ -1239,6 +1254,9 @@ class JobBackend:
         self.progresses[id] = Controller(self.git, id, total_steps)
 
         return self.progresses[id]
+
+    def epoch(self, epoch, total):
+        self.progress(epoch, total)
 
     def progress(self, epoch, total):
         self.current_epoch = epoch
@@ -1586,7 +1604,7 @@ class JobBackend:
             # if not master process, the master process will set it
             self.git.commit_file('STOP', 'aetros/job/status/progress.json', simplejson.dumps(progress, default=invalid_json_values))
 
-        if not force_exit and was_online:
+        if not force_exit and was_online and self.is_master_process():
             # both sides should have same blobs, so we do now our final push
             self.logger.debug("git last push ...")
             successful_push = self.git.push()
@@ -1596,8 +1614,9 @@ class JobBackend:
                 self.logger.warning("Please run following command to make sure your job is stored on the server.")
                 self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
 
-        # remove the index file
-        self.git.clean_up()
+        if self.is_master_process():
+            # remove the index file
+            self.git.clean_up()
 
         self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
@@ -2041,13 +2060,15 @@ class JobBackend:
 
                 return files
             else:
+                if path.endswith('.pyc'):
+                    return []
+
                 if is_ignored(path, self.config['ignore']):
                     return []
 
                 return [os.path.relpath(path, working_tree)]
 
         return recursive(working_tree)
-
 
     def add_files(self, working_tree, report=False, message='COMMIT FILES'):
         """
@@ -2076,6 +2097,9 @@ class JobBackend:
 
                 return files, size
             else:
+                if path.endswith('.pyc'):
+                    return 0, 0
+
                 if is_ignored(path, self.config['ignore']):
                     return 0, 0
 
@@ -2089,15 +2113,20 @@ class JobBackend:
 
         return add_resursiv(working_tree, report=report)
 
-    def job_add_insight(self, x, images, confusion_matrix):
-        pass
+    # def job_add_insight(self, x, images, confusion_matrix):
+    #     pass
 
     def job_add_insight(self, x, images, confusion_matrix):
         converted_images = []
-        info = {}
+        info = {
+            '_created': time.time()
+        }
         for image in images:
             if not isinstance(image, JobImage):
                 raise Exception('job_add_insight only accepts JobImage instances in images argument')
+
+            if '_created' == image.id:
+                raise Exception('Insight image id ' + str(image.id) + ' not allowed.')
 
             converted_images.append({
                 'id': image.id,
@@ -2147,17 +2176,18 @@ class JobBackend:
 
     def collect_device_information(self, gpu_ids):
         import aetros.cuda_gpu
-        try:
-            self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
 
-            gpus = {}
+        try:
             if gpu_ids:
+                self.set_system_info('cuda_version', aetros.cuda_gpu.get_version())
+                gpus = {}
                 for gpu_id, gpu in enumerate(aetros.cuda_gpu.get_ordered_devices()):
                     if gpu_id in gpu_ids:
                         gpus[gpu_id] = gpu
 
-            self.set_system_info('gpus', gpus)
-        except CudaNotImplementedException: pass
+                self.set_system_info('gpus', gpus)
+        except CudaNotImplementedException:
+            self.logger.warning("Could not collect GPU/CUDA system information.")
 
         if self.get_job_model().has_dpu():
             self.set_system_info('dpus', [{'memory': 64*1024*1024*1024}])
@@ -2195,6 +2225,11 @@ class JobBackend:
 
         def default(attr, default=None):
             return data[attr] if attr in data else default
+
+        if action == 'epoch':
+            if validate_action(['epoch', 'total']):
+                self.progress(**data)
+                return True
 
         if action == 'progress':
             if validate_action(['epoch', 'total']):
@@ -2247,11 +2282,11 @@ class JobBackend:
                 self.stdout_api_channels[data['name']].send(data['x'], data['y'])
                 return True
 
-        if action == 'insight':
-            if validate_action(['x']):
-
-                self.job_add_insight(data['x'])
-                return True
+        # if action == 'insight':
+        #     if validate_action(['x']):
+        #
+        #         self.job_add_insight(data['x'])
+        #         return True
 
         if action == 'abort':
             self.abort()

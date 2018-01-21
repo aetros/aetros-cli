@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
+import atexit
 import os
 import sys
 import time
@@ -230,7 +231,6 @@ class ServerCommand:
                 self.logger.error('Could not delete SSH key in AETROS Trainer.')
 
         if parsed_args.generate_ssh_key and ssh_key_registered:
-            import atexit
             atexit.register(delete_ssh_key)
 
         if parsed_args.host:
@@ -259,9 +259,12 @@ class ServerCommand:
                     self.check_finished_jobs()
 
                 time.sleep(1)
-        except KeyboardInterrupt:
-            self.logger.warning('Aborted')
+        except SystemExit:
+            self.logger.warning('Killed')
             self.stop()
+        except KeyboardInterrupt:
+            self.stop()
+
 
     def on_signusr1(self, signal, frame):
         self.logger.info("ending=%s, active=%s, registered=%s, %d running, %d messages, %d connection_tries" % (
@@ -287,10 +290,13 @@ class ServerCommand:
     def stop(self):
         self.active = False
 
+        self.logger.warning('Killing %d jobs ' % (len(self.job_processes),))
+
         for p in six.itervalues(self.job_processes):
-            p.kill()
-            time.sleep(0.1)
-            p.terminate()
+            p.send_signal(signal.SIGINT)
+
+        for p in six.itervalues(self.job_processes):
+            p.wait()
 
         self.general_logger_stdout.flush()
         self.general_logger_stderr.flush()

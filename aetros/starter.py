@@ -264,6 +264,9 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
         def read_line(line):
             handled, filtered_line = extract_api_calls(line, job_backend.handle_stdout_api, failed)
 
+            for call in handled:
+                logger.debug('STDOUT API CALL: ' + str(call))
+
             return filtered_line
 
         def exec_command(id, command, job_command):

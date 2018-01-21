@@ -12,7 +12,6 @@ try:
     from cStringIO import StringIO
 except ImportError:
     from io import StringIO
-from io import BytesIO
 
 import PIL.Image
 import math
@@ -214,7 +213,7 @@ class KerasCallback(Callback):
 
         self.validation_per_batch.append(loss)
 
-        self.job_backend.batch(batch, self.current['nb_batches'], logs['size'])
+        self.job_backend.batch(batch + 1, self.current['nb_batches'], logs['size'])
 
     def write(self, line):
         self.logger.info(line)
@@ -371,7 +370,9 @@ class KerasCallback(Callback):
             if isinstance(layer, keras.layers.convolutional.Convolution2D) or isinstance(layer, keras.layers.convolutional.MaxPooling2D)\
                     or isinstance(layer, keras.layers.convolutional.UpSampling2D):
                 fn = K.function(inputs, self.get_layout_output_tensors(layer))
-                Y = fn(input_data_x_sample)[0]
+
+                result = fn(input_data_x_sample)
+                Y = result[0]
 
                 data = Y[0]
 
