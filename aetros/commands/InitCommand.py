@@ -49,7 +49,7 @@ class InitCommand:
         yaml = ruamel.yaml.YAML()
         config = {}
 
-        if os.path.exists(path+'aetros.yml'):
+        if os.path.exists(path+'/aetros.yml'):
             with open(path+'/aetros.yml', 'r') as f:
                 config = yaml.load(f)
 
