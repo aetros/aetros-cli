@@ -98,7 +98,7 @@ class GeneralLogger(object):
                                 if hasattr(buf, 'encode'):
                                     buf = buf.encode("utf-8", 'replace')
                     else:
-                        buf = buffer.read()
+                        buf = buffer.read(1)
                         if buf == b'':
                             break
 

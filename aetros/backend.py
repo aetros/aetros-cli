@@ -908,6 +908,9 @@ class JobBackend:
         # whether on_shutdown has been called and thus the python interpreter is dying.
         self.in_shutdown = False
 
+        self.insight_images_info = {}
+        self.insight_created = {}
+
         self.monitoring_thread = None
 
         if not self.logger:
@@ -2122,34 +2125,74 @@ class JobBackend:
     # def job_add_insight(self, x, images, confusion_matrix):
     #     pass
 
-    def job_add_insight(self, x, images, confusion_matrix):
+    def add_embedding_word2vec(self, x, path):
+
+        data = open(path, 'rb').read()
+        name = os.path.basename(path)
+
+        remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': data})
+
+    def add_insight_image_path(self, x, path, id=None, label=None):
+
+        image = PIL.Image.open(path)
+
+        if not id:
+            id = os.path.basename(path)
+
+        return self.add_insight_image(x, JobImage(id, image, label))
+
+    def add_insight_image(self, x, image):
+        self.add_insight_images(x, [image])
+
+    def add_insight_images(self, x, images):
         converted_images = []
-        info = {
-            '_created': time.time()
-        }
+
+        self._ensure_insight(x)
+
+        if x not in self.insight_images_info:
+            self.insight_images_info[x] = {}
+
         for image in images:
             if not isinstance(image, JobImage):
                 raise Exception('job_add_insight only accepts JobImage instances in images argument')
 
-            if '_created' == image.id:
-                raise Exception('Insight image id ' + str(image.id) + ' not allowed.')
+            if image.id in self.insight_images_info[x]:
+                continue
 
             converted_images.append({
                 'id': image.id,
                 'image': self.pil_image_to_jpeg(image.image)
             })
-            info[image.id] = {
+
+            self.insight_images_info[x][image.id] = {
                 'file': image.id+'.jpg',
                 'label': image.label,
                 'pos': image.pos
             }
 
-        with self.git.batch_commit('INSIGHT ' + str(x)):
-            for image in converted_images:
-                self.git.commit_file('INSIGHT ' + str(image['id']), 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg', image['image'])
+        for image in converted_images:
+            remote_path = 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg'
+            self.client.send({'type': 'store-blob', 'path': remote_path, 'data': image['image']})
 
-            self.git.commit_json_file('INSIGHT CONFUSION_MATRIX', 'aetros/job/insight/'+str(x)+'/confusion_matrix', confusion_matrix)
-            self.git.commit_json_file('INSIGHT INFO', 'aetros/job/insight/' + str(x) + '/info', info)
+        remote_path = 'aetros/job/insight/' + str(x) + '/info.json'
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(self.insight_images_info[x])})
+
+    def add_insight_confusion_matrix(self, x, confusion_matrix):
+        remote_path = 'aetros/job/insight/' + str(x) + '/confusion_matrix.json'
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(confusion_matrix)})
+
+    def job_add_insight(self, x, images=None, confusion_matrix=None):
+        if images:
+            self.add_insight_images(x, images)
+
+        if confusion_matrix:
+            self.add_insight_confusion_matrix(x, confusion_matrix)
+
+    def _ensure_insight(self, x):
+        if x in self.insight_created: return
+
+        self.git.commit_json_file('INSIGHT ' + str(x), 'aetros/job/insight/' + str(x) + '/created', str(time.time()))
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()

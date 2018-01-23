@@ -94,10 +94,7 @@ class MonitoringThread(Thread):
                     self.docker_last_stream_data = time.time()
                     self.docker_last_cpu = min(cpu_util, 100)
                     self.docker_last_mem = min(mem_util, 100)
-
-            except AttributeError:
-                return
-            except docker.errors.NotFound:
+            except Exception:
                 return
 
         docker_reader = None
