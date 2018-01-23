@@ -2192,7 +2192,8 @@ class JobBackend:
     def _ensure_insight(self, x):
         if x in self.insight_created: return
 
-        self.git.commit_json_file('INSIGHT ' + str(x), 'aetros/job/insight/' + str(x) + '/created', str(time.time()))
+        remote_path = 'aetros/job/insight/' + str(x) + '/created'
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())})
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()
