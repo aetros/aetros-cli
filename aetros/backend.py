@@ -4,17 +4,15 @@ from __future__ import print_function
 import atexit
 import inspect
 import os
-import socket
 import traceback
 
-from threading import Thread, Lock
+from threading import Lock
 
 import collections
 import coloredlogs
 import logging
 
 import math
-import requests
 import signal
 import time
 
@@ -22,12 +20,10 @@ import simplejson
 import six
 import PIL.Image
 import sys
-import msgpack
-from ruamel import yaml
-from ruamel.yaml.reader import ReaderError
 
 from aetros.JobModel import JobModel
-from aetros.const import JOB_STATUS, __version__
+from aetros.client import JobClient
+from aetros.const import JOB_STATUS
 from aetros.cuda_gpu import CudaNotImplementedException
 from aetros.git import Git
 from aetros.logger import GeneralLogger
@@ -101,6 +97,7 @@ def Popen(*args, **kwargs):
 
     return p
 
+
 def dict_factory(cursor, row):
     d = {}
     for idx, col in enumerate(cursor.description):
@@ -122,530 +119,6 @@ class EventListener:
         if name in self.events:
             for callback in self.events[name]:
                 callback(parameter)
-
-
-class ApiClient:
-    def __init__(self, api_host, api_key):
-        self.host = api_host
-        self.api_key = api_key
-
-    def get(self, url, params=None, **kwargs):
-        json_chunk = kwargs.get('json')
-        if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = simplejson.loads(simplejson.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
-
-        return requests.get(self.get_url(url), params=params, **kwargs)
-
-    def post(self, url, data=None, **kwargs):
-        json_chunk = kwargs.get('json')
-        if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = simplejson.loads(simplejson.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
-
-        return requests.post(self.get_url(url), data=data, **kwargs)
-
-    def put(self, url, data=None, **kwargs):
-        json_chunk = kwargs.get('json')
-        if (json_chunk and not isinstance(json_chunk, str)):
-            kwargs['json'] = simplejson.loads(simplejson.dumps(json_chunk, default=invalid_json_values), object_pairs_hook=collections.OrderedDict)
-
-        return requests.put(self.get_url(url), data=data, **kwargs)
-
-    def get_url(self, affix):
-
-        url = 'http://%s/api/%s' % (self.host, affix)
-
-        if self.api_key:
-            if '?' in url:
-                url += '&token=' + self.api_key
-            else:
-                url += '?token=' + self.api_key
-
-        return url
-
-
-class BackendClient:
-    def __init__(self, config, event_listener, logger):
-        """
-        :type api_host: string
-        :type api_key: string
-        :type event_listener: EventListener
-        :type job_id: integer
-        """
-        self.config = config
-        self.host = config['host']
-        self.ssh_stream = None
-        self.ssh_stream_stdout = None
-        self.ssh_stream_stdin = None
-        self.go_offline_on_first_failed_attempt = True
-
-        self.event_listener = event_listener
-        self.logger = logger
-        self.message_id = 0
-
-        self.api_key = None
-        self.job_id = None
-
-        self.thread_read_instance = None
-        self.thread_write_instance = None
-
-        self.lock = Lock()
-        self.connection_errors = 0
-        self.queue = []
-        self.connection_tries = 0
-        self.in_connecting = False
-        self.stop_on_empty_queue = False
-
-        # indicates whether we are offline or not, means not connected to the internet and
-        # should not establish a connection to Aetros.
-        self.online = True
-
-        # Whether the client is active and should do things.
-        self.active = False
-        self.expect_close = False
-        self.external_stopped = False
-
-        # the connection is authenticated against the server and ready to send stuff
-        self.registered = False
-
-        # the actual connection is established
-        self.connected = False
-
-        self.was_connected_once = False
-        self.read_unpacker = msgpack.Unpacker(encoding='utf-8')
-
-    def on_sigint(self, sig, frame):
-        # when connections breaks, we do not reconnect
-        self.expect_close = True
-
-    def start(self):
-        self.active = True
-
-        prepend_signal_handler(signal.SIGINT, self.on_sigint)
-
-        if not self.thread_read_instance:
-            self.thread_read_instance = Thread(target=self.thread_read)
-            self.thread_read_instance.daemon = True
-            self.thread_read_instance.start()
-
-        if not self.thread_write_instance:
-            self.thread_write_instance = Thread(target=self.thread_write)
-            self.thread_write_instance.daemon = True
-            self.thread_write_instance.start()
-
-    def on_connect(self, reconnect=False):
-        pass
-
-    def go_offline(self):
-        if not self.online:
-            return
-
-        self.event_listener.fire('offline')
-        self.online = False
-
-    def connect(self):
-        """
-        In the write-thread we detect that no connection is living anymore and try always again.
-        Up to the 3 connection try, we report to user. We keep trying but in silence.
-        Also, when more than 10 connection tries are detected, we delay extra 15 seconds.
-        """
-        if self.connection_tries > 10:
-            time.sleep(15)
-
-        if self.in_connecting:
-            return False
-
-        self.in_connecting = True
-
-        self.logger.debug('Wanna connect ...')
-
-        try:
-            if self.connected or not self.online:
-                return True
-
-            self.ssh_stream = create_ssh_stream(self.config, exit_on_failure=False)
-            self.ssh_stream_stdin, self.ssh_stream_stdout, stderr = self.ssh_stream.exec_command('stream')
-
-            self.logger.debug('Open ssh')
-            messages = self.wait_for_at_least_one_message()
-            stderrdata = ''
-
-            if not messages:
-                stderrdata = stderr.read().decode("utf-8").strip()
-            else:
-                self.connected = True
-                self.registered = self.on_connect(self.was_connected_once)
-
-            if not self.registered:
-                self.logger.debug("Client: registration failed. stderrdata: " + stderrdata)
-                self.connected = False
-
-                try:
-                    self.logger.debug('Client: ssh_tream close')
-                    self.ssh_stream.close()
-                except (KeyboardInterrupt, SystemExit): raise
-                except Exception: pass
-
-                self.connection_tries += 1
-                if not self.was_connected_once and self.go_offline_on_first_failed_attempt:
-                    # initial try needs to be online, otherwise we go offline
-                    self.go_offline()
-
-                if stderrdata:
-                    if 'Connection refused' not in stderrdata and 'Permission denied' not in stderrdata:
-                        self.logger.error(stderrdata)
-
-                if 'Permission denied' in stderrdata:
-                    if self.connection_tries < 3:
-                        self.logger.warning("Access denied. Did you setup your SSH public key correctly and saved it in your AETROS Trainer user account?")
-
-                    self.close()
-                    sys.exit(1)
-
-                self.connection_error("Connection error during connecting to %s: %s" % (self.host, str(stderrdata)))
-            else:
-                self.was_connected_once = True
-
-        except Exception as error:
-            self.connection_error(error)
-        finally:
-            self.in_connecting = False
-
-        return self.connected
-
-    def debug(self):
-        sent = len(filter(lambda x: x['_sent'], self.queue))
-        sending = len(filter(lambda x: x['_sending'], self.queue))
-        open = len(filter(lambda x: not x['_sending'], self.queue))
-        self.logger.debug("%d sent, %d in sending, %d open " % (sent, sending, open))
-
-    def end(self):
-        self.expect_close = True
-        self.send_message({'type': 'end'})
-        self.wait_for_close()
-
-    def connection_error(self, error=None):
-        if not self.active:
-            # we don't care when we're not active
-            return
-
-        # give is some free time
-        time.sleep(0.1)
-
-        # make sure ssh connection is closed, so we can recover
-        try:
-            if self.ssh_stream:
-                self.logger.debug('Client: ssh_tream close')
-                self.ssh_stream.close()
-        except (KeyboardInterrupt, SystemExit): raise
-        except Exception: pass
-
-        if self.expect_close:
-            # we expected the close, so ignore the error
-            return
-
-        # needs to be set before logger.error, since they can call send_message again
-        self.connected = False
-        self.registered = False
-
-        if socket is None:
-            # python interpreter is already dying, so quit
-            return
-
-        message = "Connection error"
-
-        if error:
-            import traceback
-            sys.stderr.write(traceback.format_exc() + '\n')
-
-            if hasattr(error, 'message'):
-                self.logger.error(message + ": " + str(error.message))
-            else:
-                self.logger.error(message + ": " + str(error))
-
-            if 'No authentication methods available' in str(error):
-                self.logger.error("Make sure you have authenticated your machine correctly using 'aetros authenticate'.")
-        else:
-            self.logger.error(message)
-
-        self.event_listener.fire('disconnect')
-        self.connection_errors += 1
-
-    def thread_write(self):
-        while self.active:
-            if self.online:
-                if self.connected and self.registered:
-                    queue_copy = self.queue[:]
-
-                    try:
-                        sent_size = 0
-                        sent = []
-
-                        for message in queue_copy:
-                            if message['_sending'] and not message['_sent']:
-                                message['_sending'] = False
-
-                        for message in queue_copy:
-                            if not self.connected or not self.registered:
-                                # additional check to make sure there's no race condition
-                                break
-
-                            if not message['_sending'] and not message['_sent']:
-                                size = self.send_message(message)
-                                if size is not False:
-                                    sent.append(message)
-
-                                    sent_size += size
-                                    # not too much at once (max 1MB), so we have time to listen for incoming messages
-                                    if sent_size > 1024 * 1024:
-                                        break
-                                else:
-                                    break
-
-                        self.lock.acquire()
-                        for message in sent:
-                            if message in self.queue:
-                                self.queue.remove(message)
-                        self.lock.release()
-
-                        if self.stop_on_empty_queue:
-                            self.logger.debug('Client sent %d / %d messages' % (len(sent), len(self.queue)))
-                            return
-                    except Exception as e:
-                        self.logger.debug('Closed write thread: exception. %d messages left' % (len(self.queue), ))
-                        self.connection_error(e)
-
-                if self.active and not self.connected and not self.expect_close:
-                    if not self.connect():
-                        time.sleep(5)
-
-            time.sleep(0.1)
-
-        self.logger.debug('Closed write thread: ended. %d messages left' % (len(self.queue), ))
-
-    def thread_read(self):
-        while self.active:
-            if self.online:
-                if self.connected and self.registered:
-                    try:
-                        messages = self.read() # this blocks
-
-                        if messages is not None:
-                            self.handle_messages(messages)
-
-                        continue
-                    except Exception as e:
-                        self.logger.debug('Closed read thread: exception')
-                        self.connection_error(e)
-
-            time.sleep(0.01)
-
-        self.logger.debug('Closed read thread: ended')
-
-    def wait_sending_last_messages(self):
-        if self.active and self.online and self.connected and self.registered:
-            # send all missing messages
-            self.stop_on_empty_queue = True
-            self.thread_write_instance.join()
-
-    def wait_for_close(self):
-        if not (self.active and self.online and self.connected and self.registered):
-            return
-
-        self.active = False
-
-        i = 0
-        try:
-            while self.ssh_stream_stdout and self.ssh_stream_stdout.read() != six.b(''):
-                i += 1
-                time.sleep(0.1)
-                if i % 50 == 0:
-                    self.logger.warning("We are still waiting for connection closing on server side.")
-        except Exception: pass
-
-        self.online = False
-
-    def close(self):
-        self.active = False
-        self.connected = False
-
-        if self.ssh_stream:
-            try:
-                self.logger.debug('Client: ssh_tream close')
-                self.ssh_stream.close()
-            except (KeyboardInterrupt, SystemExit): raise
-            except Exception: pass
-
-        if self.online:
-            self.event_listener.fire('close')
-
-        self.online = False
-
-    def send(self, message):
-        if not (self.active and self.online):
-            # It's important to queue anything when active and online
-            # as we would lose information in git streams.
-            return
-
-        if self.stop_on_empty_queue:
-            # make sure, we don't add new one
-            return
-
-        self.message_id += 1
-        message['_id'] = self.message_id
-        message['_sending'] = False
-        message['_sent'] = False
-
-        self.queue.append(message)
-
-    def send_message(self, message):
-        """
-        Internal. Sends the actual message from a queue entry.
-        """
-        if not self.connected:
-            return False
-
-        message['_sending'] = True
-
-        msg = msgpack.packb(message, default=invalid_json_values)
-
-        try:
-            self.ssh_stream_stdin.write(msg)
-            message['_sent'] = True
-            self.ssh_stream_stdin.flush()
-
-            return len(msg)
-        except (KeyboardInterrupt, SystemExit):
-
-            if message['_sent']:
-                return len(msg)
-
-            return False
-
-        except Exception as error:
-            self.connection_error(error)
-            return False
-
-    def handle_messages(self, messages):
-        for message in messages:
-            if not isinstance(message, dict): continue
-
-            if 'a' in message:
-                if not self.external_stopped and 'stop' == message['a']:
-                    self.external_stopped = True
-                    self.event_listener.fire('stop', message['force'])
-
-    def wait_for_at_least_one_message(self):
-        """
-        Reads until we receive at least one message we can unpack. Return all found messages.
-        """
-
-        unpacker = msgpack.Unpacker(encoding='utf-8')
-
-        while True:
-            chunk = ''
-            try:
-                chunk = self.ssh_stream_stdout.read(1)
-            except Exception as error:
-                self.connection_error(error)
-                raise
-
-            if chunk == '':
-                # happens only when connection broke. If nothing is to be received, it hangs instead.
-                self.connection_error('Connection broken w')
-                return False
-
-            unpacker.feed(chunk)
-
-            messages = [m for m in unpacker]
-            if messages:
-                return messages
-
-    def read(self):
-        """
-        Reads from the socket and tries to unpack the message. If successful (because msgpack was able to unpack)
-        then we return that message. Else None. Keep calling .read() when new data is available so we try it 
-        again.
-        """
-
-        try:
-            chunk = self.ssh_stream_stdout.read(1)
-        except Exception as error:
-            self.connection_error(error)
-            raise
-
-        if chunk == '':
-            # socket connection broken
-            self.connection_error('Connection broken')
-            return None
-
-        # self.read_buffer.seek(0, 2) #make sure we write at the end
-        self.read_unpacker.feed(chunk)
-
-        # self.read_buffer.seek(0)
-        messages = [m for m in self.read_unpacker]
-
-        return messages if messages else None
-
-
-class JobClient(BackendClient):
-    def configure(self, model_name, job_id, name):
-        self.model_name = model_name
-        self.job_id = job_id
-        self.name = name
-
-    def on_connect(self, reconnect=False):
-        self.send_message({
-            'type': 'register_job_worker',
-            'model': self.model_name,
-            'job': self.job_id,
-            'reconnect': reconnect,
-            'version': __version__,
-            'name': self.name
-        })
-
-        self.logger.debug("Wait for job client registration for " + self.name)
-        messages = self.wait_for_at_least_one_message()
-        self.logger.debug("Got " + str(messages))
-
-        if not messages:
-            self.event_listener.fire('registration_failed', {'reason': 'No answer received.'})
-            return False
-
-        message = messages.pop(0)
-        self.logger.debug("Client: handle message: " + str(message))
-        if isinstance(message, dict) and 'a' in message:
-            if 'aborted' == message['a']:
-                self.logger.error("Job aborted meanwhile. Exiting")
-                self.event_listener.fire('stop', False)
-                self.active = False
-                return False
-
-            if 'registration_failed' == message['a']:
-                self.event_listener.fire('registration_failed', {'reason': message['reason']})
-                return False
-
-            if 'registered' == message['a']:
-                self.registered = True
-                self.event_listener.fire('registration')
-                self.handle_messages(messages)
-                return True
-
-        self.logger.error("Registration of job %s failed." % (self.job_id,))
-        return False
-
-    def handle_messages(self, messages):
-        BackendClient.handle_messages(self, messages)
-        for message in messages:
-            if self.external_stopped:
-                continue
-
-            if not isinstance(message, dict): continue
-
-            if 'a' in message and 'parameter-changed' == message['a']:
-                self.event_listener.fire('parameter_changed', {'values': message['values']})
-
-            if 'type' in message and 'action' == message['type']:
-                self.event_listener.fire('action', message)
 
 
 def context():
@@ -914,7 +387,7 @@ class JobBackend:
         self.monitoring_thread = None
 
         if not self.logger:
-            self.logger = logging.getLogger('aetros-job')
+            self.logger = logging.getLogger(os.getenv('AETROS_JOB_NAME', 'aetros-job'))
             atty = None
             if '1' == os.getenv('AETROS_ATTY'):
                 atty = True
@@ -989,7 +462,7 @@ class JobBackend:
 
     def on_signusr1(self, signal, frame):
         self.logger.warning("USR1: backend job_id=%s (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
-                            "connected=%s, queue=%d), git (online=%s, active_thread=%s, last_push_time=%s)." % (
+                            "connected=%s, queue=%s), git (online=%s, active_thread=%s, last_push_time=%s)." % (
           str(self.job_id),
           str(self.running),
           str(self.ended),
@@ -997,7 +470,7 @@ class JobBackend:
           str(self.client.active),
           str(self.client.registered),
           str(self.client.connected),
-          len(self.client.queue),
+          str([str(i)+':'+str(len(x)) for i, x in six.iteritems(self.client.queues)]),
           str(self.git.online),
           str(self.git.active_thread),
           str(self.git.last_push_time),
@@ -1355,7 +828,7 @@ class JobBackend:
 
         if self.git.online:
             self.logger.debug('Job backend start')
-            self.client.start()
+            self.client.start(['', 'files'])
         else:
             self.logger.debug('Job backend not started, since being online not detected.')
 
@@ -1575,7 +1048,7 @@ class JobBackend:
 
         if self.git.online and not force_exit:
             if wait_for_client:
-                self.logger.debug("client sends last %d messages ..." % (len(self.client.queue),))
+                self.logger.debug("client sends last %s messages ..." % ([str(i)+':'+str(len(x)) for i, x in six.iteritems(self.client.queues)],))
                 self.client.wait_sending_last_messages()
 
         # store all store_file and stream_file as blob
@@ -1619,7 +1092,7 @@ class JobBackend:
             successful_push = self.git.push()
 
             if not successful_push:
-                self.logger.warning("Not all job information has been uploaded.")
+                self.logger.warning("Not all job data have been uploaded.")
                 self.logger.warning("Please run following command to make sure your job is stored on the server.")
                 self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
 
@@ -2079,7 +1552,7 @@ class JobBackend:
 
         return recursive(working_tree)
 
-    def add_files(self, working_tree, report=False, message='COMMIT FILES'):
+    def add_files(self, working_tree, report=False):
         """
         Commits all files from limited in aetros.yml. `files` is a whitelist, `exclude_files` is a blacklist.
         If both are empty, we commit all files smaller than 10MB.
@@ -2088,7 +1561,7 @@ class JobBackend:
         blacklist = ['.git', 'aetros']
 
         def add_resursiv(path = '.', report=report):
-            self.logger.debug("add_resursiv " + path + ' => ' + str(is_ignored(path, self.config['ignore'])))
+            self.logger.debug("add_resursiv " + path + ' => is ignored=' + str(is_ignored(path, self.config['ignore'])))
 
             if os.path.basename(path) in blacklist:
                 return 0, 0
@@ -2114,7 +1587,7 @@ class JobBackend:
 
                 self.logger.debug("added file to job " + path)
                 if report:
-                    print("Added output job file: " + os.path.relpath(path, working_tree))
+                    print("Added job file: " + os.path.relpath(path, working_tree))
 
                 self.git.add_file_path(path, working_tree, verbose=False)
 
@@ -2131,10 +1604,9 @@ class JobBackend:
         name = os.path.basename(path)
 
         remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': data})
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': data}, channel='files')
 
     def add_insight_image_path(self, x, path, id=None, label=None):
-
         image = PIL.Image.open(path)
 
         if not id:
@@ -2173,14 +1645,16 @@ class JobBackend:
 
         for image in converted_images:
             remote_path = 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg'
-            self.client.send({'type': 'store-blob', 'path': remote_path, 'data': image['image']})
+            self.client.send({'type': 'store-blob', 'path': remote_path, 'data': image['image']}, channel='files')
 
         remote_path = 'aetros/job/insight/' + str(x) + '/info.json'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(self.insight_images_info[x])})
+        self.client.send({'type': 'store-blob', 'path': remote_path,
+                          'data': simplejson.dumps(self.insight_images_info[x])}, channel='files')
 
     def add_insight_confusion_matrix(self, x, confusion_matrix):
         remote_path = 'aetros/job/insight/' + str(x) + '/confusion_matrix.json'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(confusion_matrix)})
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(confusion_matrix)},
+                         channel='files')
 
     def job_add_insight(self, x, images=None, confusion_matrix=None):
         if images:
@@ -2193,7 +1667,13 @@ class JobBackend:
         if x in self.insight_created: return
 
         remote_path = 'aetros/job/insight/' + str(x) + '/created'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())})
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
+
+    def _update_insight(self, x):
+        if x in self.insight_created: return
+
+        remote_path = 'aetros/job/insight/' + str(x) + '/updated'
+        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()
@@ -2201,13 +1681,16 @@ class JobBackend:
         image.save(buffer, format="JPEG", optimize=True, quality=70)
         return buffer.getvalue()
 
-    def collect_environment(self, overwrite_variables={}):
+    def collect_environment(self, overwrite_variables=None):
         import socket
         import os
         import pip
         import platform
 
         env = {}
+
+        if not overwrite_variables:
+            overwrite_variables = {}
 
         import aetros
         env['aetros_version'] = aetros.__version__
@@ -2312,6 +1795,16 @@ class JobBackend:
         if action == 'speed':
             if validate_action(['x', 'speed']):
                 self.report_speed(**data)
+                return True
+
+        if action == 'add_embedding_word2vec':
+            if validate_action(['x', 'path']):
+                self.add_embedding_word2vec(**data)
+                return True
+
+        if action == 'add_insight_image':
+            if validate_action(['x', 'path']):
+                self.add_insight_image_path(**data)
                 return True
 
         if action == 'create-channel':

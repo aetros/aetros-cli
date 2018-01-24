@@ -557,7 +557,7 @@ class Git:
         """
         return self.command_exec(['hash-object', '--stdin', '-ttree'], '')[0].decode('utf-8').strip()
 
-    def store_file(self, path, data):
+    def store_file(self, path, data, fast_lane=True):
         """
         Store the file in temp folder and stream it to server if online. 
         
@@ -569,14 +569,10 @@ class Git:
         At the end of the job, the content the server received is stored as git blob on the server. It is then committed 
         locally and pushed. Git detects that the server already has the version (through the continuous streaming)
         and won't push it again.
-        
-        :param path: 
-        :param content: 
-        :return: 
         """
-        try:
-            self.stream_files_lock.acquire()
 
+        self.stream_files_lock.acquire()
+        try:
             full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
             if not os.path.exists(os.path.dirname(full_path)):
                 os.makedirs(os.path.dirname(full_path))
@@ -593,11 +589,11 @@ class Git:
                     self.logger.error(e.__str__())
 
             if self.online:
-                self.client.send({'type': 'store-blob', 'path': path, 'data': data})
+                self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='' if fast_lane else 'files')
         finally:
             self.stream_files_lock.release()
 
-    def stream_file(self, path):
+    def stream_file(self, path, fast_lane=False):
         """
         Create a temp file, stream it to the server if online and append its content using the write() method. 
         This makes sure that we have all newest data of this file on the server directly.
@@ -612,10 +608,6 @@ class Git:
         
         self.log_stream.write("new line\n");
         self.log_stream.write("another line\n");
-        
-        :param path: 
-        :rtype: Stream class
-        :return Returns a instance with a `write(data)` method.
         """
 
         # create temp file
@@ -668,7 +660,7 @@ class Git:
                     self.git.stream_files_lock.release()
 
                 if self.git.online:
-                    self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data})
+                    self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data}, channel='' if fast_lane else 'files')
 
         return Stream(self)
 

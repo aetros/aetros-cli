@@ -13,7 +13,9 @@ setup(name='aetros',
       entry_points={
           'console_scripts': ['aetros=aetros:main'],
       },
-      install_requires=('requests',
+
+      packages=find_packages(),
+      install_requires=['requests',
                         'numpy',
                         'coloredlogs',
                         'psutil>=5.3.0',
@@ -27,5 +29,5 @@ setup(name='aetros',
                         'docker>=2.7.0',
                         'simplejson>=3.13.2',
                         'py-cpuinfo>=3.3.0',
-                        'msgpack-python>=0.4.8'),
-      packages=find_packages())
+                        'msgpack-python>=0.4.8']
+)

@@ -10,21 +10,18 @@ from threading import Lock
 import paramiko as paramiko
 import psutil
 import subprocess
-
 import signal
-
-import requests
 import six
 from cryptography.hazmat.primitives import serialization
-from requests.auth import HTTPBasicAuth
 
 import aetros.api
-from aetros.git import Git
+from aetros.client import BackendClient
 from aetros.logger import GeneralLogger
 
-from aetros.backend import EventListener, BackendClient
+from aetros.backend import EventListener
 from aetros.utils import unpack_simple_job_id, read_home_config
 import aetros.cuda_gpu
+
 
 class ServerClient(BackendClient):
     def __init__(self, config, event_listener, logger):
@@ -35,9 +32,9 @@ class ServerClient(BackendClient):
     def configure(self, server_name):
         self.server_name = server_name
 
-    def on_connect(self, reconnect=False):
-        self.send_message({'type': 'register_server', 'server': self.server_name, 'reconnect': reconnect})
-        messages = self.wait_for_at_least_one_message()
+    def on_connect(self, reconnect, channel):
+        self.send_message({'type': 'register_server', 'server': self.server_name, 'reconnect': reconnect}, channel)
+        messages = self.wait_for_at_least_one_message(channel)
 
         if not messages:
             return False
@@ -55,7 +52,7 @@ class ServerClient(BackendClient):
                 return False
 
             if "registered" in message['a']:
-                self.registered = True
+                self.registered[channel] = True
                 self.event_listener.fire('registration', {'username': message['username'], 'server': self.server_name})
                 self.handle_messages(messages)
                 return True
@@ -119,7 +116,7 @@ class ServerCommand:
         parser.add_argument('name', nargs='?', help="Server name")
         parser.add_argument('--generate-ssh-key', help="Generates automatically a ssh key, register them in AETROS in "
                                                        "your account, and delete them when the server exits. "
-                                                       "You should prefer 'aetros register' command as its safer.")
+                                                       "You should prefer 'aetros authenticate' command as its safer.")
 
         parser.add_argument('--allow-host-execution', action='store_true', help="Whether a job can run on this server "
             "directly, without a virtual (docker) container.\nSecurity risk and makes resource limitation useless.")
@@ -255,7 +252,7 @@ class ServerCommand:
         try:
             while self.active:
                 if self.registered:
-                    self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()})
+                    self.server.send_message({'type': 'utilization', 'values': self.collect_system_utilization()}, '')
                     self.check_finished_jobs()
 
                 time.sleep(1)
@@ -284,7 +281,7 @@ class ServerCommand:
         self.logger.warning('Closed')
 
     def write_log(self, message):
-        self.server.send_message({'type': 'log', 'message': message})
+        self.server.send_message({'type': 'log', 'message': message}, '')
         return True
 
     def stop(self):
@@ -349,7 +346,7 @@ class ServerCommand:
                     reason = 'Failed job %s. Exit status: %s' % (full_job_id, str(exit_code))
                     self.logger.error(reason)
 
-                self.server.send_message({'type': 'job-finished', 'id': full_job_id})
+                self.server.send_message({'type': 'job-finished', 'id': full_job_id}, '')
                 delete_finished.append(full_job_id)
 
         for full_job_id in delete_finished:
@@ -378,7 +375,7 @@ class ServerCommand:
 
             args += [full_id]
             self.logger.info('$ ' + ' '.join(args))
-            self.server.send_message({'type': 'job-executed', 'id': full_id})
+            self.server.send_message({'type': 'job-executed', 'id': full_id}, '')
 
             # Since JobBackend sends SIGINT to its current process group, wit sends also to its parents when same pg.
             # We need to change the process group of the process, so this won't happen.
@@ -403,7 +400,7 @@ class ServerCommand:
     def registration_complete(self, params):
         self.registered = True
         self.logger.info("Server connected to %s as %s under account %s registered." % (self.config['host'], params['server'], params['username']))
-        self.server.send_message({'type': 'system', 'values': self.collect_system_information()})
+        self.server.send_message({'type': 'system', 'values': self.collect_system_information()}, '')
 
     def collect_system_information(self):
         values = {}

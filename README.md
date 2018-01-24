@@ -1,4 +1,4 @@
-# AETROS Python SDK / CLI
+# AETROS CLI + Python SDK
 
 <p align="center">
 <img src="https://avatars2.githubusercontent.com/u/17340113?v=3&s=200" />
@@ -7,18 +7,18 @@
 [![Build Status](https://travis-ci.org/aetros/aetros-cli.svg?branch=master)](https://travis-ci.org/aetros/aetros-cli)
 [![PyPI version](https://badge.fury.io/py/aetros.svg)](https://badge.fury.io/py/aetros)
 
-This package is a python application you need to use when you want to train [simple models](http://aetros.com/docu/trainer/models/simple-model)
-or if you want to integrate AETROS in your [python model](http://aetros.com/docu/trainer/models/custom-python) using the [AETROS Python SDK](http://aetros.com/docu/python-sdk/getting-started).
+This package is a python application you
 
-### Simple models
+ - Want to start jobs from your local PC on remote server
+ - Want to start jobs from your local PC on local machine
+ - Want to connect your server as cluster computing server in AETROS Trainer
+ - You want to use certain features of the Python SDK (e.g. job actions)
 
-It basically retrieves all model information from AETROS, compiles and starts the training, attached with a special logger
-callback that sends all information to AETROS Trainer so you can monitor the whole training.
+### How to use AETROS CLI
 
-It also contains dataset provider (`aetros.auto_dataset`, with downloader, generator, in-memory iterator and augmentor) for image datasets
-which is used if you have a image dataset configured in AETROS Trainer.
+Please see our documentation [AETROS CLI: Getting started](http://aetros.com/docu/trainer/getting-started).
 
-### Python models
+### How to use AETROS Python SDK
 
 Please see our documentation [Python SDK: Getting started](http://aetros.com/docu/python-sdk/getting-started).
 

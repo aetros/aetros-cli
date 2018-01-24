@@ -122,7 +122,8 @@ def create_ssh_stream(config, exit_on_failure=True):
     key_description = key_filename if key_filename else 'from server'
 
     try:
-        ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=True, pkey=key)
+        ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=False, pkey=key)
+        ssh_stream.get_transport().window_size = 2147483647
     except Exception as e:
         if isinstance(e, paramiko.ssh_exception.AuthenticationException) or isinstance(e, paramiko.ssh_exception.SSHException):
             if exit_on_failure:
