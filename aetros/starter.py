@@ -506,7 +506,7 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, cpus, memo
     if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
         # only supported on linux
         docker_command += ['--runtime', 'nvidia']
-        docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
+        docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(str(x) for x in gpu_devices))]
         # support nvidia-docker1 as well
         # docker_command += ['--device', '/dev/nvidia1']
 
