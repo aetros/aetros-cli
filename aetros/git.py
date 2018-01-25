@@ -593,7 +593,7 @@ class Git:
         finally:
             self.stream_files_lock.release()
 
-    def stream_file(self, path, fast_lane=False):
+    def stream_file(self, path, fast_lane=True):
         """
         Create a temp file, stream it to the server if online and append its content using the write() method. 
         This makes sure that we have all newest data of this file on the server directly.

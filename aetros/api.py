@@ -99,7 +99,9 @@ def request(path, query=None, body=None, method='get', config=None):
     stderr = drain_stream(stderr)
 
     if len(stderr) > 0:
-        stderr = stderr.decode('utf-8')
+        if hasattr(stderr, 'decode'):
+            stderr = stderr.decode('utf-8')
+
         raise ApiError('Could not request api: ' + config['host'] + path, stderr)
 
     return stdout

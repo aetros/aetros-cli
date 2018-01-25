@@ -971,6 +971,8 @@ class JobBackend:
 
         self.in_shutdown = True
 
+        self.logger.debug('on_shutdown, stopped=%s, ended=%s, early_stop=%s, stop_requested=%s'
+                          % (str(self.stopped), str(self.ended), str(self.in_early_stop), str(self.stop_requested)))
         if self.stopped or self.ended:
             # make really sure, ssh connection closed
             self.client.close()
@@ -1035,9 +1037,6 @@ class JobBackend:
         if self.is_master_process():
             self.section('end')
 
-        if self.monitoring_thread:
-            self.monitoring_thread.stop()
-
         self.logger.debug("stop: " + str(progress))
 
         self.send_std_buffer()
@@ -1048,9 +1047,7 @@ class JobBackend:
 
         if self.git.online and not force_exit:
             if wait_for_client:
-                self.logger.debug("client sends last %s messages ..." % ([str(i)+':'+str(len(x)) for i, x in six.iteritems(self.client.queues)],))
                 self.client.wait_sending_last_messages()
-
         # store all store_file and stream_file as blob
         self.logger.debug("Git stopping ...")
         self.git.stop()
@@ -1099,6 +1096,13 @@ class JobBackend:
         if self.is_master_process():
             # remove the index file
             self.git.clean_up()
+
+        # it's important to have it here, since its tracks not only hardware but also network speed
+        # for uploading last messages and Git.
+        # Also, after each message we get from this thread on the server, we check if the job
+        # should be ended/terminated or not.
+        if self.monitoring_thread:
+            self.monitoring_thread.stop()
 
         self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
@@ -1558,12 +1562,17 @@ class JobBackend:
         If both are empty, we commit all files smaller than 10MB.
         :return:
         """
-        blacklist = ['.git', 'aetros']
+        blacklist = ['.git']
 
         def add_resursiv(path = '.', report=report):
             self.logger.debug("add_resursiv " + path + ' => is ignored=' + str(is_ignored(path, self.config['ignore'])))
 
             if os.path.basename(path) in blacklist:
+                return 0, 0
+
+            if working_tree + '/aetros' == path:
+                # ignore in work_tree the folder ./aetros/, as it could be
+                # that we checked out a job and start it again.
                 return 0, 0
 
             if os.path.isdir(path):
@@ -1595,15 +1604,11 @@ class JobBackend:
 
         return add_resursiv(working_tree, report=report)
 
-    # def job_add_insight(self, x, images, confusion_matrix):
-    #     pass
-
     def add_embedding_word2vec(self, x, path):
-
         data = open(path, 'rb').read()
         name = os.path.basename(path)
 
-        remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name
+        remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name + '.w2v'
         self.client.send({'type': 'store-blob', 'path': remote_path, 'data': data}, channel='files')
 
     def add_insight_image_path(self, x, path, id=None, label=None):

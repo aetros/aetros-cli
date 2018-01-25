@@ -70,22 +70,24 @@ class BackendClient:
         self.event_listener = event_listener
         self.logger = logger
         self.message_id = 0
+        self.sync_status = {}
 
         self.api_key = None
         self.job_id = None
 
         self.queues = {}
         self.ssh_stream = {}
-        self.ssh_stream_stdouts = {}
-        self.ssh_stream_stdins = {}
+        self.ssh_channel = {}
         self.thread_read_instances = {}
         self.thread_write_instances = {}
+        self.stop_on_empty_queue = {}
 
         self.lock = Lock()
         self.connection_errors = 0
         self.connection_tries = 0
         self.in_connecting = False
-        self.stop_on_empty_queue = False
+        self.write_speeds = {}
+        self.read_speeds = []
 
         # indicates whether we are offline or not, means not connected to the internet and
         # should not establish a connection to Aetros.
@@ -103,7 +105,7 @@ class BackendClient:
         self.connected = {}
 
         self.was_connected_once = {}
-        self.read_unpacker = msgpack.Unpacker()
+        self.read_unpacker = msgpack.Unpacker(encoding='utf-8')
 
     def on_sigint(self, sig, frame):
         # when connections breaks, we do not reconnect
@@ -116,9 +118,8 @@ class BackendClient:
         self.queues = {}
         self.thread_read_instances = {}
         self.thread_write_instances = {}
+        self.stop_on_empty_queue = {}
         self.ssh_stream = {}
-        self.ssh_stream_stdouts = {}
-        self.ssh_stream_stdins = {}
         self.was_connected_once = {}
 
         if not channels:
@@ -128,9 +129,10 @@ class BackendClient:
             self.queues[channel] = []
 
             self.ssh_stream[channel] = None
-            self.ssh_stream_stdouts[channel] = None
-            self.ssh_stream_stdins[channel] = None
+            self.ssh_channel[channel] = None
             self.was_connected_once[channel] = False
+            self.stop_on_empty_queue[channel] = False
+            self.write_speeds[channel] = []
 
             self.thread_read_instances[channel] = Thread(target=self.thread_read, args=[channel])
             self.thread_read_instances[channel].daemon = True
@@ -174,8 +176,9 @@ class BackendClient:
 
             self.connected[channel] = False
             self.registered[channel] = False
-            self.ssh_stream_stdins[channel] = None
-            self.ssh_stream_stdouts[channel] = None
+            self.ssh_stream[channel] = False
+            self.ssh_channel[channel] = False
+            self.write_speeds[channel] = []
             messages = None
             stderrdata = ''
 
@@ -186,20 +189,26 @@ class BackendClient:
 
                 self.logger.debug('[%s] open channel' % (channel, ))
 
-                self.ssh_stream_stdins[channel],\
-                    self.ssh_stream_stdouts[channel],\
-                    stderr = self.ssh_stream[channel].exec_command('stream')
+                self.ssh_channel[channel] = self.ssh_stream[channel].get_transport().open_session()
+                self.ssh_channel[channel].exec_command('stream')
+
+                # self.ssh_stream_stdins[channel],\
+                #     self.ssh_stream_stdouts[channel],\
+                #     stderr = self.ssh_stream[channel].exec_command('stream')
             except Exception:
                 raise
             finally:
                 self.lock.release()
 
-            if self.ssh_stream_stdouts[channel]:
+            if self.ssh_channel[channel]:
                 messages = self.wait_for_at_least_one_message(channel)
 
             if not messages:
-                stderrdata = stderr.read().decode("utf-8").strip()
+                stderrdata = self.ssh_channel[channel].recv_stderr().decode("utf-8").strip()
             else:
+                self.logger.debug('[%s] opened and received %d messages' % (channel, len(messages)))
+
+
                 self.connected[channel] = True
                 self.registered[channel] = self.on_connect(self.was_connected_once[channel], channel)
 
@@ -227,7 +236,7 @@ class BackendClient:
                         self.logger.warning("Access denied. Did you setup your SSH public key correctly "
                                             "and saved it in your AETROS Trainer user account?")
 
-                    self.close(channel)
+                    self.close()
                     sys.exit(1)
 
                 self.connection_error(channel, "Connection error during connecting to %s: %s" % (self.host, str(stderrdata)))
@@ -250,7 +259,7 @@ class BackendClient:
     def end(self):
         self.expect_close = True
 
-        for channel in six.iterkeys(self.ssh_stream_stdouts):
+        for channel in six.iterkeys(self.ssh_channel):
             self.send_message({'type': 'end'}, channel)
 
         self.wait_for_close()
@@ -306,47 +315,40 @@ class BackendClient:
     def thread_write(self, channel):
         while self.active:
             if self.online:
-                if self.is_connected(channel) and self.is_registered(channel):
-                    queue_copy = self.queues[channel][:]
+                if self.is_connected(channel) and self.is_registered(channel) and self.queues[channel]:
+                    message = self.queues[channel][0]
 
                     try:
-                        sent_size = 0
                         sent = []
 
-                        for message in queue_copy:
-                            if message['_sending'] and not message['_sent']:
-                                message['_sending'] = False
+                        if message['_sending'] and not message['_sent']:
+                            message['_sending'] = False
 
-                        for message in queue_copy:
-                            if not self.is_connected(channel) or not self.is_registered(channel):
-                                # additional check to make sure there's no race condition
-                                break
+                        if not self.is_connected(channel) or not self.is_registered(channel):
+                            # additional check to make sure there's no race condition
+                            self.logger.debug('[%s] break while sending' % (channel,))
+                            break
 
-                            if not message['_sending'] and not message['_sent']:
-                                size = self.send_message(message, channel)
-                                if size is not False:
-                                    sent.append(message)
-
-                                    sent_size += size
-                                    # not too much at once (max 1MB), so we have time to listen for incoming messages
-                                    if sent_size > 1024 * 1024:
-                                        break
-                                else:
-                                    break
+                        if not message['_sending'] and not message['_sent']:
+                            self.send_message(message, channel)
+                            sent.append(message)
 
                         self.lock.acquire()
-                        for message in sent:
-                            if message in self.queues[channel]:
-                                self.queues[channel].remove(message)
+                        if message in self.queues[channel]:
+                            self.queues[channel].remove(message)
                         self.lock.release()
 
-                        if self.stop_on_empty_queue:
-                            self.logger.debug('[%s] Client sent %d / %d messages' % (channel, len(sent), len(self.queues[channel])))
-                            return
                     except Exception as e:
-                        self.logger.debug('Closed write thread: exception. %d messages left'
-                                          % (len(self.queues[channel]), ))
+                        self.logger.debug('[%s] Closed write thread: exception. %d messages left'
+                                          % (channel, len(self.queues[channel]), ))
                         self.connection_error(channel, e)
+
+                if self.stop_on_empty_queue[channel]:
+                    if len(self.queues[channel]) == 0 or not self.is_connected(channel) or \
+                            not self.is_registered(channel):
+                        self.logger.debug('[%s] Closed write thread: ended. %d messages left'
+                                          % (channel, len(self.queues[channel]),))
+                        return
 
                 if self.active and not self.is_connected(channel) and not self.expect_close:
                     if not self.connect(channel):
@@ -354,7 +356,7 @@ class BackendClient:
 
             time.sleep(0.1)
 
-        self.logger.debug('Closed write thread: ended. %d messages left' % (len(self.queues[channel]), ))
+        self.logger.debug('[%s] Closed write thread: disconnect. %d messages left' % (channel, len(self.queues[channel]), ))
 
     def thread_read(self, channel):
         while self.active:
@@ -365,39 +367,57 @@ class BackendClient:
                         messages = self.read(channel)
 
                         if messages is not None:
+                            self.logger.debug("[%s] Client: handle message: %s" % (channel, str(messages)))
                             self.handle_messages(messages)
 
-                        continue
+                        if self.stop_on_empty_queue[channel]:
+                            return
                     except Exception as e:
                         self.logger.debug('[%s] Closed read thread: exception' % (channel, ))
                         self.connection_error(channel, e)
 
             time.sleep(0.01)
 
-        self.logger.debug('Closed read thread: ended')
+        self.logger.debug('[%s] Closed read thread: ended' % (channel, ))
+
+    def _end_channel(self, channel):
+        """
+        Soft end of ssh channel. End the writing thread as soon as the message queue is empty.
+        """
+        self.stop_on_empty_queue[channel] = True
+
+        # by joining the we wait until its loop finishes.
+        # it won't loop forever since we've set self.stop_on_empty_queue=True
+        write_thread = self.thread_write_instances[channel]
+
+        try:
+            while True:
+                if write_thread.isAlive():
+                    write_thread.join(0.5)
+
+                if not write_thread.isAlive():
+                    break
+
+                time.sleep(0.5)
+
+        except (KeyboardInterrupt, SystemExit):
+            raise
 
     def wait_sending_last_messages(self):
         if self.active and self.online:
+            self.logger.debug("client sends last %s messages ..."
+                              % ([str(i) + ':' + str(len(x)) for i, x in six.iteritems(self.queues)],))
+
             # send all missing messages
-            self.stop_on_empty_queue = True
 
-            # by joining the we wait until its loop finish.
+            # by joining we wait until its loop finish.
             # it won't loop forever since we've set self.stop_on_empty_queue=True
-            try:
-                while True:
-                    alive = 0
-                    for write_thread in six.itervalues(self.thread_write_instances):
-                        if write_thread.isAlive():
-                            alive += 1
+            for channel in six.iterkeys(self.ssh_channel):
+                if channel != '':
+                    self._end_channel(channel)
 
-                    if not alive:
-                        break
-
-                    for write_thread in six.itervalues(self.thread_write_instances):
-                        if write_thread.isAlive():
-                            write_thread.join(1)
-            except (KeyboardInterrupt, SystemExit):
-                raise
+            # last is control channel
+            self._end_channel('')
 
     def wait_for_close(self):
         if not (self.active and self.online):
@@ -407,8 +427,8 @@ class BackendClient:
 
         i = 0
         try:
-            for channel, file in six.iteritems(self.ssh_stream_stdouts):
-                while file and file.read() != b'':
+            for channel, file in six.iteritems(self.ssh_channel):
+                while file and not file.closed:
                     i += 1
                     time.sleep(0.1)
                     if i % 50 == 0:
@@ -444,25 +464,37 @@ class BackendClient:
     def is_registered(self, channel):
         return channel in self.registered and self.registered[channel]
 
-    def send(self, data, channel=''):
+    def send(self, data, channel='', important=False):
         if not (self.active and self.online):
             # It's important to queue anything when active and online
             # as we would lose information in git streams.
             return
 
-        if self.stop_on_empty_queue:
+        if self.stop_on_empty_queue[channel]:
             # make sure, we don't add new one
             return
 
         self.message_id += 1
+
         message = {}
         message['_id'] = self.message_id
+
+        if 'type' in data:
+            message['type'] = data['type']
+
+        if 'path' in data:
+            message['path'] = data['path']
+
         message['_data'] = msgpack.packb(data, default=invalid_json_values)
         message['_total'] = len(message['_data'])
+        message['_bytes_sent'] = 0
         message['_sending'] = False
         message['_sent'] = False
 
-        self.queues[channel].append(message)
+        if important:
+            self.queues[channel].insert(0, message)
+        else:
+            self.queues[channel].append(message)
 
     def send_message(self, message, channel):
         """
@@ -479,46 +511,43 @@ class BackendClient:
         else:
             data = msgpack.packb(message, default=invalid_json_values)
             total = len(data)
+            message['_bytes_sent'] = 0
+            message['_id'] = -1
 
-        # class test(object):
-        #     def __init__(self, message):
-        #         self.message = message
-        #         self.position = 0
-        #
-        #     def read(self):
-        #         print('Send %d of %d' % (self.position, len(self.message)))
-        #
-        #         buf = self.message[self.position:self.position+1024]
-        #         self.position += 1024
-        #
-        #         return buf
-        #
-        #     def __len__(self):
-        #         return len(self.message)
+        sent_sizes = []
 
-        # only send 50kb at a time
-        BUFFER_SIZE = 100*1024
-        bytes_sent = 0
-        write_speeds = []
+        def report():
+            if not self.write_speeds[channel] or not sent_sizes:
+                return
+            # speed = sum(self.write_speeds) / len(self.write_speeds)
+            # average_size = sum(sent_sizes) / len(sent_sizes)
+            # print("[%s] Speed is at %.3f kb/s (average send() size=%.3fkb), %.3fkb of %.3fkb sent, id=%s" % (
+            #        channel, speed / 1024, average_size / 1024, message['_bytes_sent'] / 1024,
+            #        total / 1024, message['_id']))
 
         try:
             while data:
                 start = time.time()
-                buf = data[:BUFFER_SIZE]
-                self.ssh_stream_stdins[channel].write(buf)
-                data = data[BUFFER_SIZE:]
-                bytes_sent += len(buf)
+                # buf = data[:BUFFER_SIZE]
+                bytes_sent = self.ssh_channel[channel].send(data)
+
+                sent_sizes.append(bytes_sent)
+                data = data[bytes_sent:]
+                message['_bytes_sent'] += bytes_sent
+
+                # data = data[BUFFER_SIZE:]
+                # bytes_sent += len(buf)
                 end = time.time()
-                write_speeds.append( len(buf) / (end-start) )
-                # if len(write_speeds) > 30:
-                #     speed = (sum(write_speeds) / float(len(write_speeds))) / 1024
-                #     print("[%s] Speed is at %.3f kb/s, %.3fkb of %.3fkb sent, id=%s"
-                #           % (channel, speed, bytes_sent/1024, total/1024, message['_id']) )
-                #     write_speeds = write_speeds[10:]
+                self.write_speeds[channel].append( bytes_sent / (end-start) )
 
+                if len(self.write_speeds[channel]) > 20:
+                    self.write_speeds[channel] = self.write_speeds[channel][10:]
+                    sent_sizes = sent_sizes[10:]
+
+            report()
             message['_sent'] = True
+            return True
 
-            return total
         except (KeyboardInterrupt, SystemExit):
             if message['_sent']:
                 return total
@@ -528,6 +557,9 @@ class BackendClient:
         except Exception as error:
             self.connection_error(channel, error)
             return False
+
+        finally:
+            self.write_speeds[channel] = []
 
     def handle_messages(self, messages):
         self.lock.acquire()
@@ -552,12 +584,17 @@ class BackendClient:
 
         while True:
             try:
-                chunk = self.ssh_stream_stdouts[channel].read(1)
+                start = time.time()
+                chunk = self.ssh_channel[channel].recv(1024)
+                end = time.time()
+                self.read_speeds.append( len(chunk) / (end-start) )
+                if len(self.read_speeds) > 20:
+                    self.read_speeds = self.read_speeds[10:]
+
                 if chunk == '':
                     # happens only when connection broke. If nothing is to be received, it hangs instead.
                     self.connection_error(channel, 'Connection broken w')
                     return False
-
             except Exception as error:
                 self.connection_error(channel, error)
                 raise
@@ -575,8 +612,18 @@ class BackendClient:
         again.
         """
 
+        if not self.ssh_channel[channel].recv_ready():
+            return
+
         try:
-            chunk = self.ssh_stream_stdouts[channel].read(1)
+            start = time.time()
+            chunk = self.ssh_channel[channel].recv(1024)
+            end = time.time()
+
+            self.read_speeds.append(len(chunk) / (end-start))
+            if len(self.read_speeds) > 20:
+                self.read_speeds = self.read_speeds[10:]
+
         except Exception as error:
             self.connection_error(channel, error)
             raise
@@ -651,6 +698,7 @@ class JobClient(BackendClient):
         return False
 
     def handle_messages(self, messages):
+
         BackendClient.handle_messages(self, messages)
         for message in messages:
             if self.external_stopped:

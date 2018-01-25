@@ -14,9 +14,10 @@ def drain_stream(stream, decode='utf-8'):
         try:
             # read() needs to block
             # buf = os.read(buffer.fileno(), 4096)
-            buf = stream.read(1)
+            buf = stream.read(1024)
             if buf == six.b(''):
                 break
+
             content += buf
         except Exception:
             break
@@ -82,25 +83,20 @@ class GeneralLogger(object):
             while True:
 
                 try:
-                    # read() needs to block
+                    # readline() needs to block
                     # buf = os.read(buffer.fileno(), 4096)
-                    if read_line:
-                        buf = buffer.readline()
-                        if buf == b'':
-                            break
+                    buf = buffer.readline()
+                    if buf == b'':
+                        break
 
-                        if callable(read_line):
-                            res = read_line(buf)
-                            if res is False:
-                                continue
-                            elif res is not None:
-                                buf = res
-                                if hasattr(buf, 'encode'):
-                                    buf = buf.encode("utf-8", 'replace')
-                    else:
-                        buf = buffer.read(1)
-                        if buf == b'':
-                            break
+                    if read_line and callable(read_line):
+                        res = read_line(buf)
+                        if res is False:
+                            continue
+                        elif res is not None:
+                            buf = res
+                            if hasattr(buf, 'encode'):
+                                buf = buf.encode("utf-8", 'replace')
 
                     self.attach_last_messages[bid] += buf
 

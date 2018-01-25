@@ -13,6 +13,8 @@ import psutil
 
 from threading import Thread
 
+import six
+
 import aetros.cuda_gpu
 import numpy as np
 
@@ -31,7 +33,7 @@ class MonitoringThread(Thread):
         if 'maxTime' in job['config'] and isinstance(job['config']['maxTime'], int) and job['config']['maxTime'] > 0:
             self.max_minutes = job['config']['maxTime']
 
-        self.stream = self.job_backend.git.stream_file('aetros/job/monitoring.csv')
+        self.hardware_stream = self.job_backend.git.stream_file('aetros/job/monitoring.csv')
 
         header = ["second", "cpu", "memory"]
         try:
@@ -44,7 +46,7 @@ class MonitoringThread(Thread):
         if job_backend.get_job_model().has_dpu():
             header += ['dpu0']
 
-        self.stream.write(simplejson.dumps(header)[1:-1] + "\n")
+        self.hardware_stream.write(simplejson.dumps(header)[1:-1] + "\n")
         self.started = start_time or time.time()
         self.running = True
         self.early_stopped = False
@@ -101,8 +103,13 @@ class MonitoringThread(Thread):
 
         while self.running:
             self.handle_early_stop()
+            self.sync_monitor()
 
             if self.job_backend.is_paused:
+                time.sleep(1)
+                continue
+
+            if self.job_backend.ended:
                 time.sleep(1)
                 continue
 
@@ -139,6 +146,44 @@ class MonitoringThread(Thread):
                 self.job_backend.logger.warning("Max time of "+str(self.max_minutes)+" minutes reached.")
                 self.job_backend.early_stop()
 
+    def sync_monitor(self):
+        if self.job_backend.client.write_speeds:
+            average_speed = 0
+
+            for channel, write_speeds in six.iteritems(self.job_backend.client.write_speeds):
+                write_speeds = write_speeds[:]
+                if write_speeds:
+                    average_speed += sum(write_speeds) / len(write_speeds)
+
+            network = {
+                'speed': average_speed,
+                'ended': self.job_backend.ended,
+                'channels': {},
+                'messages': 0,
+                'files': {},
+                'sent': 0,
+                'total': 0,
+            }
+
+            for channel, messages in six.iteritems(self.job_backend.client.queues):
+                messages = messages[:]
+                network['messages'] += len(messages)
+
+                for message in messages:
+                    if 'type' in message and message['type'] == 'store-blob':
+                        bytes_sent = message['_bytes_sent']
+                        total = message['_total']
+
+                        network['total'] += total
+                        network['sent'] += bytes_sent
+                        network['files'][message['path']] = {
+                            'sent': bytes_sent,
+                            'total': total,
+                        }
+
+            self.job_backend.git.store_file('aetros/job/network.json', simplejson.dumps(network))
+
+
     def monitor(self, cpu_util, mem_util):
         x = math.ceil(time.time()-self.handle_max_time_time)
 
@@ -161,6 +206,6 @@ class MonitoringThread(Thread):
         except aetros.cuda_gpu.CudaNotImplementedException: pass
 
         if self.job_backend.get_job_model().has_dpu():
-            row += [80 + random.randint(-10, 20)]
+            row += [25 + random.randint(-10, 20)]
 
-        self.stream.write(simplejson.dumps(row)[1:-1] + "\n")
+        self.hardware_stream.write(simplejson.dumps(row)[1:-1] + "\n")
