@@ -382,7 +382,7 @@ class JobBackend:
         self.in_shutdown = False
 
         self.insight_images_info = {}
-        self.insight_created = {}
+        self.insight_created = []
 
         self.monitoring_thread = None
 
@@ -826,7 +826,7 @@ class JobBackend:
         self.client.configure(self.model_name, self.job_id, self.name)
         self.git.prepare_git_user()
 
-        if self.git.online:
+        if self.client.online:
             self.logger.debug('Job backend start')
             self.client.start(['', 'files'])
         else:
@@ -1045,9 +1045,10 @@ class JobBackend:
         self.ended = True
         self.running = False
 
-        if self.git.online and not force_exit:
+        if self.client.online and not force_exit:
             if wait_for_client:
                 self.client.wait_sending_last_messages()
+
         # store all store_file and stream_file as blob
         self.logger.debug("Git stopping ...")
         self.git.stop()
@@ -1357,7 +1358,12 @@ class JobBackend:
         # todo, implement optional saving of self.get_job_model().get_weights_filepath_best()
 
     def job_add_status(self, key, value):
-        self.git.commit_file('STATUS ' + str(value), 'aetros/job/status/' + key + '.json', simplejson.dumps(value, default=invalid_json_values))
+        path = 'aetros/job/status/' + key + '.json'
+        data = simplejson.dumps(value, default=invalid_json_values)
+        self.git.commit_file('STATUS ' + str(value), path, data)
+
+        if self.client.online:
+            self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='')
 
     def set_info(self, name, value, commit_end_of_job=False):
         if commit_end_of_job:
@@ -1388,8 +1394,9 @@ class JobBackend:
                     self.commit_file(path + '/' + file)
                 return
 
-            if os.path.getsize(path) > 10 * 1024 * 1024 * 1024:
-                raise Exception('Can not upload file bigger than 10MB')
+            if os.path.getsize(path) > 10 * 1024 * 1024:
+                self.logger.error('Can not upload files bigger than 10MB: ' + str(path))
+                return
 
             with open(path, 'rb') as f:
                 contents = f.read()
@@ -1608,6 +1615,7 @@ class JobBackend:
         data = open(path, 'rb').read()
         name = os.path.basename(path)
 
+        self._ensure_insight(x)
         remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name + '.w2v'
         self.client.send({'type': 'store-blob', 'path': remote_path, 'data': data}, channel='files')
 
@@ -1657,6 +1665,7 @@ class JobBackend:
                           'data': simplejson.dumps(self.insight_images_info[x])}, channel='files')
 
     def add_insight_confusion_matrix(self, x, confusion_matrix):
+        self._ensure_insight(x)
         remote_path = 'aetros/job/insight/' + str(x) + '/confusion_matrix.json'
         self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(confusion_matrix)},
                          channel='files')
@@ -1671,14 +1680,15 @@ class JobBackend:
     def _ensure_insight(self, x):
         if x in self.insight_created: return
 
+        self.insight_created.append(x)
         remote_path = 'aetros/job/insight/' + str(x) + '/created'
         self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
 
-    def _update_insight(self, x):
-        if x in self.insight_created: return
-
-        remote_path = 'aetros/job/insight/' + str(x) + '/updated'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
+    # def _update_insight(self, x):
+    #     if x in self.insight_created: return
+    #
+    #     remote_path = 'aetros/job/insight/' + str(x) + '/updated'
+    #     self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()
