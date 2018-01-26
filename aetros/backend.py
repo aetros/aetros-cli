@@ -136,13 +136,19 @@ def context():
     """
     job = JobBackend()
 
+    offline = False
+    if '1' == os.getenv('AETROS_OFFLINE', ''):
+        offline = True
+
     if os.getenv('AETROS_JOB_ID'):
         job.load(os.getenv('AETROS_JOB_ID'))
     else:
         job.create()
-        job.git.push()
+        if not offline:
+            job.connect()
+            job.git.push()
 
-    job.start()
+    job.start(offline=offline)
 
     return job
 
@@ -434,8 +440,6 @@ class JobBackend:
     def on_registration(self, params):
         if not self.registered:
             self.registered = True
-            self.logger.debug('Git backend start')
-            # self.git.start()
         else:
             self.logger.info("Successfully reconnected.")
 
@@ -782,6 +786,7 @@ class JobBackend:
         return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
     def connect(self):
+        self.client.configure(self.model_name, self.job_id, self.name)
         return self.client.start(['', 'files'], wait=True)
 
     def start(self, collect_system=True, offline=False, push=True):
@@ -825,7 +830,7 @@ class JobBackend:
 
             # make sure we get the progress first, before monitoring sends elapses and
             # updates the job cache
-            if self.client.online and push:
+            if not offline and self.client.online and push:
                 self.git.push()
 
             if collect_system:
@@ -964,14 +969,14 @@ class JobBackend:
             if self.stop_requested_force:
                 if not self.is_master_process():
                     # if not master process, we just stop everything. status/progress is set by master
-                    self.stop(wait_for_client=True, force_exit=True)
+                    self.stop(force_exit=True)
                 else:
                     # master process
                     self.fail('Force stopped.', force_exit=True)
             else:
                 if not self.is_master_process():
                     # if not master process, we just stop everything. status/progress is set by master
-                    self.stop(wait_for_client=True)
+                    self.stop()
                 else:
                     # master process
                     self.abort()
@@ -996,7 +1001,7 @@ class JobBackend:
         if not self.running:
             return
 
-        self.stop(JOB_STATUS.PROGRESS_STATUS_DONE, wait_for_client=True, force_exit=force_exit)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_DONE, force_exit=force_exit)
 
     def send_std_buffer(self):
         if isinstance(sys.stdout, GeneralLogger):
@@ -1005,7 +1010,7 @@ class JobBackend:
         if isinstance(sys.stderr, GeneralLogger):
             sys.stderr.send_buffer()
 
-    def stop(self, progress=None, wait_for_client=False, force_exit=False):
+    def stop(self, progress=None, force_exit=False):
         global last_exit_code
 
         if self.stopped:
@@ -1026,16 +1031,6 @@ class JobBackend:
             # if not master process, the master process will set it
             self.job_add_status('progress', progress)
 
-        if self.client.online and not force_exit:
-            if wait_for_client:
-                self.client.wait_sending_last_messages()
-
-        # store all store_file and stream_file as blob
-        self.logger.debug("Git stopping ...")
-        self.git.stop()
-
-        self.client.close()
-
         exit_code = last_exit_code or 0
         if progress == JOB_STATUS.PROGRESS_STATUS_DONE:
             exit_code = 0
@@ -1049,28 +1044,48 @@ class JobBackend:
         if self.is_master_process():
             self.set_system_info('exit_code', exit_code)
 
-        # everything stopped. Server has all blobs, so we do last git push.
-
-        if not force_exit and self.client.online and self.is_master_process():
-            # both sides should have same blobs, so we do now our final push
-            self.logger.debug("git last push ...")
-            files_to_sync = self.git.push(return_object_sha=True)
-
-            if files_to_sync:
-                self.logger.warning("Not all job data have been uploaded.")
-                self.logger.warning("Please run following command to make sure your job is stored on the server.")
-                self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+        # stop push thread and commit STREAMED/STORE END files in local git
+        self.logger.debug("Git stopping ...")
+        self.git.stop()
 
         if self.client.online and not force_exit:
-            # server stores now all store_file and stream_file as blob as well,
-            # wait for connection close to make sure server stored the files in server's git.
-            # This happens after self.client.wait_sending_last_message() because it makes sure,
-            # the server received all git streaming files.
-            self.logger.debug("client stopping ...")
+            # make sure all queues are empty and everything has been sent
+            self.logger.debug("Wait for queue empty and store Git blobs on server: master=" +str(self.is_master_process()))
+
+            # Say server to store received files as blob in remote Git
+            self.client.send({'type': 'sync-blob'}, channel='')
+            self.client.send({'type': 'sync-blob'}, channel='files')
+
+            self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process())
+            self.logger.debug("Queues empty now.")
+            # all further client.send calls won't be included in the final git push calculation
+            # and might be sent again.
+
+            # do now the last final git push, where we upload commits and trees.
+            # blobs should be added already via streaming
+            if self.is_master_process():
+                # non-master commit and upload only.
+                # master tracks what commits habe been sent already
+                self.git.push()
+
+            # send all last messages (mostly monitoring) and close write channel
+            self.client.wait_sending_last_messages()
+
+            # wait for end of client. Server will now close connection when ready.
             self.client.end()
+
+            if self.is_master_process():
+                # check if we have uncommitet stuff
+                objects_to_sync = self.git.diff_objects()
+
+                if objects_to_sync:
+                    self.logger.warning("Not all job data have been uploaded.")
+                    self.logger.warning("Please run following command to make sure your job is stored on the server.")
+                    self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
 
         if self.is_master_process():
             # remove the index file
+            # non-master use the same as master, so master cleans up
             self.git.clean_up()
 
         # it's important to have it here, since its tracks not only hardware but also network speed
@@ -1080,6 +1095,9 @@ class JobBackend:
         if self.monitoring_thread:
             self.monitoring_thread.stop()
 
+        # make sure client is really stopped
+        self.client.close()
+
         self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
 
         if force_exit:
@@ -1088,13 +1106,13 @@ class JobBackend:
         elif not self.in_shutdown:
             sys.exit(exit_code)
 
-    def abort(self, wait_for_client_messages=True, force_exit=False):
+    def abort(self, force_exit=False):
         if not self.running:
             return
 
         self.set_status('ABORTED', add_section=False)
 
-        self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, wait_for_client_messages, force_exit=force_exit)
+        self.stop(JOB_STATUS.PROGRESS_STATUS_ABORTED, force_exit=force_exit)
 
     def fail(self, message=None, force_exit=False):
         """
@@ -1119,6 +1137,7 @@ class JobBackend:
         Proxy method for GeneralLogger.
         """
         if self.stream_log:
+            # points to the Git stream write
             self.stream_log.write(message)
             return True
 
@@ -1336,6 +1355,7 @@ class JobBackend:
         self.git.commit_file('STATUS ' + str(value), path, data)
 
         if self.client.online:
+            # just so have it faster
             self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='')
 
     def set_info(self, name, value, commit_end_of_job=False):
@@ -1590,7 +1610,7 @@ class JobBackend:
 
         self._ensure_insight(x)
         remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name + '.w2v'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': data}, channel='files')
+        self.git.commit_file('INSIGHT WORD2VEC ' + str(x), remote_path, data)
 
     def add_insight_image_path(self, x, path, id=None, label=None):
         image = PIL.Image.open(path)
@@ -1629,19 +1649,18 @@ class JobBackend:
                 'pos': image.pos
             }
 
-        for image in converted_images:
-            remote_path = 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg'
-            self.client.send({'type': 'store-blob', 'path': remote_path, 'data': image['image']}, channel='files')
+        with self.git.batch_commit('INSIGHT_IMAGES ' + str(x)):
+            for image in converted_images:
+                remote_path = 'aetros/job/insight/'+str(x)+'/image/'+image['id']+'.jpg'
+                self.git.commit_file('IMAGE ' + str(image['id']), remote_path, image['image'])
 
-        remote_path = 'aetros/job/insight/' + str(x) + '/info.json'
-        self.client.send({'type': 'store-blob', 'path': remote_path,
-                          'data': simplejson.dumps(self.insight_images_info[x])}, channel='files')
+            remote_path = 'aetros/job/insight/' + str(x) + '/info.json'
+            self.git.commit_file('IMAGE INFO', remote_path, simplejson.dumps(self.insight_images_info[x]))
 
     def add_insight_confusion_matrix(self, x, confusion_matrix):
         self._ensure_insight(x)
         remote_path = 'aetros/job/insight/' + str(x) + '/confusion_matrix.json'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': simplejson.dumps(confusion_matrix)},
-                         channel='files')
+        self.git.commit_file('INSIGHT CONFUSION_MATRIX ' + str(x), remote_path, simplejson.dumps(confusion_matrix))
 
     def job_add_insight(self, x, images=None, confusion_matrix=None):
         if images:
@@ -1655,13 +1674,7 @@ class JobBackend:
 
         self.insight_created.append(x)
         remote_path = 'aetros/job/insight/' + str(x) + '/created'
-        self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
-
-    # def _update_insight(self, x):
-    #     if x in self.insight_created: return
-    #
-    #     remote_path = 'aetros/job/insight/' + str(x) + '/updated'
-    #     self.client.send({'type': 'store-blob', 'path': remote_path, 'data': str(time.time())}, channel='files')
+        self.git.commit_file('WORD2VEC ' + str(x), remote_path, str(time.time()))
 
     def pil_image_to_jpeg(self, image):
         buffer = six.BytesIO()

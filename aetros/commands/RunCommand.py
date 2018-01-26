@@ -202,8 +202,6 @@ class RunCommand:
 
             self.logger.warning("Execution started offline.")
         else:
-            job_backend.client.configure(job_backend.model_name, job_backend.job_id, job_backend.name)
-
             adding_files = loading_text("- Connecting to "+home_config['host']+" ... ")
             if job_backend.connect():
                 adding_files("connected.")
@@ -214,12 +212,11 @@ class RunCommand:
         uploading_job_data = loading_text("- Uploading job data ... ")
         job_backend.git.push()
 
-        # todo, wait until all messages sent in client
-        job_backend.client.wait_until_queue_empty('files')
+        job_backend.client.wait_until_queue_empty(['files'])
 
         uploading_job_data()
         link = "%s/model/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
-        sys.stdout.write(u" ➤ Monitor job at %s\n" % (link))
+        sys.stdout.write(u"➤ Monitor job at %s\n" % (link))
 
         job_backend.start(collect_system=False, offline=parsed_args.offline, push=False)
 

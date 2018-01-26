@@ -81,6 +81,7 @@ class BackendClient:
         self.thread_read_instances = {}
         self.thread_write_instances = {}
         self.stop_on_empty_queue = {}
+        self.channel_closed = {}
 
         self.lock = Lock()
         self.channel_lock = {}
@@ -141,6 +142,7 @@ class BackendClient:
             self.write_speeds[channel] = []
             self.channel_lock[channel] = Lock()
             self.in_connecting[channel] = False
+            self.channel_closed[channel] = False
 
             self.thread_read_instances[channel] = Thread(target=self.thread_read, args=[channel])
             self.thread_read_instances[channel].daemon = True
@@ -228,7 +230,7 @@ class BackendClient:
                 self.connected[channel] = False
 
                 try:
-                    self.logger.debug('[%s] Client: ssh_tream close' % (channel, ))
+                    self.logger.debug('[%s] Client: ssh_tream close due to registration failure' % (channel, ))
                     self.ssh_stream[channel].close()
                 except (KeyboardInterrupt, SystemExit):
                     raise
@@ -286,7 +288,7 @@ class BackendClient:
         # make sure ssh connection is closed, so we can recover
         try:
             if self.ssh_stream[channel]:
-                self.logger.debug('[%s] Client: ssh_tream close' % (channel,))
+                self.logger.debug('[%s] Client: ssh_tream close due to connection error' % (channel,))
                 self.ssh_stream[channel].close()
         except (KeyboardInterrupt, SystemExit):
             raise
@@ -346,7 +348,8 @@ class BackendClient:
 
                         self.channel_lock[channel].acquire()
                         if message in self.queues[channel]:
-                            self.queues[channel].remove(message)
+                            if message['_sent']:
+                                self.queues[channel].remove(message)
                         self.channel_lock[channel].release()
 
                     except Exception as e:
@@ -433,29 +436,55 @@ class BackendClient:
             # last is control channel
             self._end_channel('')
 
-    def wait_until_queue_empty(self, channel, report=True):
+    def is_channel_open(self, channel):
+        return not self.channel_closed[channel]
 
+    def wait_until_queue_empty(self, channels, report=True):
+        """
+        Waits until all queues of channels are empty.
+        """
         message = ''
 
-        while self.queues[channel]:
+        self.logger.debug("wait_until_queue_empty: report=%s %s"
+                          % (str(report), str([channel+':'+str(len(self.queues[channel])) for channel in channels]), ))
+
+        while True:
+            sent = 0
+            total = 0
+            speeds = []
+            all_empty = True
+
+            for channel in channels:
+                if len(self.queues[channel]) > 0:
+                    all_empty = False
+                    sent += sum(m['_bytes_sent'] for m in self.queues[channel])
+                    total += sum(m['_total'] for m in self.queues[channel])
+                    speeds += self.write_speeds[channel]
+
+            self.logger.debug("all_empty=%s" % (str(all_empty),))
+
+            if len(speeds):
+                speed = sum(speeds) / len(speeds)
+            else:
+                speed = 0
+
+            if report:
+                sys.__stdout__.write('\b' * len(message))
+
+                message = "Speed is at %.3f kb/s, %.3fkb of %.3fkb sent" \
+                          % (speed / 1024, sent / 1024, total / 1024)
+
+                sys.__stdout__.write(message)
+                sys.__stdout__.flush()
+
+            if all_empty:
+                break
+
             time.sleep(0.5)
 
-            size = len(self.write_speeds[channel])
-            if not size:
-                continue
-
-            sent = sum(m['_bytes_sent'] for m in self.queues[channel])
-            total = sum(m['_total'] for m in self.queues[channel])
-            speed = sum(self.write_speeds[channel]) / size
-
+        if report:
             sys.__stdout__.write('\b' * len(message))
-
-            message = "[%s] Speed is at %.3f kb/s, %.3fkb of %.3fkb sent" % (
-                   channel, speed / 1024, sent / 1024, total / 1024)
-
-            sys.__stdout__.write(message)
-
-        sys.__stdout__.write('\b' * len(message))
+            sys.__stdout__.flush()
 
     def wait_for_close(self):
         if not (self.active and self.online):
@@ -485,7 +514,7 @@ class BackendClient:
         for channel, stream in six.iteritems(self.ssh_stream):
             try:
                 if stream:
-                    self.logger.debug('[%s] Client: ssh_tream close' % (channel, ))
+                    self.logger.debug('[%s] Client: ssh_tream close due to close call' % (channel, ))
                     stream.close()
             except (KeyboardInterrupt, SystemExit):
                 raise
@@ -508,31 +537,49 @@ class BackendClient:
             # as we would lose information in git streams.
             return
 
-        if self.stop_on_empty_queue[channel]:
-            # make sure, we don't add new one
-            return
+        self.channel_lock[channel].acquire()
 
-        self.message_id += 1
+        try:
+            if self.channel_closed[channel]:
+                # make sure, we don't add new one
+                self.logger.debug('Warning: channel %s got message although closed: %s' % (channel, str(data)[:150]))
+                return
 
-        message = {}
-        message['_id'] = self.message_id
+            if self.stop_on_empty_queue[channel]:
+                # make sure, we don't add new one
+                self.logger.debug('Warning: channel %s got message although requested to stop: %s'
+                                  % (channel, str(data)[:150]))
+                return
 
-        if 'type' in data:
-            message['type'] = data['type']
+            self.message_id += 1
 
-        if 'path' in data:
-            message['path'] = data['path']
+            message = {}
+            message['_id'] = self.message_id
 
-        message['_data'] = msgpack.packb(data, default=invalid_json_values)
-        message['_total'] = len(message['_data'])
-        message['_bytes_sent'] = 0
-        message['_sending'] = False
-        message['_sent'] = False
+            if 'type' in data:
+                message['type'] = data['type']
 
-        if important:
-            self.queues[channel].insert(0, message)
-        else:
-            self.queues[channel].append(message)
+            if 'path' in data:
+                message['path'] = data['path']
+
+            if 'type' in data and data['type'] == 'git-unpack-objects':
+                # extract to send it to the UI, to display what is currently being uploaded
+                message['objects'] = data['objects']
+                del data['objects']
+
+            message['_data'] = msgpack.packb(data, default=invalid_json_values)
+            message['_total'] = len(message['_data'])
+            message['_bytes_sent'] = 0
+            message['_sending'] = False
+            message['_sent'] = False
+
+            if important:
+                self.queues[channel].insert(0, message)
+            else:
+                self.queues[channel].append(message)
+
+        finally:
+            self.channel_lock[channel].release()
 
     def send_message(self, message, channel):
         """
@@ -666,7 +713,7 @@ class BackendClient:
             self.connection_error(channel, error)
             raise
 
-        if chunk == '':
+        if chunk == b'':
             # socket connection broken
             self.connection_error(channel, 'Connection broken')
             return None

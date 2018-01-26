@@ -50,6 +50,7 @@ class Git:
 
         self.command_lock = Lock()
         self.stream_files_lock = Lock()
+        self.index_lock = Lock()
         self.debug = False
         self.last_push_time = 0
         self.active_push = False
@@ -118,8 +119,9 @@ class Git:
         self.origin_url = self.get_remote_url('origin')
 
         if self.origin_url and self.git_url not in self.origin_url:
-            logger.warning("It seems you switched between aetros.com and an on-premise installation or updated aetros.yml:host. " \
-                           "Given git_path (%s) points to a repository (%s) that is not the git repo of the model (%s). " \
+            logger.warning("It seems you switched between aetros.com and an on-premise installation or updated host " \
+                           "in your home configuration Given git_path (%s) points to a repository (%s) that is not "
+                           "the git repo of the model (%s). " \
                            "We updated the remote origin automatically." \
                             % (self.git_path, self.origin_url, self.git_url))
 
@@ -144,6 +146,7 @@ class Git:
     def env(self):
         my_env = os.environ.copy()
         if self.index_path:
+            # todo, shouldn't it be the same as master's?
             my_env['GIT_INDEX_FILE'] = self.index_path
 
         # my_env['GIT_SSH'] = os.getenv('GIT_SSH', '')
@@ -278,6 +281,10 @@ class Git:
         is not locked and empty. Git.fetch_job uses `git read-tree` to updates this index. For new jobs, we start
         with an empty index - that's why we delete it every time.
         """
+        if os.getenv('AETROS_GIT_INDEX_FILE'):
+            self.index_path = os.getenv('AETROS_GIT_INDEX_FILE')
+            return
+
         import tempfile
         h, path = tempfile.mkstemp('aetros-git')
 
@@ -328,7 +335,7 @@ class Git:
         """
         self.job_id = job_id
 
-        self.git_last_commit = self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
+        self.git_last_commit = self.get_head_commit()
         self.logger.debug('Job ref points to ' + self.git_last_commit)
         self.command_exec(['read-tree', self.ref_head])
 
@@ -502,6 +509,7 @@ class Git:
 
             def __enter__(self):
                 self.git.git_batch_commit = True
+
                 if self.git.job_id:
                     # make sure we're always on the tip tree
                     self.git.read_tree(self.git.ref_head)
@@ -660,6 +668,23 @@ class Git:
     def commit_json_file(self, message, path, content):
         return self.commit_file(message, path + '.json', simplejson.dumps(content, default=invalid_json_values))
 
+    def lock_write(self):
+        class Controller():
+            def __init__(self, git):
+                self.git = git
+
+            def __enter__(self):
+                self.git.index_lock.acquire()
+
+                if self.git.job_id:
+                    # make sure we're always on the tip tree
+                    self.git.read_tree(self.git.ref_head)
+
+            def __exit__(self, type, value, traceback):
+                self.git.index_lock.release()
+
+        return Controller(self)
+
     def add_file(self, path, content):
         """
         Add a new file as blob in the storage and add its tree entry into the index.
@@ -704,17 +729,19 @@ class Git:
 
             return self.commit_index(message)
         else:
-            self.add_file(path, content)
-            self.git_batch_commit_messages.append(message)
+            with self.lock_write():
+                self.add_file(path, content)
+                self.git_batch_commit_messages.append(message)
 
-    def push(self, return_object_sha=False):
+    def diff_objects(self):
         """
-        Push all changes to origin, based on objects, not on commits.
-        Important: Call this push after every new commit, or we lose commits.
-        """
+                Push all changes to origin, based on objects, not on commits.
+                Important: Call this push after every new commit, or we lose commits.
+                """
         base = ['git', '--bare', '--git-dir', self.git_path]
 
         object_shas = []
+        objects = {'commits': [], 'trees': [], 'files': []}
 
         def read_parents_and_tree_from(commit):
             object_content = subprocess.check_output(base + ['cat-file', '-p', commit]).decode('utf-8').strip()
@@ -730,14 +757,25 @@ class Git:
 
         def collect_files_from_commit(commit):
             if commit in self.synced_object_shas:
+                # this commit has already been synced
                 return
 
+            object_shas.append(commit)
+            objects['commits'].append(commit)
             parents, tree = read_parents_and_tree_from(commit)
+
+            if tree in self.synced_object_shas:
+                # we have exactly this tree already synced, meaning all its objects as well
+                return
+
+            object_shas.append(tree)
+            objects['trees'].append(tree)
 
             for parent in parents:
                 collect_files_from_commit(parent)
 
-            object_content = subprocess.check_output(base + ['ls-tree', '-r', tree]).decode('utf-8').strip()
+            object_content = subprocess.check_output(base + ['ls-tree', '-r', '-t', tree]).decode('utf-8').strip()
+
             for line in object_content.splitlines():
                 exploded = line.split(' ')
 
@@ -751,19 +789,22 @@ class Git:
                     # we pushed that object already.
                     continue
 
-                object_shas.append(str(exploded[2][:40]))
+                blob = str(exploded[2][:40])
+                object_shas.append(blob)
+                objects['files'].append(blob)
 
-        git_last_commit = self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
+        git_last_commit = self.get_head_commit()
         collect_files_from_commit(git_last_commit)
 
         if self.initial_push_done:
-            missing_object_sha = '\n'.join(object_shas)
+            # we already synced once, so we believe our internal state about what objects have been sent already
+            return object_shas, objects
         else:
             ssh_stream = create_ssh_stream(read_home_config())
-
+            self.logger.debug("warning: Call server git-cat-file-check for object diff calculation")
             shas_to_check = [self.git_last_commit, self.git_last_tree] + object_shas
             channel = ssh_stream.get_transport().open_session()
-            channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git', ))
+            channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
             channel.sendall('\n'.join(shas_to_check))
             channel.shutdown_write()
 
@@ -780,24 +821,41 @@ class Git:
 
                 return content
 
-            missing_object_sha = readall(channel)
+            self.initial_push_done = True
+            missing_objects = readall(channel).decode('utf-8').splitlines()
 
-        missing_object_sha = missing_object_sha.decode('utf-8').strip()
+            # make sure we have in objects only SHAs we actually will sync
+            for type in six.iterkeys(objects):
+                ids = objects[type][:]
+                for sha in ids:
+                    if sha not in missing_objects:
+                        objects[type].remove(sha)
 
-        if return_object_sha:
-            return missing_object_sha.split('\n')
+            return missing_objects, objects
+
+    def get_head_commit(self):
+        return self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
+
+    def push(self):
+        missing_object_sha, objects = self.diff_objects()
+        base = ['git', '--bare', '--git-dir', self.git_path]
 
         if missing_object_sha:
-            for line in missing_object_sha.splitlines():
+            for line in missing_object_sha:
                 self.synced_object_shas[line] = True
 
             pack_process = subprocess.Popen(base + ['pack-objects', '--stdout'], stderr=subprocess.PIPE,
                                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-            pack_content, stderr = pack_process.communicate(missing_object_sha)
+            pack_content, stderr = pack_process.communicate(('\n'.join(missing_object_sha)).encode())
 
-            self.client.send(
-                {'type': 'git-unpack-objects', 'pack': pack_content, 'ref': self.ref_head, 'commit': self.git_last_commit},
-                'files')
+            message = {
+                'type': 'git-unpack-objects',
+                'pack': pack_content,
+                'ref': self.ref_head,
+                'objects': objects,
+                'commit': self.git_last_commit
+            }
+            self.client.send(message, 'files')
 
     def commit_index(self, message):
         """

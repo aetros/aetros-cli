@@ -103,17 +103,21 @@ class MonitoringThread(Thread):
 
         while self.running:
             self.handle_early_stop()
-            self.sync_monitor()
-
-            if self.job_backend.is_paused:
-                time.sleep(1)
-                continue
-
-            if self.job_backend.ended:
-                time.sleep(1)
-                continue
 
             self.job_backend.git.store_file('aetros/job/times/elapsed.json', simplejson.dumps(time.time() - self.started))
+
+            if self.job_backend.is_paused:
+                # when paused, we do not monitor anything, except elapsed.
+                time.sleep(1)
+                continue
+
+            # always sent network information even when marked as ended. The real end will tear down this thread.
+            self.network_sync()
+
+            if self.job_backend.ended:
+                # stop hardware monitoring when ended
+                time.sleep(1)
+                continue
 
             if self.docker_container:
                 if docker_reader and self.docker_last_last_reponse and time.time()-self.docker_last_stream_data > 3:
@@ -146,7 +150,7 @@ class MonitoringThread(Thread):
                 self.job_backend.logger.warning("Max time of "+str(self.max_minutes)+" minutes reached.")
                 self.job_backend.early_stop()
 
-    def sync_monitor(self):
+    def network_sync(self):
         if self.job_backend.client.write_speeds:
             average_speed = 0
 
@@ -161,6 +165,7 @@ class MonitoringThread(Thread):
                 'channels': {},
                 'messages': 0,
                 'files': {},
+                'git': [],
                 'sent': 0,
                 'total': 0,
             }
@@ -170,6 +175,19 @@ class MonitoringThread(Thread):
                 network['messages'] += len(messages)
 
                 for message in messages:
+                    if 'type' in message and message['type'] == 'git-unpack-objects':
+                        bytes_sent = message['_bytes_sent']
+                        total = message['_total']
+
+                        network['total'] += total
+                        network['sent'] += bytes_sent
+
+                        network['git'].append({
+                            'sent': bytes_sent,
+                            'total': total,
+                            'objects': message['objects']
+                        })
+
                     if 'type' in message and message['type'] == 'store-blob':
                         bytes_sent = message['_bytes_sent']
                         total = message['_total']

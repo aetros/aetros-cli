@@ -29,6 +29,10 @@ def stop_time(title=''):
     sys.__stdout__.write("STOP_TIME: " + str(time.time()-start_time) + "s - diff: "+diff+"  - " +title+ "\n")
 
 
+def is_debug():
+    return os.getenv('DEBUG') == '1' or os.getenv('DEBUG') == '2'
+
+
 def get_logger(name=''):
 
     import coloredlogs
@@ -36,7 +40,7 @@ def get_logger(name=''):
 
     level = 'INFO'
     fmt = '%(message)s'
-    if os.getenv('DEBUG') == '1':
+    if is_debug():
         level = 'DEBUG'
         fmt = coloredlogs.DEFAULT_LOG_FORMAT
 
@@ -60,20 +64,22 @@ def loading_text(label='Loading ... '):
     def display_thread(state):
         try:
             while state['active']:
-                sys.stdout.write(spinner.next())
+                sys.stdout.write(spinner.__next__())
                 sys.stdout.flush()
-                time.sleep(0.1)
+                time.sleep(0.05)
                 sys.stdout.write('\b')
         except (KeyboardInterrupt, SystemExit):
             return
 
-    thread = Thread(target=display_thread, args=[state])
-    thread.daemon = True
-    thread.start()
+    thread = None
+    if not is_debug():
+        thread = Thread(target=display_thread, args=[state])
+        thread.daemon = True
+        thread.start()
 
     def stop(done_label="done."):
         state['active'] = False
-        thread.join()
+        thread and thread.join()
         sys.stdout.write(done_label + '\n')
         sys.stdout.flush()
 
@@ -294,12 +300,12 @@ def read_home_config(path = None, logger=None):
     http = 'https://'
     host = ''
 
-    if config['https_port'] != 80:
+    if config['https_port'] != 443:
         host = config['host'] + ':' + str(config['https_port'])
 
     if not config['ssl']:
         http = 'http://'
-        if config['http_port'] != 443:
+        if config['http_port'] != 80:
             host = config['host'] + ':' + str(config['http_port'])
 
     config['url'] = http + host

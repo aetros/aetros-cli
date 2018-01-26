@@ -59,6 +59,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     env['AETROS_MODEL_NAME'] = job_backend.model_name
     env['AETROS_JOB_ID'] = str(job_backend.job_id)
     env['AETROS_OFFLINE'] = '1' if offline else ''
+    env['AETROS_GIT_INDEX_FILE'] = job_backend.git.index_path
     env['DEBUG'] = os.getenv('DEBUG', '')
     env['PYTHONUNBUFFERED'] = os.getenv('PYTHONUNBUFFERED', '1')
     env['AETROS_ATTY'] = '1'

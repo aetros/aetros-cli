@@ -27,8 +27,9 @@ command_summaries = [
     ['add', 'Adds a local file to a job tree.'],
     ['init', 'Creates a new model and places a aetros.yml in current working (or specified) directory.'],
     ['id', 'Shows under which account the machine is authenticated.'],
-    ['gpu', 'Shows information about installed GPUs'],
+    ['gpu', 'Shows information about installed GPUs.'],
 ]
+
 
 def parseopts(args):
     if len(args) == 0:
