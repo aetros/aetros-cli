@@ -112,7 +112,7 @@ class StartCommand:
 
             raise
 
-        print("Job %s/%s created." % (model_name, created['id']))
+        self.logger.info("Job %s/%s created." % (model_name, created['id']))
 
         if parsed_args.local:
             cpus = job_config['resources']['cpu']

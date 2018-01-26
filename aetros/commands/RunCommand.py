@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from __future__ import absolute_import
 from __future__ import print_function
 import argparse
@@ -7,15 +9,16 @@ import sys
 import os
 
 import six
+import time
 
 import aetros.utils.git
 from aetros.logger import GeneralLogger
 
-from aetros.starter import start
+from aetros.starter import start_command
 
 from aetros.backend import JobBackend
-from aetros import api
-from aetros.utils import read_config, human_size, lose_parameters_to_full, extract_parameters, stop_time, find_config
+from aetros.utils import read_config, human_size, lose_parameters_to_full, extract_parameters, stop_time, find_config, \
+    loading_text, read_home_config
 
 
 class RunCommand:
@@ -45,6 +48,8 @@ class RunCommand:
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job. Docker only.")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU. Docker only.")
 
+        parser.add_argument('--offline', help="Whether the execution should happen offline.")
+
         parser.add_argument('--rebuild-image', action='store_true', help="Makes sure the Docker image is re-built without cache.")
 
         parser.add_argument('--max-time', help="Limit execution time in seconds. Sends SIGINT to the process group when reached.")
@@ -60,6 +65,7 @@ class RunCommand:
         parsed_args = parser.parse_args(args)
 
         config = find_config(parsed_args.config)
+        home_config = read_home_config()
 
         if config['model'] and not parsed_args.model:
             parsed_args.model = config['model']
@@ -82,16 +88,19 @@ class RunCommand:
             self.logger.error('No command given. Define the command in aetros.yml or use command argument.')
             sys.exit(1)
 
-        job = JobBackend(parsed_args.model, self.logger)
+        job_backend = JobBackend(parsed_args.model, self.logger)
+
         ignore = []
         if 'ignore' in config:
             ignore = config['ignore']
-        job.job = {'config': {'ignore': ignore}}
+        job_backend.job = {'config': {'ignore': ignore}}
 
-        files_added, size_added = job.add_files(os.getcwd(), report=False)
+        adding_files = loading_text("- Adding job files to index ... ")
+        files_added, size_added = job_backend.add_files(os.getcwd(), report=False)
+        adding_files("done with %d file%s added (%s)."
+                     % (files_added, 's' if files_added != 1 else '', human_size(size_added, 2)))
 
-        print("%d files added (%s)" % (files_added, human_size(size_added, 2)))
-
+        creating_git_job = loading_text("- Create job in local Git ... ")
         create_info = {
             'type': 'custom',
             'config': config
@@ -173,18 +182,46 @@ class RunCommand:
                 'commit': aetros.utils.git.get_current_commit_hash(),
             }
 
-        job_id = job.create(create_info=create_info, server=None)
-        tasks = []
+        job_backend.create(create_info=create_info, server=None)
+        creating_git_job("created %s in %s." % (job_backend.job_id[0:9], job_backend.model_name))
 
-        if 'tasks' in config:
-            for name, task_config in six.iteritems(config['tasks']):
-                replica = 1
-                if 'replica' in task_config:
-                    replica = int(task_config['replica'])
-                for index in range(0, replica):
-                    tasks.append(job.create_task(job_id, task_config, name, index))
+        # tasks = []
+        #
+        # if 'tasks' in config:
+        #     for name, task_config in six.iteritems(config['tasks']):
+        #         replica = 1
+        #         if 'replica' in task_config:
+        #             replica = int(task_config['replica'])
+        #         for index in range(0, replica):
+        #             tasks.append(job_backend.create_task(job_id, task_config, name, index))
 
-        print("Job %s/%s created." % (job.model_name, job.job_id))
+        if parsed_args.offline:
+            if not parsed_args.local:
+                self.logger.warning("Can not create a remote job in offline mode.")
+                sys.exit(1)
+
+            self.logger.warning("Execution started offline.")
+        else:
+            job_backend.client.configure(job_backend.model_name, job_backend.job_id, job_backend.name)
+
+            adding_files = loading_text("- Connecting to "+home_config['host']+" ... ")
+            if job_backend.connect():
+                adding_files("connected.")
+            else:
+                parsed_args.offline = True
+                adding_files("failed.")
+
+        uploading_job_data = loading_text("- Uploading job data ... ")
+        job_backend.git.push()
+
+        # todo, wait until all messages sent in client
+        job_backend.client.wait_until_queue_empty('files')
+
+        uploading_job_data()
+        link = "%s/model/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
+        sys.stdout.write(u" ➤ Monitor job at %s\n" % (link))
+
+        job_backend.start(collect_system=False, offline=parsed_args.offline, push=False)
 
         if parsed_args.local:
             cpus = create_info['config']['resources']['cpu']
@@ -196,13 +233,14 @@ class RunCommand:
                 for i in range(0, create_info['config']['resources']['gpu']):
                     parsed_args.gpu_device.append(i)
 
-            start(self.logger, job.model_name + '/' + job.job_id, fetch=False, env=env, volumes=parsed_args.volume, cpus=cpus, memory=memory, gpu_devices=parsed_args.gpu_device)
+            start_command(self.logger, job_backend, env, parsed_args.volume, cpus=cpus, memory=memory, gpu_devices=parsed_args.gpu_device,
+                offline=parsed_args.offline)
 
         else:
             if parsed_args.volume:
                 print("Can not use volume with jobs on the cluster. Use datasets instead.")
                 sys.exit(1)
 
-            #todo, make it visible
-            job.git.push()
-            print("Open http://%s/model/%s/job/%s to monitor it." % (job.host, job.model_name, job.job_id))
+            # todo, make it visible
+            job_backend.git.push()
+            print("Open http://%s/model/%s/job/%s to monitor it." % (job_backend.host, job_backend.model_name, job_backend.job_id))

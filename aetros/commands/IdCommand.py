@@ -3,8 +3,10 @@ from __future__ import print_function
 import argparse
 
 import six
+import sys
+
 from aetros import api
-from aetros.utils import read_home_config
+from aetros.utils import read_home_config, KeyNotConfiguredException
 
 
 class IdCommand:
@@ -23,7 +25,12 @@ class IdCommand:
         parsed_args = parser.parse_args(args)
         config = read_home_config()
 
-        user = api.user()
+
+        try:
+            user = api.user()
+        except KeyNotConfiguredException as e:
+            self.logger.error(str(e))
+            sys.exit(1)
 
         print("Logged in as %s (%s) on %s" % (user['username'], user['name'], config['host']))
 

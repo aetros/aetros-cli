@@ -12,7 +12,7 @@ import sys
 from ruamel import yaml
 
 from aetros.api import ApiConnectionError
-from aetros.utils import invalid_json_values, setup_git_ssh
+from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config
 
 
 class GitCommandException(Exception):
@@ -35,7 +35,7 @@ class Git:
     If created in AETROS Trainer, we retrieve the initial configuration of the job using `git pull origin refs/aetros/job/<id>` and read
     its `aetros/job.json` blob of the head tree.
     """
-    def __init__(self, logger, client, config, model_name):
+    def __init__(self, logger, client, config, model_name, is_master):
         self.logger = logger
         self.client = client
 
@@ -44,6 +44,7 @@ class Git:
         self.storage_dir = config['storage_dir']
 
         self.model_name = model_name
+        self.is_master = is_master
 
         self.git_path = os.path.normpath(self.storage_dir + '/' + model_name + '.git')
 
@@ -58,14 +59,17 @@ class Git:
         self.dirty = False
 
         self.job_id = None
-        self.online = True
         self.active_thread = False
         self.thread_push_instance = None
+
+        self.initial_push_done = False
+        self.synced_object_shas = {}
 
         self.git_batch_commit = False
 
         self.git_batch_commit_messages = []
         self.git_last_commit = None
+        self.git_last_tree = None
 
         self.keep_stream_files = False
 
@@ -74,11 +78,23 @@ class Git:
 
         self.prepare_index_file()
 
-        if subprocess.Popen(['git', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait() > 0:
-            raise Exception("Git binary not available. Please install Git v2 first.")
+        git_not_found = 'Git binary not available. Please install Git >= 2.3.0 first and make it available in $PATH.'
+        try:
+            if subprocess.Popen(['git', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait() > 0:
+                self.logger.error(git_not_found)
+                sys.exit(2)
+        except OSError:
+            self.logger.error(git_not_found)
+            sys.exit(2)
 
-        self.delete_git_ssh = setup_git_ssh(config)
-        self.logger.debug("GIT_SSH='" + str(os.getenv('GIT_SSH'))+"'")
+        if is_master:
+            self.active_thread = True
+            self.active_push = True
+
+            self.thread_push_instance = Thread(target=self.thread_push)
+            self.thread_push_instance.daemon = True
+            self.thread_push_instance.start()
+
         self.git_name = None
         self.git_email = None
 
@@ -113,27 +129,6 @@ class Git:
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
 
-    def prepare_git_user(self):
-        """
-        Tries to read the git name and email, so all git commits have correct author.
-        Requests /api/user-git to check which user is behind the current configured ssh key.
-        """
-        import aetros.api
-        try:
-            response = aetros.api.request('user-git')
-            if response:
-                user = yaml.safe_load(response)
-
-                self.git_name = user['name']
-                self.git_email = user['email']
-            else:
-                self.go_offline()
-        except OSError:
-            self.go_offline()
-        except ApiConnectionError as e:
-            self.go_offline()
-
-
     def get_remote_url(self, origin_name):
         output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip().split('\n')
 
@@ -151,7 +146,7 @@ class Git:
         if self.index_path:
             my_env['GIT_INDEX_FILE'] = self.index_path
 
-        my_env['GIT_SSH'] = os.getenv('GIT_SSH')
+        # my_env['GIT_SSH'] = os.getenv('GIT_SSH', '')
 
         return my_env
 
@@ -160,7 +155,7 @@ class Git:
             try:
                 time.sleep(1)
 
-                if self.job_id and self.online and self.active_push and self.dirty:
+                if self.job_id and self.active_push and self.dirty:
                     self.dirty = False
                     start = time.time()
                     self.command_exec(['push', '-f', 'origin', self.ref_head])
@@ -191,7 +186,7 @@ class Git:
 
         return ''.join(base_command)
 
-    def command_exec(self, command, inputdata=None, allowed_to_fail=False, show_output=False):
+    def command_exec(self, command, inputdata=None, allowed_to_fail=False, show_output=False, no_logging=False):
         interrupted = False
 
         if inputdata is not None and not isinstance(inputdata, six.binary_type):
@@ -211,19 +206,28 @@ class Git:
         try:
             self.command_lock.acquire()
 
-            p = subprocess.Popen(
-                command, bufsize=0,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
-            )
-            stdoutdata, stderrdata = p.communicate(inputdata)
+            if no_logging:
+                p = subprocess.Popen(command, bufsize=0, stdin=subprocess.PIPE, env=self.env)
+                p.communicate(inputdata)
+            else:
+                p = subprocess.Popen(
+                    command, bufsize=0,
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env
+                )
+                stdoutdata, stderrdata = p.communicate(inputdata)
 
-            if show_output:
-                if stdoutdata:
-                    sys.stdout.write(stdoutdata)
-                if stderrdata:
-                    sys.stderr.write(stderrdata)
-        except KeyboardInterrupt:
+                if show_output:
+                    if stdoutdata:
+                        sys.stdout.write(stdoutdata)
+                    if stderrdata:
+                        sys.stderr.write(stderrdata)
+        except (KeyboardInterrupt, SystemExit):
             raise
+        except TypeError as e:
+            self.logger.error("Could not execute Git command: " + str(command))
+            self.logger.error(str(self.env))
+            self.logger.error(str(e))
+            sys.exit(2)
         finally:
             if self.command_lock.locked():
                 self.command_lock.release()
@@ -256,7 +260,6 @@ class Git:
                 self.logger.warning("You have no permission to push to that model. Make sure your SSH key is properly"
                                     " configured.")
 
-            self.go_offline()
             self.logger.error(stderrdata)
             return '', 1, ''
 
@@ -268,15 +271,6 @@ class Git:
                                       +", input="+str(inputdata)[:50])
 
         return stdoutdata, p.returncode if p is not None else None, stderrdata
-
-    def go_offline(self):
-        """
-        Go offline means disable all online communication and just store the data in local git.
-        """
-        if self.client:
-            self.client.go_offline()
-
-        self.online = False
 
     def prepare_index_file(self):
         """
@@ -381,21 +375,21 @@ class Git:
     #     # of files checked out by start.py (custom models)
     #     self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
 
-    def create_task_id(self, job_id, data):
-        """
-        Creates a new task id and reference (refs/aetros/task/<id>) by creating a new commit with the same tree
-        as job_id's and added aetros/task.json file. As parent commit the job_id is used.
-        """
-        self.read_tree(job_id)
-        self.add_file('aetros/task.json', simplejson.dumps(data, indent=4))
-        tree_id = self.write_tree()
-
-        task_id = self.command_exec(['commit-tree', '-m', "TASK_CREATED", tree_id, '-p', job_id])[0].decode('utf-8').strip()
-
-        ref = 'refs/aetros/task/' + task_id
-        self.command_exec(['update-ref', ref, task_id])
-
-        return task_id
+    # def create_task_id(self, job_id, data):
+    #     """
+    #     Creates a new task id and reference (refs/aetros/task/<id>) by creating a new commit with the same tree
+    #     as job_id's and added aetros/task.json file. As parent commit the job_id is used.
+    #     """
+    #     self.read_tree(job_id)
+    #     self.add_file('aetros/task.json', simplejson.dumps(data, indent=4))
+    #     tree_id = self.write_tree()
+    #
+    #     task_id = self.command_exec(['commit-tree', '-m', "TASK_CREATED", tree_id, '-p', job_id])[0].decode('utf-8').strip()
+    #
+    #     ref = 'refs/aetros/task/' + task_id
+    #     self.command_exec(['update-ref', ref, task_id])
+    #
+    #     return task_id
 
     def create_job_id(self, data):
         """
@@ -424,23 +418,9 @@ class Git:
         # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
         # of files checked out by start.py (custom models)
         self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
-        self.dirty = True
 
+        # every caller needs to make sure to call git.push
         return self.job_id
-
-    def start(self):
-        """
-        Start the git push thread
-        """
-        if self.active_thread:
-            return
-
-        self.active_thread = True
-        self.active_push = True
-
-        self.thread_push_instance = Thread(target=self.thread_push)
-        self.thread_push_instance.daemon = True
-        self.thread_push_instance.start()
 
     def stop(self):
         """
@@ -499,17 +479,10 @@ class Git:
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
 
-        if self.delete_git_ssh:
-            if self.thread_push_instance and self.thread_push_instance.isAlive():
-                self.thread_push_instance.join()
-
-            self.delete_git_ssh()
-            self.delete_git_ssh = None
-
     def batch_commit(self, message):
         """
         Instead of committing a lot of small commits you can batch it together using this controller.
-        
+
         Example:
 
         with git.batch_commit('BATCHED'):
@@ -518,7 +491,7 @@ class Git:
 
         Withing the `with` block you can use group the method calls of `commit_file` and `commit_json_file`, and every other
         method calling this two methods.
-        
+
         :type message: str 
         :return: with controller to be used with Python's `with git.batch_commit():`
         """
@@ -588,7 +561,7 @@ class Git:
                     sys.stderr.write(traceback.format_exc()+'\n')
                     self.logger.error(e.__str__())
 
-            if self.online:
+            if self.client.online:
                 self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='' if fast_lane else 'files')
         finally:
             self.stream_files_lock.release()
@@ -659,7 +632,7 @@ class Git:
                 finally:
                     self.git.stream_files_lock.release()
 
-                if self.git.online:
+                if self.git.client.online:
                     self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data}, channel='' if fast_lane else 'files')
 
         return Stream(self)
@@ -680,7 +653,9 @@ class Git:
         Writes the current index into a new tree
         :return: the tree sha
         """
-        return self.command_exec(['write-tree'])[0].decode('utf-8').strip()
+        self.git_last_tree = self.command_exec(['write-tree'])[0].decode('utf-8').strip()
+
+        return self.git_last_tree
 
     def commit_json_file(self, message, path, content):
         return self.commit_file(message, path + '.json', simplejson.dumps(content, default=invalid_json_values))
@@ -732,20 +707,97 @@ class Git:
             self.add_file(path, content)
             self.git_batch_commit_messages.append(message)
 
-    def push(self):
+    def push(self, return_object_sha=False):
         """
-        Push all changes to origin
+        Push all changes to origin, based on objects, not on commits.
+        Important: Call this push after every new commit, or we lose commits.
         """
-        try:
-            self.command_exec(['push', 'origin', '-f', self.ref_head], show_output=True)
-            return True
-        except Exception as e:
-            # this may fail due to:
-            #     stderr: 'remote: error: cannot lock ref 'refs/aetros/job/cc3114813659d443c8e4f9682517067a1e9ec9ff':
-            #     is at 31785d1c126b24cabd1948cba2e126912393b8e6 but expected 3f7186391884bd097c09c31567ef49718fc271a5
-            #
-            self.logger.warning(str(e))
-            return False
+        base = ['git', '--bare', '--git-dir', self.git_path]
+
+        object_shas = []
+
+        def read_parents_and_tree_from(commit):
+            object_content = subprocess.check_output(base + ['cat-file', '-p', commit]).decode('utf-8').strip()
+            parents = []
+            tree = ''
+            for line in object_content.splitlines():
+                if line.startswith('tree '):
+                    tree = line[len('tree '):]
+                if line.startswith('parent '):
+                    parents.append(line[len('parent '):])
+
+            return parents, tree
+
+        def collect_files_from_commit(commit):
+            if commit in self.synced_object_shas:
+                return
+
+            parents, tree = read_parents_and_tree_from(commit)
+
+            for parent in parents:
+                collect_files_from_commit(parent)
+
+            object_content = subprocess.check_output(base + ['ls-tree', '-r', tree]).decode('utf-8').strip()
+            for line in object_content.splitlines():
+                exploded = line.split(' ')
+
+                if len(exploded) != 3:
+                    sys.stderr.write("Error: Wrong line format of ls-tree for %s: %s\n" % (self.git_last_tree, line,))
+                    sys.exit(1)
+
+                object_to_add = str(exploded[2][:40])
+
+                if object_to_add in self.synced_object_shas:
+                    # we pushed that object already.
+                    continue
+
+                object_shas.append(str(exploded[2][:40]))
+
+        git_last_commit = self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
+        collect_files_from_commit(git_last_commit)
+
+        if self.initial_push_done:
+            missing_object_sha = '\n'.join(object_shas)
+        else:
+            ssh_stream = create_ssh_stream(read_home_config())
+
+            shas_to_check = [self.git_last_commit, self.git_last_tree] + object_shas
+            channel = ssh_stream.get_transport().open_session()
+            channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git', ))
+            channel.sendall('\n'.join(shas_to_check))
+            channel.shutdown_write()
+
+            def readall(c):
+                content = b''
+                while True:
+                    try:
+                        chunk = c.recv(1024)
+                        if chunk == b'':
+                            break
+                        content += chunk
+                    except (KeyboardInterrupt, SystemExit):
+                        return
+
+                return content
+
+            missing_object_sha = readall(channel)
+
+        missing_object_sha = missing_object_sha.decode('utf-8').strip()
+
+        if return_object_sha:
+            return missing_object_sha.split('\n')
+
+        if missing_object_sha:
+            for line in missing_object_sha.splitlines():
+                self.synced_object_shas[line] = True
+
+            pack_process = subprocess.Popen(base + ['pack-objects', '--stdout'], stderr=subprocess.PIPE,
+                                            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            pack_content, stderr = pack_process.communicate(missing_object_sha)
+
+            self.client.send(
+                {'type': 'git-unpack-objects', 'pack': pack_content, 'ref': self.ref_head, 'commit': self.git_last_commit},
+                'files')
 
     def commit_index(self, message):
         """

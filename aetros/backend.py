@@ -28,7 +28,8 @@ from aetros.cuda_gpu import CudaNotImplementedException
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
-    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, create_ssh_stream
+    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, create_ssh_stream, \
+    get_logger
 from aetros.MonitorThread import MonitoringThread
 import subprocess
 
@@ -139,32 +140,12 @@ def context():
         job.load(os.getenv('AETROS_JOB_ID'))
     else:
         job.create()
+        job.git.push()
 
     job.start()
 
     return job
 
-
-def start_job(name=None):
-    """
-    Tries to load the job defined in the AETROS_JOB_ID environment variable.
-    If not defined, it creates a new job.
-    Starts the job as well.
-
-    :param name: string: model name
-    :return: JobBackend
-    """
-
-    job = JobBackend(name)
-
-    if os.getenv('AETROS_JOB_ID'):
-        job.load(os.getenv('AETROS_JOB_ID'))
-    else:
-        job.create()
-
-    job.start()
-
-    return job
 
 
 class JobLossChannel:
@@ -387,11 +368,7 @@ class JobBackend:
         self.monitoring_thread = None
 
         if not self.logger:
-            self.logger = logging.getLogger(os.getenv('AETROS_JOB_NAME', 'aetros-job'))
-            atty = None
-            if '1' == os.getenv('AETROS_ATTY'):
-                atty = True
-            coloredlogs.install(level=self.log_level, logger=self.logger, isatty=atty)
+            self.logger = get_logger(os.getenv('AETROS_JOB_NAME', 'aetros-job'))
 
         self.last_progress_call = None
         self.job_ids = []
@@ -419,7 +396,7 @@ class JobBackend:
         self.ensure_model_name()
         self.home_config = read_home_config()
         self.client = JobClient(self.home_config, self.event_listener, self.logger)
-        self.git = Git(self.logger, self.client, self.home_config, self.model_name)
+        self.git = Git(self.logger, self.client, self.home_config, self.model_name, self.is_master_process())
 
         self.logger.debug("Started tracking of job files in git %s for remote %s" % (self.git.git_path, self.git.origin_url))
 
@@ -436,7 +413,9 @@ class JobBackend:
 
     def section(self, title):
         title = title.replace("\t", "  ")
-        sys.stdout.write("\f" + title+ "\t" + str(time.time() - self.start_time) + "\n")
+        seconds = time.time() - self.start_time
+        line = "## %s\t%.2f\n" % (title, seconds)
+        sys.stdout.write(line)
         sys.stdout.flush()
 
     def on_registration_failed(self, params):
@@ -456,7 +435,7 @@ class JobBackend:
         if not self.registered:
             self.registered = True
             self.logger.debug('Git backend start')
-            self.git.start()
+            # self.git.start()
         else:
             self.logger.info("Successfully reconnected.")
 
@@ -500,7 +479,7 @@ class JobBackend:
             # return
 
         if self.is_master_process():
-            self.logger.warning('Received '+str(sig)+' signal. Send again to force stop. Stopping ...')
+            self.logger.warning('Received signal '+str(sig)+'. Send again to force stop. Stopping ...')
         else:
             sys.__stdout__.write("Got child signal " + str(sig) +"\n")
             sys.__stdout__.flush()
@@ -802,7 +781,10 @@ class JobBackend:
         """
         return JobChannel(self, name, traces, main, kpi, kpiTrace, max_optimization, type, xaxis, yaxis, layout)
 
-    def start(self, collect_system=True):
+    def connect(self):
+        return self.client.start(['', 'files'], wait=True)
+
+    def start(self, collect_system=True, offline=False, push=True):
         if self.started:
             raise Exception('Job was already started.')
 
@@ -824,13 +806,11 @@ class JobBackend:
         on_shutdown.started_jobs.append(self)
 
         self.client.configure(self.model_name, self.job_id, self.name)
-        self.git.prepare_git_user()
 
-        if self.client.online:
-            self.logger.debug('Job backend start')
+        if not offline:
             self.client.start(['', 'files'])
         else:
-            self.logger.debug('Job backend not started, since being online not detected.')
+            self.logger.debug('Job backend not started since offline.')
 
         if self.is_master_process():
             # this is the process that actually starts the job.
@@ -845,11 +825,8 @@ class JobBackend:
 
             # make sure we get the progress first, before monitoring sends elapses and
             # updates the job cache
-            if self.git.online:
+            if self.client.online and push:
                 self.git.push()
-
-            self.logger.info("Job %s/%s started." % (self.model_name, self.job_id))
-            self.logger.info("Open http://%s/model/%s/job/%s to monitor it." % (self.host, self.model_name, self.job_id))
 
             if collect_system:
                 self.start_monitoring()
@@ -1035,7 +1012,7 @@ class JobBackend:
             return
 
         if self.is_master_process():
-            self.section('end')
+            self.section('Ended')
 
         self.logger.debug("stop: " + str(progress))
 
@@ -1045,6 +1022,10 @@ class JobBackend:
         self.ended = True
         self.running = False
 
+        if self.is_master_process() and progress is not None:
+            # if not master process, the master process will set it
+            self.job_add_status('progress', progress)
+
         if self.client.online and not force_exit:
             if wait_for_client:
                 self.client.wait_sending_last_messages()
@@ -1052,16 +1033,6 @@ class JobBackend:
         # store all store_file and stream_file as blob
         self.logger.debug("Git stopping ...")
         self.git.stop()
-
-        was_online = self.client.online
-
-        if self.client.online and not force_exit:
-            # server stores now all store_file and stream_file as blob as well,
-            # wait for connection close to make sure server stored the files in server's git.
-            # This happens after self.client.wait_sending_last_message() because it makes sure,
-            # the server received all git streaming files.
-            self.logger.debug("client stopping ...")
-            self.client.end()
 
         self.client.close()
 
@@ -1078,21 +1049,25 @@ class JobBackend:
         if self.is_master_process():
             self.set_system_info('exit_code', exit_code)
 
-        # everything stopped. Server has all blobs, so we add the last progress
-        # and do last git push.
-        if self.is_master_process() and progress is not None:
-            # if not master process, the master process will set it
-            self.git.commit_file('STOP', 'aetros/job/status/progress.json', simplejson.dumps(progress, default=invalid_json_values))
+        # everything stopped. Server has all blobs, so we do last git push.
 
-        if not force_exit and was_online and self.is_master_process():
+        if not force_exit and self.client.online and self.is_master_process():
             # both sides should have same blobs, so we do now our final push
             self.logger.debug("git last push ...")
-            successful_push = self.git.push()
+            files_to_sync = self.git.push(return_object_sha=True)
 
-            if not successful_push:
+            if files_to_sync:
                 self.logger.warning("Not all job data have been uploaded.")
                 self.logger.warning("Please run following command to make sure your job is stored on the server.")
                 self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+
+        if self.client.online and not force_exit:
+            # server stores now all store_file and stream_file as blob as well,
+            # wait for connection close to make sure server stored the files in server's git.
+            # This happens after self.client.wait_sending_last_message() because it makes sure,
+            # the server received all git streaming files.
+            self.logger.debug("client stopping ...")
+            self.client.end()
 
         if self.is_master_process():
             # remove the index file
@@ -1136,8 +1111,6 @@ class JobBackend:
             if isinstance(sys.stderr, GeneralLogger):
                 self.git.commit_json_file('FAIL_MESSAGE_LAST_LOG', 'aetros/job/crash/last_message', sys.stderr.last_messages)
 
-        self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_FAILED)
-
         self.logger.debug('Crash report stored in commit ' + self.git.git_last_commit)
         self.stop(JOB_STATUS.PROGRESS_STATUS_FAILED, force_exit=force_exit)
 
@@ -1154,10 +1127,10 @@ class JobBackend:
         Set an arbitrary status, visible in the big wheel of the job view.
         """
         status = str(status)
+
         if add_section:
             self.section(status)
 
-        self.logger.info('Job status changed to %s ' % (status,))
         self.job_add_status('status', status)
 
     @property

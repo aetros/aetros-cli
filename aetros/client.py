@@ -83,9 +83,10 @@ class BackendClient:
         self.stop_on_empty_queue = {}
 
         self.lock = Lock()
+        self.channel_lock = {}
         self.connection_errors = 0
         self.connection_tries = 0
-        self.in_connecting = False
+        self.in_connecting = {}
         self.write_speeds = {}
         self.read_speeds = []
 
@@ -111,7 +112,11 @@ class BackendClient:
         # when connections breaks, we do not reconnect
         self.expect_close = True
 
-    def start(self, channels=None):
+    def start(self, channels=None, wait=False):
+        if self.active:
+            return
+
+        self.logger.debug('Client start')
         self.active = True
         prepend_signal_handler(signal.SIGINT, self.on_sigint)
 
@@ -130,9 +135,12 @@ class BackendClient:
 
             self.ssh_stream[channel] = None
             self.ssh_channel[channel] = None
-            self.was_connected_once[channel] = False
+            self.connected[channel] = None
+            self.was_connected_once[channel] = None
             self.stop_on_empty_queue[channel] = False
             self.write_speeds[channel] = []
+            self.channel_lock[channel] = Lock()
+            self.in_connecting[channel] = False
 
             self.thread_read_instances[channel] = Thread(target=self.thread_read, args=[channel])
             self.thread_read_instances[channel].daemon = True
@@ -141,6 +149,16 @@ class BackendClient:
             self.thread_write_instances[channel] = Thread(target=self.thread_write, args=[channel])
             self.thread_write_instances[channel].daemon = True
             self.thread_write_instances[channel].start()
+
+        if wait:
+            while True:
+                # check if all was_connected_once is not-None (True or False)
+                all_set = all(x is not None for x in six.itervalues(self.connected))
+                if all_set:
+                    # When all True then success, if not unsuccess
+                    return all(six.itervalues(self.connected))
+
+                time.sleep(0.1)
 
     def on_connect(self, reconnect, channel):
         pass
@@ -161,10 +179,10 @@ class BackendClient:
         if self.connection_tries > 10:
             time.sleep(15)
 
-        if self.in_connecting:
+        if self.in_connecting[channel]:
             return False
 
-        self.in_connecting = True
+        self.in_connecting[channel] = True
 
         self.logger.debug('[%s] Wanna connect ...' % (channel, ))
 
@@ -172,10 +190,10 @@ class BackendClient:
             if self.is_connected(channel) or not self.online:
                 return True
 
-            self.lock.acquire()
+            self.channel_lock[channel].acquire()
 
-            self.connected[channel] = False
-            self.registered[channel] = False
+            self.connected[channel] = None
+            self.registered[channel] = None
             self.ssh_stream[channel] = False
             self.ssh_channel[channel] = False
             self.write_speeds[channel] = []
@@ -191,24 +209,17 @@ class BackendClient:
 
                 self.ssh_channel[channel] = self.ssh_stream[channel].get_transport().open_session()
                 self.ssh_channel[channel].exec_command('stream')
-
-                # self.ssh_stream_stdins[channel],\
-                #     self.ssh_stream_stdouts[channel],\
-                #     stderr = self.ssh_stream[channel].exec_command('stream')
-            except Exception:
-                raise
             finally:
-                self.lock.release()
+                self.channel_lock[channel].release()
 
             if self.ssh_channel[channel]:
                 messages = self.wait_for_at_least_one_message(channel)
 
             if not messages:
                 stderrdata = self.ssh_channel[channel].recv_stderr().decode("utf-8").strip()
+                self.connected[channel] = False
             else:
                 self.logger.debug('[%s] opened and received %d messages' % (channel, len(messages)))
-
-
                 self.connected[channel] = True
                 self.registered[channel] = self.on_connect(self.was_connected_once[channel], channel)
 
@@ -246,7 +257,7 @@ class BackendClient:
         except Exception as error:
             self.connection_error(channel, error)
         finally:
-            self.in_connecting = False
+            self.in_connecting[channel] = False
 
         return self.is_connected(channel)
 
@@ -333,10 +344,10 @@ class BackendClient:
                             self.send_message(message, channel)
                             sent.append(message)
 
-                        self.lock.acquire()
+                        self.channel_lock[channel].acquire()
                         if message in self.queues[channel]:
                             self.queues[channel].remove(message)
-                        self.lock.release()
+                        self.channel_lock[channel].release()
 
                     except Exception as e:
                         self.logger.debug('[%s] Closed write thread: exception. %d messages left'
@@ -404,6 +415,9 @@ class BackendClient:
             raise
 
     def wait_sending_last_messages(self):
+        """
+        Requests all channels to close and waits for it.
+        """
         if self.active and self.online:
             self.logger.debug("client sends last %s messages ..."
                               % ([str(i) + ':' + str(len(x)) for i, x in six.iteritems(self.queues)],))
@@ -418,6 +432,30 @@ class BackendClient:
 
             # last is control channel
             self._end_channel('')
+
+    def wait_until_queue_empty(self, channel, report=True):
+
+        message = ''
+
+        while self.queues[channel]:
+            time.sleep(0.5)
+
+            size = len(self.write_speeds[channel])
+            if not size:
+                continue
+
+            sent = sum(m['_bytes_sent'] for m in self.queues[channel])
+            total = sum(m['_total'] for m in self.queues[channel])
+            speed = sum(self.write_speeds[channel]) / size
+
+            sys.__stdout__.write('\b' * len(message))
+
+            message = "[%s] Speed is at %.3f kb/s, %.3fkb of %.3fkb sent" % (
+                   channel, speed / 1024, sent / 1024, total / 1024)
+
+            sys.__stdout__.write(message)
+
+        sys.__stdout__.write('\b' * len(message))
 
     def wait_for_close(self):
         if not (self.active and self.online):
@@ -591,7 +629,7 @@ class BackendClient:
                 if len(self.read_speeds) > 20:
                     self.read_speeds = self.read_speeds[10:]
 
-                if chunk == '':
+                if chunk == b'':
                     # happens only when connection broke. If nothing is to be received, it hangs instead.
                     self.connection_error(channel, 'Connection broken w')
                     return False

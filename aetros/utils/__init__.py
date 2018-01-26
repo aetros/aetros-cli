@@ -1,11 +1,13 @@
 from __future__ import division
 from __future__ import absolute_import
 
+import logging
 import os
 import re
 import time
 import datetime
 import traceback
+from threading import Thread
 
 import numpy as np
 import signal
@@ -19,12 +21,63 @@ import subprocess
 start_time = time.time()
 last_time = None
 
+
 def stop_time(title=''):
     global last_time
     diff = ("{0:.10f}".format(time.time() - last_time)) if last_time is not None else ''
     last_time = time.time()
     sys.__stdout__.write("STOP_TIME: " + str(time.time()-start_time) + "s - diff: "+diff+"  - " +title+ "\n")
 
+
+def get_logger(name=''):
+
+    import coloredlogs
+    logger = logging.getLogger(name if name else 'aetros')
+
+    level = 'INFO'
+    fmt = '%(message)s'
+    if os.getenv('DEBUG') == '1':
+        level = 'DEBUG'
+        fmt = coloredlogs.DEFAULT_LOG_FORMAT
+
+    atty = None
+    if '1' == os.getenv('AETROS_ATTY'):
+        atty = True
+
+    coloredlogs.install(fmt=fmt, level=level, logger=logger, isatty=atty)
+
+    return logger
+
+
+def loading_text(label='Loading ... '):
+    import itertools, sys
+    spinner = itertools.cycle(['-', '/', '|', '\\'])
+    state = {'active': True}
+
+    sys.stdout.write(label)
+    sys.stdout.flush()
+
+    def display_thread(state):
+        try:
+            while state['active']:
+                sys.stdout.write(spinner.next())
+                sys.stdout.flush()
+                time.sleep(0.1)
+                sys.stdout.write('\b')
+        except (KeyboardInterrupt, SystemExit):
+            return
+
+    thread = Thread(target=display_thread, args=[state])
+    thread.daemon = True
+    thread.start()
+
+    def stop(done_label="done."):
+        state['active'] = False
+        thread.join()
+        sys.stdout.write(done_label + '\n')
+        sys.stdout.flush()
+
+    return stop
 
 def get_option(dict, key, default=None, type=None):
     if key not in dict or dict[key] == '':
@@ -104,6 +157,10 @@ def unpack_full_job_id(full_id):
     return [owner, model, id]
 
 
+class KeyNotConfiguredException(Exception):
+    pass
+
+
 def create_ssh_stream(config, exit_on_failure=True):
     ssh_stream = paramiko.client.SSHClient()
     # ssh_stream.load_system_host_keys()
@@ -117,7 +174,8 @@ def create_ssh_stream(config, exit_on_failure=True):
         key = paramiko.RSAKey.from_private_key(six.StringIO(config['ssh_key_base64']))
 
     if not key and not key_filename:
-        raise Exception("No SSH key configured for " + config['host'] + ". See https://aetros.com/docu/trainer/authentication")
+        raise KeyNotConfiguredException("No SSH key configured for " + config['host']
+                                        + ". See https://aetros.com/docu/trainer/authentication")
 
     key_description = key_filename if key_filename else 'from server'
 
@@ -234,6 +292,7 @@ def read_home_config(path = None, logger=None):
     config['storage_dir'] = os.path.abspath(os.path.expanduser(config['storage_dir']))
 
     http = 'https://'
+    host = ''
 
     if config['https_port'] != 80:
         host = config['host'] + ':' + str(config['https_port'])

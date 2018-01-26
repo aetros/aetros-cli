@@ -23,9 +23,9 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=1, memory=1, gpu_devices=None):
+def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=1, memory=1, gpu_devices=None, offline=False):
     """
-    Starts the training process with all logging of a job_id
+    Starts the job with all logging of a job_id
     """
 
     owner, name, id = unpack_full_job_id(full_id)
@@ -40,14 +40,15 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=1, memory=1,
         job_backend.fetch(id)
 
     job_backend.restart(id)
-    job_backend.start(collect_system=False)
-    job_backend.set_status('PREPARE')
+    job_backend.start(collect_system=False, offline=offline)
+    job_backend.set_status('PREPARE', add_section=False)
 
-    start_command(logger, job_backend, env, volumes, cpus=cpus, memory=memory, gpu_devices=gpu_devices)
+    start_command(logger, job_backend, env, volumes, cpus=cpus, memory=memory, gpu_devices=gpu_devices, offline=offline)
 
 
-def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1, memory=1, gpu_devices=None):
-    work_tree = job_backend.git.work_tree
+def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1, memory=1,
+                  gpu_devices=None, offline=False):
+
     home_config = read_home_config()
 
     env = {}
@@ -57,6 +58,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     start_time = time.time()
     env['AETROS_MODEL_NAME'] = job_backend.model_name
     env['AETROS_JOB_ID'] = str(job_backend.job_id)
+    env['AETROS_OFFLINE'] = '1' if offline else ''
     env['DEBUG'] = os.getenv('DEBUG', '')
     env['PYTHONUNBUFFERED'] = os.getenv('PYTHONUNBUFFERED', '1')
     env['AETROS_ATTY'] = '1'
@@ -109,7 +111,6 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
                         job_commands[k] = job_commands[k].replace('{{' + key + '}}', simplejson.dumps(value))
 
     job_backend.set_system_info('commands', job_commands)
-    logger.info("Switch working directory to " + work_tree)
     os.chdir(job_backend.git.work_tree)
 
     docker_image_built = False
@@ -223,7 +224,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     job_backend.on_force_exit = on_force_exit
 
     try:
-        job_backend.set_status('STARTED')
+        job_backend.set_status('STARTED', add_section=False)
         # logger.warning("$ %s " % (str(command),))
 
         # make sure maxTime limitation is correctly calculated
@@ -294,7 +295,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
         if isinstance(job_commands, list):
             command_stats = [{'rc': None, 'started': None, 'ended': None} for x in job_commands]
             for k, job_command in enumerate(job_commands):
-                job_backend.set_status('COMMAND #' + str(k))
+                job_backend.set_status('Command ' + str(k))
 
                 command_stats[k]['started'] = time.time() - start_time
                 job_backend.set_system_info('command_stats', command_stats, True)
@@ -319,7 +320,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
                 command_stats[name] = {'rc': None, 'started': None, 'ended': None}
 
             for name, job_command in six.iteritems(job_commands):
-                job_backend.set_status(name)
+                job_backend.set_status('Command ' + name)
 
                 command_stats[name]['started'] = time.time() - start_time
                 job_backend.set_system_info('command_stats', command_stats, True)
@@ -506,7 +507,7 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, cpus, memo
     if gpu_devices and (sys.platform == "linux" or sys.platform == "linux2"):
         # only supported on linux
         docker_command += ['--runtime', 'nvidia']
-        docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(str(x) for x in gpu_devices))]
+        docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(gpu_devices))]
         # support nvidia-docker1 as well
         # docker_command += ['--device', '/dev/nvidia1']
 

@@ -2,9 +2,6 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import sys
-import logging
-import os
-
 import aetros.const
 
 __version__ = const.__version__
@@ -112,17 +109,8 @@ def main(args=None):
         print(("Command %s not found" % (cmd_name,)))
         sys.exit(1)
 
-    level = 'INFO'
-    if '--debug' in args or os.getenv('DEBUG') == '1':
-        level = 'DEBUG'
-
-    atty = None
-    if '1' == os.getenv('AETROS_ATTY'):
-        atty = True
-
-    import coloredlogs
-    logger = logging.getLogger('aetros-'+cmd_name)
-    coloredlogs.install(level=level, logger=logger, isatty=atty)
+    from aetros.utils import get_logger
+    logger = get_logger('aetros-' + cmd_name)
     command = commands_dict[cmd_name](logger)
 
     code = command.main(cmd_args)

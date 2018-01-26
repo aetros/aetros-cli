@@ -132,10 +132,10 @@ class GeneralLogger(object):
             if b'' == message:
                 return
 
-            if hasattr(message, 'decode'):
-                # don't decode string again
-                # necessary for Python3
-                message = message.decode("utf-8", 'replace')
+            # if hasattr(message, 'decode'):
+            #     # don't decode string again
+            #     # necessary for Python3
+            #     message = message.decode("utf-8", 'replace')
 
             self.logger.write(message)
             self.logger.flush()
