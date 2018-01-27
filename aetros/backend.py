@@ -1056,8 +1056,9 @@ class JobBackend:
             self.client.send({'type': 'sync-blob'}, channel='')
             self.client.send({'type': 'sync-blob'}, channel='files')
 
-            self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process())
-            self.logger.debug("Queues empty now.")
+            sys.stdout.write("Uploading last job data ... ")
+            self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process(), clear_end=True)
+            self.logger.debug("Blobs remotely stored, build latest git pack now")
             # all further client.send calls won't be included in the final git push calculation
             # and might be sent again.
 
@@ -1068,15 +1069,29 @@ class JobBackend:
                 # master tracks what commits habe been sent already
                 self.git.push()
 
-            # send all last messages (mostly monitoring) and close write channel
+            # send all last messages and git pack
+            self.logger.debug("Last wait_until_queue_empty")
+            self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process(), clear_end=False)
+
+            # it's important to have it here, since its tracks not only hardware but also network speed
+            # for uploading last messages and Git.
+            # Also, after each message we get from this thread on the server, we check if the job
+            # should be ended/terminated or not.
+            if self.monitoring_thread:
+                self.monitoring_thread.stop()
+                self.monitoring_thread.join()
+
+            # send last monitoring stuff and close channels
             self.client.wait_sending_last_messages()
+
+            sys.stdout.write(" done.\n")
 
             # wait for end of client. Server will now close connection when ready.
             self.client.end()
 
             if self.is_master_process():
                 # check if we have uncommitet stuff
-                objects_to_sync = self.git.diff_objects()
+                objects_to_sync, types = self.git.diff_objects(self.git.get_head_commit())
 
                 if objects_to_sync:
                     self.logger.warning("Not all job data have been uploaded.")
@@ -1087,13 +1102,6 @@ class JobBackend:
             # remove the index file
             # non-master use the same as master, so master cleans up
             self.git.clean_up()
-
-        # it's important to have it here, since its tracks not only hardware but also network speed
-        # for uploading last messages and Git.
-        # Also, after each message we get from this thread on the server, we check if the job
-        # should be ended/terminated or not.
-        if self.monitoring_thread:
-            self.monitoring_thread.stop()
 
         # make sure client is really stopped
         self.client.close()
@@ -1565,8 +1573,6 @@ class JobBackend:
         blacklist = ['.git']
 
         def add_resursiv(path = '.', report=report):
-            self.logger.debug("add_resursiv " + path + ' => is ignored=' + str(is_ignored(path, self.config['ignore'])))
-
             if os.path.basename(path) in blacklist:
                 return 0, 0
 

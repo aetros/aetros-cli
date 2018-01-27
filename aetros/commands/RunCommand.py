@@ -185,6 +185,20 @@ class RunCommand:
         job_backend.create(create_info=create_info, server=None)
         creating_git_job("created %s in %s." % (job_backend.job_id[0:9], job_backend.model_name))
 
+        summary = "➤ Summary: Job running "
+        if parsed_args.local:
+            summary += 'locally'
+        else:
+            summary += 'remotely'
+
+        if create_info['config']['image']:
+            summary += ' in Docker using image %s with %d CPU cores, %d memory and %d GPUs.' \
+                       % (create_info['config']['image'], resources['cpu'], resources['memory'], resources['gpu'])
+        else:
+            summary += ' on host using all available resources.'
+
+        print(summary)
+
         # tasks = []
         #
         # if 'tasks' in config:
@@ -209,13 +223,13 @@ class RunCommand:
                 parsed_args.offline = True
                 adding_files("failed.")
 
-        uploading_job_data = loading_text("- Uploading job data ... ")
+        sys.stdout.write("- Uploading job data ... ")
+
         job_backend.git.push()
+        job_backend.client.wait_until_queue_empty(['files'], clear_end=False)
 
-        job_backend.client.wait_until_queue_empty(['files'])
-
-        uploading_job_data()
-        link = "%s/model/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
+        sys.stdout.write(" done.\n")
+        link = "%smodel/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
         sys.stdout.write(u"➤ Monitor job at %s\n" % (link))
 
         job_backend.start(collect_system=False, offline=parsed_args.offline, push=False)

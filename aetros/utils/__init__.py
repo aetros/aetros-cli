@@ -298,15 +298,15 @@ def read_home_config(path = None, logger=None):
     config['storage_dir'] = os.path.abspath(os.path.expanduser(config['storage_dir']))
 
     http = 'https://'
-    host = ''
+    host = config['host']
 
     if config['https_port'] != 443:
-        host = config['host'] + ':' + str(config['https_port'])
+        host += ':' + str(config['https_port'])
 
     if not config['ssl']:
         http = 'http://'
         if config['http_port'] != 80:
-            host = config['host'] + ':' + str(config['http_port'])
+            host += ':' + str(config['http_port'])
 
     config['url'] = http + host
 

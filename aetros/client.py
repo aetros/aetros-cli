@@ -439,51 +439,59 @@ class BackendClient:
     def is_channel_open(self, channel):
         return not self.channel_closed[channel]
 
-    def wait_until_queue_empty(self, channels, report=True):
+    def wait_until_queue_empty(self, channels, report=True, clear_end=True):
         """
         Waits until all queues of channels are empty.
         """
-        message = ''
+        state = {'message': ''}
 
         self.logger.debug("wait_until_queue_empty: report=%s %s"
                           % (str(report), str([channel+':'+str(len(self.queues[channel])) for channel in channels]), ))
+        queues = []
+        for channel in channels:
+            queues += self.queues[channel][:]
 
-        while True:
-            sent = 0
-            total = 0
-            speeds = []
-            all_empty = True
+        total = sum(m['_total'] for m in queues)
 
-            for channel in channels:
-                if len(self.queues[channel]) > 0:
-                    all_empty = False
-                    sent += sum(m['_bytes_sent'] for m in self.queues[channel])
-                    total += sum(m['_total'] for m in self.queues[channel])
+        def print_progress():
+            if report:
+                speeds = []
+                for channel in channels:
                     speeds += self.write_speeds[channel]
 
-            self.logger.debug("all_empty=%s" % (str(all_empty),))
+                self.logger.debug("all_empty=%s" % (str(all_empty),))
 
-            if len(speeds):
-                speed = sum(speeds) / len(speeds)
-            else:
-                speed = 0
+                if len(speeds):
+                    speed = sum(speeds) / len(speeds)
+                else:
+                    speed = 0
 
-            if report:
-                sys.__stdout__.write('\b' * len(message))
+                sys.__stdout__.write('\b' * len(state['message']))
+                sys.__stdout__.write("\033[K")
 
-                message = "Speed is at %.3f kb/s, %.3fkb of %.3fkb sent" \
-                          % (speed / 1024, sent / 1024, total / 1024)
+                sent = sum(m['_bytes_sent'] for m in queues)
 
-                sys.__stdout__.write(message)
+                state['message'] = "%.3f kB/s // %.3fkB of %.3fkB // %.2f%%" \
+                          % (speed / 1024, sent / 1024, total / 1024, sent / total * 100)
+
+                sys.__stdout__.write(state['message'])
                 sys.__stdout__.flush()
+
+        while True:
+            all_empty = all(m['_sent'] for m in queues)
+
+            print_progress()
 
             if all_empty:
                 break
 
-            time.sleep(0.5)
+            time.sleep(0.2)
 
-        if report:
-            sys.__stdout__.write('\b' * len(message))
+        print_progress()
+
+        if report and clear_end:
+            sys.__stdout__.write('\b' * len(state['message']))
+            sys.__stdout__.write("\033[K")
             sys.__stdout__.flush()
 
     def wait_for_close(self):
@@ -644,7 +652,8 @@ class BackendClient:
             return False
 
         finally:
-            self.write_speeds[channel] = []
+            pass
+            # self.write_speeds[channel] = []
 
     def handle_messages(self, messages):
         self.lock.acquire()

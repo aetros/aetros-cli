@@ -142,6 +142,9 @@ class MonitoringThread(Thread):
                 self.monitor(cpu_util, mem_util) #takes always at least 1sec, no need for sleep
                 time.sleep(0.01)
 
+        # thread requested to end. So queue last network sync update
+        self.network_sync()
+
     def handle_early_stop(self):
         if not self.early_stopped and self.handle_max_time and self.max_minutes > 0:
             minutes_run = (time.time() - self.handle_max_time_time) / 60
@@ -172,10 +175,15 @@ class MonitoringThread(Thread):
 
             for channel, messages in six.iteritems(self.job_backend.client.queues):
                 messages = messages[:]
-                network['messages'] += len(messages)
 
                 for message in messages:
-                    if 'type' in message and message['type'] == 'git-unpack-objects':
+                    if 'type' not in message:
+                        continue
+
+                    if message['type'] == 'store-blob' and message['path'] in ['aetros/job/network.json']:
+                        continue
+
+                    if message['type'] == 'git-unpack-objects':
                         bytes_sent = message['_bytes_sent']
                         total = message['_total']
 
@@ -187,8 +195,12 @@ class MonitoringThread(Thread):
                             'total': total,
                             'objects': message['objects']
                         })
+                        network['messages'] += 1
 
-                    if 'type' in message and message['type'] == 'store-blob':
+                    if message['type'] == 'store-blob':
+                        if message['path'].startswith('aetros/job/times'):
+                            continue
+
                         bytes_sent = message['_bytes_sent']
                         total = message['_total']
 
@@ -199,8 +211,9 @@ class MonitoringThread(Thread):
                             'total': total,
                         }
 
-            self.job_backend.git.store_file('aetros/job/network.json', simplejson.dumps(network))
+                        network['messages'] += 1
 
+            self.job_backend.git.store_file('aetros/job/network.json', simplejson.dumps(network))
 
     def monitor(self, cpu_util, mem_util):
         x = math.ceil(time.time()-self.handle_max_time_time)
