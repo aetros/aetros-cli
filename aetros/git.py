@@ -58,26 +58,23 @@ class Git:
         self.active_push = False
         self.index_path = None
 
-        # dirty means, the git repository has changed and need a push
-        self.dirty = False
-
         self.job_id = None
         self.active_thread = False
         self.thread_push_instance = None
 
-        self.initial_push_done = False
         self.synced_object_shas = {}
 
         self.git_batch_commit = False
 
         self.git_batch_commit_messages = []
-        self.git_last_commit = None
-        self.git_last_tree = None
 
         self.keep_stream_files = False
 
         self.streamed_files = {}
         self.store_files = {}
+
+        if not os.path.exists(self.temp_path):
+            os.makedirs(self.temp_path)
 
         self.prepare_index_file()
 
@@ -89,14 +86,6 @@ class Git:
         except OSError:
             self.logger.error(git_not_found)
             sys.exit(2)
-
-        if is_master:
-            self.active_thread = True
-            self.active_push = True
-
-            self.thread_push_instance = Thread(target=self.thread_push)
-            self.thread_push_instance.daemon = True
-            self.thread_push_instance.start()
 
         self.git_name = None
         self.git_email = None
@@ -130,8 +119,6 @@ class Git:
             self.command_exec(['remote', 'remove', 'origin'])
             self.command_exec(['remote', 'add', 'origin', self.git_url])
 
-        if not os.path.exists(self.temp_path):
-            os.makedirs(self.temp_path)
 
     def get_remote_url(self, origin_name):
         output = self.command_exec(['remote', '-v'], allowed_to_fail=True)[0].decode('utf-8').strip().split('\n')
@@ -154,21 +141,6 @@ class Git:
         # my_env['GIT_SSH'] = os.getenv('GIT_SSH', '')
 
         return my_env
-
-    def thread_push(self):
-        while self.active_thread:
-            try:
-                time.sleep(1)
-
-                if self.job_id and self.active_push and self.dirty:
-                    self.dirty = False
-                    self.push()
-            except GitCommandException:
-                pass
-            except SystemExit:
-                return
-            except KeyboardInterrupt:
-                return
 
     @property
     def temp_path(self):
@@ -286,7 +258,7 @@ class Git:
             return
 
         import tempfile
-        h, path = tempfile.mkstemp('aetros-git')
+        h, path = tempfile.mkstemp('aetros-git', '', self.temp_path)
 
         self.index_path = path
 
@@ -328,15 +300,15 @@ class Git:
 
     def read_job(self, job_id, checkout=False):
         """
-        Reads head and sets self.git_last_commit, reads the tree into index,
+        Reads head and reads the tree into index,
         and checkout the work-tree when checkout=True.
 
         This does not fetch the job from the actual server. It needs to be in the local git already.
         """
         self.job_id = job_id
 
-        self.git_last_commit = self.get_head_commit()
-        self.logger.debug('Job ref points to ' + self.git_last_commit)
+        commit = self.get_head_commit()
+        self.logger.debug('Job ref points to ' + commit)
         self.command_exec(['read-tree', self.ref_head])
 
         if checkout:
@@ -355,20 +327,18 @@ class Git:
 
     def read_tree(self, ref):
         """
-        Reads the ref into the current index and points last commit_id to its head.
+        Reads the ref into the current index.
 
         :param ref: the actual git reference
         :return:
         """
         self.command_exec(['read-tree', ref])
-        self.git_last_commit = self.command_exec(['rev-parse', ref])[0].decode('utf-8').strip()
 
     # def restart_job(self):
     #     if not self.job_id:
     #         raise Exception('Could not restart unknown job. fetch_job() it first.')
     #
     #     self.command_exec(['update-ref', self.ref_head, self.job_id])
-    #     self.dirty = True
     #
     #     self.command_exec(['read-tree', self.ref_head])
     #
@@ -408,13 +378,12 @@ class Git:
         tree_id = self.write_tree()
 
         self.job_id = self.command_exec(['commit-tree', '-m', "JOB_CREATED", tree_id])[0].decode('utf-8').strip()
-        self.git_last_commit = self.job_id
 
         out, code, err = self.command_exec(['show-ref', self.ref_head], allowed_to_fail=True)
         if not code:
             self.logger.warning("Generated job id already exists, because exact same experiment values given. Ref " + self.ref_head)
 
-        self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
+        self.command_exec(['update-ref', self.ref_head, self.job_id])
 
         # make sure we have checkedout all files we have added until now. Important for simple models, so we have the
         # actual model.py and dataset scripts.
@@ -428,6 +397,33 @@ class Git:
 
         # every caller needs to make sure to call git.push
         return self.job_id
+
+    def thread_push(self):
+        last_synced_head = self.get_head_commit()
+
+        while self.active_thread:
+            try:
+                if last_synced_head != self.get_head_commit():
+                    self.push()
+
+                time.sleep(0.5)
+            except GitCommandException:
+                pass
+            except SystemExit:
+                return
+            except KeyboardInterrupt:
+                return
+
+    def start_push_sync(self):
+        """
+        Starts the detection of unsynced Git data.
+        """
+        self.active_thread = True
+        self.active_push = True
+
+        self.thread_push_instance = Thread(target=self.thread_push)
+        self.thread_push_instance.daemon = True
+        self.thread_push_instance.start()
 
     def stop(self):
         """
@@ -661,9 +657,7 @@ class Git:
         Writes the current index into a new tree
         :return: the tree sha
         """
-        self.git_last_tree = self.command_exec(['write-tree'])[0].decode('utf-8').strip()
-
-        return self.git_last_tree
+        return self.command_exec(['write-tree'])[0].decode('utf-8').strip()
 
     def commit_json_file(self, message, path, content):
         return self.commit_file(message, path + '.json', simplejson.dumps(content, default=invalid_json_values))
@@ -779,8 +773,8 @@ class Git:
             for line in object_content.splitlines():
                 exploded = line.split(' ')
 
-                if len(exploded) != 3:
-                    sys.stderr.write("Error: Wrong line format of ls-tree for %s: %s\n" % (self.git_last_tree, line,))
+                if len(exploded) < 3:
+                    sys.stderr.write("Error: Wrong line format of ls-tree for %s: %s\n" % (tree, line,))
                     sys.exit(1)
 
                 object_to_add = str(exploded[2][:40])
@@ -795,55 +789,49 @@ class Git:
 
         collect_files_from_commit(commit_sha)
 
-        if self.initial_push_done:
-            for sha in object_shas:
-                self.synced_object_shas[sha] = True
+        ssh_stream = create_ssh_stream(read_home_config())
+        self.logger.debug("warning: Call server git-cat-file-check for object diff calculation")
+        shas_to_check = object_shas
 
-            # we already synced once, so we believe our internal state about what objects have been sent already
-            return object_shas, summary
-        else:
-            ssh_stream = create_ssh_stream(read_home_config())
-            self.logger.debug("warning: Call server git-cat-file-check for object diff calculation")
-            shas_to_check = object_shas
+        for sha in shas_to_check:
+            self.synced_object_shas[sha] = True
 
-            for sha in shas_to_check:
-                self.synced_object_shas[sha] = True
+        channel = ssh_stream.get_transport().open_session()
+        channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
+        channel.sendall('\n'.join(shas_to_check))
+        channel.shutdown_write()
 
-            channel = ssh_stream.get_transport().open_session()
-            channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
-            channel.sendall('\n'.join(shas_to_check))
-            channel.shutdown_write()
+        def readall(c):
+            content = b''
+            while True:
+                try:
+                    chunk = c.recv(1024)
+                    if chunk == b'':
+                        break
+                    content += chunk
+                except (KeyboardInterrupt, SystemExit):
+                    return
 
-            def readall(c):
-                content = b''
-                while True:
-                    try:
-                        chunk = c.recv(1024)
-                        if chunk == b'':
-                            break
-                        content += chunk
-                    except (KeyboardInterrupt, SystemExit):
-                        return
+            return content
 
-                return content
+        missing_objects = readall(channel).decode('utf-8').splitlines()
 
-            self.initial_push_done = True
-            missing_objects = readall(channel).decode('utf-8').splitlines()
+        # make sure we have in objects only SHAs we actually will sync
+        for type in six.iterkeys(summary):
+            ids = summary[type][:]
+            for sha in ids:
+                if sha not in missing_objects:
+                    summary[type].remove(sha)
 
-            # make sure we have in objects only SHAs we actually will sync
-            for type in six.iterkeys(summary):
-                ids = summary[type][:]
-                for sha in ids:
-                    if sha not in missing_objects:
-                        summary[type].remove(sha)
-
-            return missing_objects, summary
+        return missing_objects, summary
 
     def get_head_commit(self):
         return self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
 
     def push(self):
         self.push_lock.acquire()
+        self.logger.debug("Git push")
+
         try:
             commit_sha = self.get_head_commit()
             missing_object_sha, summary = self.diff_objects(commit_sha)
@@ -870,7 +858,6 @@ class Git:
                     raise
                 except Exception:
                     # next push we sync self.synced_object_shas with server again
-                    self.initial_push_done = False
                     self.synced_object_shas = {}
         finally:
             self.push_lock.release()
@@ -888,11 +875,10 @@ class Git:
         args = ['commit-tree', tree_id, '-p', self.ref_head]
 
         # todo, this can end in a race-condition with other processes adding commits
-        self.git_last_commit = self.command_exec(args, message)[0].decode('utf-8').strip()
-        self.command_exec(['update-ref', self.ref_head, self.git_last_commit])
-        self.dirty = True
+        commit = self.command_exec(args, message)[0].decode('utf-8').strip()
+        self.command_exec(['update-ref', self.ref_head, commit])
 
-        return self.git_last_commit
+        return commit
 
     def has_file(self, path):
         try:

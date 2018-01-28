@@ -213,7 +213,8 @@ class MonitoringThread(Thread):
 
                         network['messages'] += 1
 
-            self.job_backend.git.store_file('aetros/job/network.json', simplejson.dumps(network))
+            data = simplejson.dumps(network)
+            self.job_backend.client.send({'type': 'store-blob', 'path': 'aetros/job/network.json', 'data': data}, channel='')
 
     def monitor(self, cpu_util, mem_util):
         x = math.ceil(time.time()-self.handle_max_time_time)

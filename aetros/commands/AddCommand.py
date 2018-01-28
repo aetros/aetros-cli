@@ -52,6 +52,6 @@ class AddCommand:
                 id = git.commit_file(parsed_args.m or 'Added file', parsed_args.git_path or parsed_args.local_path, f.read())
 
                 self.logger.info('Successfully committed to ' + id + '.')
-                self.logger.info('Run "aetros push-job ' + parsed_args.id + '" to upload changes to AETROS.')
+                self.logger.info('Run "aetros job-push ' + git.job_id[0:9] + '" to upload changes to AETROS.')
         finally:
             git.clean_up()

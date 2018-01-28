@@ -188,12 +188,11 @@ def create_ssh_stream(config, exit_on_failure=True):
     try:
         ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=True, pkey=key)
         # ssh_stream.get_transport().window_size = 2147483647
-    except Exception as e:
-        if isinstance(e, paramiko.ssh_exception.AuthenticationException) or isinstance(e, paramiko.ssh_exception.SSHException):
-            if exit_on_failure:
-                print("Fatal: AETROS authentication against "+config['host']+" failed using key "+key_description+": "+str(e)+
-                      ". Did you setup SSH keys correctly? See https://aetros.com/docu/trainer/authentication")
-                sys.exit(1)
+    except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException):
+        if exit_on_failure:
+            print("Fatal: AETROS authentication against "+config['host']+" failed using key "+key_description+": "+str(e)+
+                  ". Did you setup SSH keys correctly? See https://aetros.com/docu/trainer/authentication")
+            sys.exit(1)
         raise
 
     return ssh_stream
@@ -637,14 +636,38 @@ def git_has_remote_job(home_config, model, job_id):
             return full_job_id
 
 
-def find_config(path = None, error_on_missing=False):
+def find_config(path = None, error_on_missing=False, return_default=True):
+    config = None
+
     if path:
         if os.path.exists(path):
-            return read_config(path)
+            config = read_config(path, return_default=False)
+            config['init_config_path'] = path
+
     else:
         path = find_config_path()
         if path:
-            return read_config(path)
+            config = read_config(path, return_default=False)
+            config['init_config_path'] = path
+
+    if config:
+        if 'import' in config and config['import']:
+            inherited_config = find_config(config['import'])
+
+            if inherited_config:
+                inherited_config.update(config)
+                config = inherited_config
+
+        if config['model']:
+            if 'init_config_path' in config:
+                config['working_dir'] = os.path.relpath(os.path.dirname(config['init_config_path']), config['root'])
+                config['configPath'] = os.path.relpath(config['init_config_path'], config['root'])
+                del config['init_config_path']
+
+            if return_default:
+                return apply_config_defaults(config)
+            else:
+                return config
 
     if error_on_missing:
         sys.stderr.write('Error: No AETROS Trainer model name given. Specify it in aetros.yml '
@@ -654,22 +677,23 @@ def find_config(path = None, error_on_missing=False):
     return {'model': None}
 
 
-def find_config_path():
-    path = os.path.abspath(os.getcwd())
+def find_config_path(dir = None):
+    if not dir:
+        dir = os.path.abspath(os.getcwd())
+
     while True:
-        if os.path.exists(path+'/aetros.yml'):
-            return path+'/aetros.yml'
+        if os.path.exists(dir+ '/aetros.yml'):
+            return dir + '/aetros.yml'
         else:
-            new_path = os.path.realpath(path + '/..')
-            if new_path == path:
+            new_path = os.path.realpath(dir + '/..')
+            if new_path == dir:
                 return None
-            path = new_path
+
+            dir = new_path
 
 
-def read_config(path = 'aetros.yml', logger=None):
-    path = os.path.normpath(os.path.expanduser(path))
-
-    config = {
+def apply_config_defaults(config):
+    defaults = {
         'model': None,
         'dockerfile': None,
         'command': None,
@@ -678,26 +702,41 @@ def read_config(path = 'aetros.yml', logger=None):
         'image': None,
         'server': None,
         'parameters': {},
+        'import': None,
+        'root': os.getcwd(),
+        'working_dir': None,
         'servers': None,
+        'configPath': None,
         'before_command': [],
     }
+
+    defaults.update(config)
+
+    return defaults
+
+
+def read_config(path='aetros.yml', logger=None, return_default=True):
+    path = os.path.normpath(os.path.abspath(os.path.expanduser(path)))
+
+    config = {}
 
     if os.path.exists(path):
         f = open(path, 'r')
 
-        custom_config = yaml.load(f, Loader=yaml.RoundTripLoader)
-        if custom_config is None:
-            custom_config = {}
+        config = yaml.load(f, Loader=yaml.RoundTripLoader)
+        if config is None:
+            config = {}
 
-        if 'storage_dir' in custom_config:
-            del custom_config['storage_dir']
+        if 'storage_dir' in config:
+            del config['storage_dir']
 
-        config.update(custom_config)
+        if 'model' in config and config['model']:
+            config['root'] = os.path.dirname(path)
 
         logger and logger.debug('Config loaded from ' + os.path.realpath(path))
 
-    if 'parameters' not in config:
-        config['parameters'] = {}
+    if return_default:
+        return apply_config_defaults(config)
 
     return config
 

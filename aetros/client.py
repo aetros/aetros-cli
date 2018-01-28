@@ -13,6 +13,7 @@ import simplejson
 import sys
 
 import six
+from paramiko.ssh_exception import NoValidConnectionsError
 
 from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream
 from threading import Thread, Lock
@@ -93,7 +94,7 @@ class BackendClient:
 
         # indicates whether we are offline or not, means not connected to the internet and
         # should not establish a connection to Aetros.
-        self.online = True
+        self.online = None
 
         # Whether the client is active and should do things.
         self.active = False
@@ -155,10 +156,13 @@ class BackendClient:
         if wait:
             while True:
                 # check if all was_connected_once is not-None (True or False)
-                all_set = all(x is not None for x in six.itervalues(self.connected))
+                all_set = all(x is not None for x in six.itervalues(self.registered))
                 if all_set:
                     # When all True then success, if not unsuccess
-                    return all(six.itervalues(self.connected))
+                    return all(six.itervalues(self.registered))
+
+                if self.online is False:
+                    return False
 
                 time.sleep(0.1)
 
@@ -166,7 +170,7 @@ class BackendClient:
         pass
 
     def go_offline(self):
-        if not self.online:
+        if self.online is False:
             return
 
         self.event_listener.fire('offline')
@@ -189,7 +193,7 @@ class BackendClient:
         self.logger.debug('[%s] Wanna connect ...' % (channel, ))
 
         try:
-            if self.is_connected(channel) or not self.online:
+            if self.is_connected(channel) or self.online is False:
                 return True
 
             self.channel_lock[channel].acquire()
@@ -211,6 +215,11 @@ class BackendClient:
 
                 self.ssh_channel[channel] = self.ssh_stream[channel].get_transport().open_session()
                 self.ssh_channel[channel].exec_command('stream')
+                self.online = True
+            except NoValidConnectionsError as e:
+                self.logger.debug("Failed, go offline: " + str(e))
+                self.online = False
+                return False
             finally:
                 self.channel_lock[channel].release()
 
@@ -305,7 +314,7 @@ class BackendClient:
             # python interpreter is already dying, so quit
             return
 
-        message = "Connection error"
+        message = "[%s] Connection error" % (channel,)
 
         if error:
             import traceback
@@ -327,7 +336,7 @@ class BackendClient:
 
     def thread_write(self, channel):
         while self.active:
-            if self.online:
+            if self.online is not False:
                 if self.is_connected(channel) and self.is_registered(channel) and self.queues[channel]:
                     message = self.queues[channel][0]
 
@@ -374,7 +383,7 @@ class BackendClient:
 
     def thread_read(self, channel):
         while self.active:
-            if self.online:
+            if self.online is not False:
                 if self.is_connected(channel) and self.is_registered(channel):
                     try:
                         # this blocks
@@ -421,9 +430,13 @@ class BackendClient:
         """
         Requests all channels to close and waits for it.
         """
-        if self.active and self.online:
+        if self.active and self.online is not False:
             self.logger.debug("client sends last %s messages ..."
                               % ([str(i) + ':' + str(len(x)) for i, x in six.iteritems(self.queues)],))
+
+            for channel, messages in six.iteritems(self.queues):
+                for idx, message in enumerate(messages):
+                    self.logger.debug("[%s] %d: %s" % (channel, idx, str(message)[0:120]))
 
             # send all missing messages
 
@@ -472,7 +485,7 @@ class BackendClient:
                 sent = sum(m['_bytes_sent'] for m in queues)
 
                 state['message'] = "%.3f kB/s // %.3fkB of %.3fkB // %.2f%%" \
-                          % (speed / 1024, sent / 1024, total / 1024, sent / total * 100)
+                          % (speed / 1024, sent / 1024, total / 1024, (sent / total * 100) if total else 0)
 
                 sys.__stdout__.write(state['message'])
                 sys.__stdout__.flush()
@@ -495,7 +508,7 @@ class BackendClient:
             sys.__stdout__.flush()
 
     def wait_for_close(self):
-        if not (self.active and self.online):
+        if not self.active or self.online is False:
             return
 
         self.active = False
@@ -527,7 +540,7 @@ class BackendClient:
             except (KeyboardInterrupt, SystemExit):
                 raise
 
-        if self.online:
+        if self.online is True:
             self.event_listener.fire('close')
 
         self.ssh_stream = {}
@@ -540,7 +553,7 @@ class BackendClient:
         return channel in self.registered and self.registered[channel]
 
     def send(self, data, channel='', important=False):
-        if not (self.active and self.online):
+        if not self.active or self.online is False:
             # It's important to queue anything when active and online
             # as we would lose information in git streams.
             return

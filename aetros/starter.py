@@ -153,6 +153,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     job_backend.on_continue = cont
 
     if docker_image:
+        env['AETROS_GIT_INDEX_FILE'] = '/aetros/' + job_backend.model_name + '.git/' + os.path.basename(env['AETROS_GIT_INDEX_FILE'])
+
         with job_backend.git.batch_commit('JOB_SYSTEM_INFORMATION'):
             aetros_environment = {'aetros_version': __version__, 'variables': env.copy()}
             if 'AETROS_SSH_KEY' in aetros_environment['variables']: del aetros_environment['variables']['AETROS_SSH_KEY']
@@ -256,6 +258,9 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             if not docker_image:
                 # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
                 f.write('export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI;\n')
+
+            if 'working_dir' in job_config and job_config['working_dir']:
+                f.write('cd %s;\n' % (job_config['working_dir'],))
 
             f.write(job_command)
             f.close()
@@ -417,8 +422,8 @@ def upload_output_files(job_backend, files):
 def docker_pull_image(logger, home_config, job_backend):
     image = job_backend.job['config']['image']
 
-    logger.info("Pull docker image: $ " + image)
     job_backend.set_status('IMAGE PULL')
+    logger.info("$ docker pull " + image)
 
     execute_command(args=[home_config['docker'], 'pull', image], bufsize=1, stderr=subprocess.PIPE,
         stdout=subprocess.PIPE)

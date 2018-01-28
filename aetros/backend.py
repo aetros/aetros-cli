@@ -9,13 +9,12 @@ import traceback
 from threading import Lock
 
 import collections
-import coloredlogs
-import logging
 
 import math
 import signal
 import time
 
+import numpy as np
 import simplejson
 import six
 import PIL.Image
@@ -28,7 +27,7 @@ from aetros.cuda_gpu import CudaNotImplementedException
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
-    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, create_ssh_stream, \
+    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, \
     get_logger
 from aetros.MonitorThread import MonitoringThread
 import subprocess
@@ -146,7 +145,8 @@ def context():
         job.create()
         if not offline:
             job.connect()
-            job.git.push()
+            if job.client.online:
+                job.git.push()
 
     job.start(offline=offline)
 
@@ -433,7 +433,7 @@ class JobBackend:
         if self.is_master_process():
             self.logger.warning("Could not establish a connection. We stopped automatic syncing.")
             self.logger.warning("You can publish later this job to AETROS Trainer by executing following command.")
-            self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+            self.logger.warning("$ aetros job-push " + self.job_id[0:9])
 
         self.git.online = False
 
@@ -485,8 +485,7 @@ class JobBackend:
         if self.is_master_process():
             self.logger.warning('Received signal '+str(sig)+'. Send again to force stop. Stopping ...')
         else:
-            sys.__stdout__.write("Got child signal " + str(sig) +"\n")
-            sys.__stdout__.flush()
+            self.logger.debug("Got child signal " + str(sig))
 
         self.stop_requested = True
 
@@ -813,7 +812,8 @@ class JobBackend:
         self.client.configure(self.model_name, self.job_id, self.name)
 
         if not offline:
-            self.client.start(['', 'files'])
+            # Marks client as active if not already. If not already starts to connect to the server
+            self.client.start(['', 'files'], wait=True)
         else:
             self.logger.debug('Job backend not started since offline.')
 
@@ -832,6 +832,7 @@ class JobBackend:
             # updates the job cache
             if not offline and self.client.online and push:
                 self.git.push()
+                self.git.start_push_sync()
 
             if collect_system:
                 self.start_monitoring()
@@ -1056,7 +1057,9 @@ class JobBackend:
             self.client.send({'type': 'sync-blob'}, channel='')
             self.client.send({'type': 'sync-blob'}, channel='files')
 
-            sys.stdout.write("Uploading last job data ... ")
+            if self.is_master_process():
+                sys.stdout.write("Uploading last job data ... ")
+
             self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process(), clear_end=True)
             self.logger.debug("Blobs remotely stored, build latest git pack now")
             # all further client.send calls won't be included in the final git push calculation
@@ -1084,7 +1087,8 @@ class JobBackend:
             # send last monitoring stuff and close channels
             self.client.wait_sending_last_messages()
 
-            sys.stdout.write(" done.\n")
+            if self.is_master_process():
+                sys.stdout.write(" done.\n")
 
             # wait for end of client. Server will now close connection when ready.
             self.client.end()
@@ -1096,7 +1100,12 @@ class JobBackend:
                 if objects_to_sync:
                     self.logger.warning("Not all job data have been uploaded.")
                     self.logger.warning("Please run following command to make sure your job is stored on the server.")
-                    self.logger.warning("$ aetros push-job " + self.model_name + "/" + self.job_id)
+                    self.logger.warning("$ aetros job-push " + self.job_id[0:9])
+
+        elif self.is_master_process():
+            self.logger.warning("Not all job data have been uploaded because you are offline.")
+            self.logger.warning("Run following command to make sure your job is stored on the server.")
+            self.logger.warning("$ aetros job-push " + self.job_id[0:9])
 
         if self.is_master_process():
             # remove the index file
@@ -1106,7 +1115,7 @@ class JobBackend:
         # make sure client is really stopped
         self.client.close()
 
-        self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.git_last_commit))
+        self.logger.debug("Stopped %s with last commit %s." % (self.git.ref_head, self.git.get_head_commit()))
 
         if force_exit:
             self.on_force_exit()
@@ -1137,7 +1146,7 @@ class JobBackend:
             if isinstance(sys.stderr, GeneralLogger):
                 self.git.commit_json_file('FAIL_MESSAGE_LAST_LOG', 'aetros/job/crash/last_message', sys.stderr.last_messages)
 
-        self.logger.debug('Crash report stored in commit ' + self.git.git_last_commit)
+        self.logger.debug('Crash report stored in commit ' + self.git.get_head_commit())
         self.stop(JOB_STATUS.PROGRESS_STATUS_FAILED, force_exit=force_exit)
 
     def write_log(self, message):
@@ -1610,13 +1619,110 @@ class JobBackend:
 
         return add_resursiv(working_tree, report=report)
 
-    def add_embedding_word2vec(self, x, path):
-        data = open(path, 'rb').read()
-        name = os.path.basename(path)
+    def add_embedding_word2vec(self, x, path, dimensions=None, header_with_dimensions=True):
+        """
+        Parse the word2vec file and extracts vectors as bytes and labels as TSV file.
+        The format is simple: It a UTF-8 encoded file, each word + vectors separated by new line.
+        Vector is space separated.
+        At the very first line might be dimensions, given as space separated value.
 
+
+        Line 1: 2 4\n
+        Line 2: word 200.3 4004.4 34.2 22.3\n
+        Line 3: word2 20.0 4.4 4.2 0.022\n
+        and so on
+
+        For performance reasons, you should prefer add_embedding_path().
+
+        """
+        if path.endswith('.txt'):
+            if not os.path.exists(path):
+                raise Exception("Given word2vec file does not exist: " + path)
+
+            f = open(path, 'r')
+
+            if not header_with_dimensions and not dimensions:
+                raise Exception('Either the word2vec file should contain the dimensions as header or it needs to be'
+                                'specified manually using dimensions=[x,y] argument.')
+
+            if header_with_dimensions:
+                line = f.readline()
+                if ' ' not in line:
+                    raise Exception('Given word2vec file should have in first line the dimensions, e.g.: 1000 200')
+                dimensions = np.fromstring(line, dtype=np.uint, sep=' ').tolist()
+
+            vectors = b''
+            labels = b''
+
+            line_pos = 1 if header_with_dimensions else 0
+
+            # while '' != (line = f.readline())
+            for line in iter(f.readline, b''):
+                line_pos += 1
+                space_pos = line.find(b' ')
+                if -1 == space_pos:
+                    message = 'Given word2vec does not have correct format in line ' + str(line_pos)
+                    message += '\nGot: ' + str(line)
+                    raise Exception(message)
+
+                labels += line[:space_pos] + b'\n'
+                vectors += np.fromstring(line[space_pos+1:], dtype=np.float32, sep=' ').tobytes()
+        else:
+            raise Exception("Given word2vec is not a .txt file. Other file formats are not supported.")
+
+        info = {
+            'dimensions': dimensions
+        }
+
+        name = os.path.basename(path)
         self._ensure_insight(x)
-        remote_path = 'aetros/job/insight/'+str(x)+'/embedding/' + name + '.w2v'
-        self.git.commit_file('INSIGHT WORD2VEC ' + str(x), remote_path, data)
+        remote_path = 'aetros/job/insight/'+str(x)+'/embedding/'
+        with self.git.batch_commit('INSIGHT_EMBEDDING ' + str(x)):
+            self.git.commit_file('WORD2VEC', remote_path + name + '/tensor.bytes', vectors)
+            self.git.commit_file('WORD2VEC', remote_path + name + '/metadata.tsv', labels)
+            self.git.commit_file('WORD2VEC', remote_path + name + '/info.json', simplejson.dumps(info))
+
+    def add_embedding_path(self, x, dimensions, tensor, metadata=None, image_shape=None, image=None):
+        """
+        Adds a new embedding with optional metadata.
+
+        Vectors is a floats64 bytes file, no separators sum(dimensions)*floats64 long.
+
+        Metadata is a TSV file. If only one column long (=no tab separator per line), then there's no need for a header.
+        If you have more than one column, use the first line as header.
+
+        Metadata example:
+
+        Label\tcount\n
+        red\t4\n
+        yellow\t6\n
+
+        """
+        if not os.path.exists(tensor):
+            raise Exception("Given embedding vectors file does not exist: " + tensor)
+
+        if metadata and not os.path.exists(metadata):
+            raise Exception("Given embedding metadata file does not exist: " + metadata)
+
+        name = os.path.basename(tensor)
+        self._ensure_insight(x)
+        remote_path = 'aetros/job/insight/'+str(x)+'/embedding/'
+
+        info = {
+            'dimensions': dimensions,
+            'image_shape': image_shape,
+            'image': os.path.basename(image) if image else None,
+        }
+
+        with self.git.lock_write():
+            self.git.add_file_path(remote_path + name + '/tensor.bytes', tensor)
+            self.git.add_file_path(remote_path + name + '/metadata.tsv', metadata)
+            self.git.add_file(remote_path + name + '/info.json', simplejson.dumps(info))
+
+            if image:
+                self.git.add_file(remote_path + name + '/' + os.path.basename(image), image)
+
+            self.git.commit_index('INSIGHT_EMBEDDING ' + str(x))
 
     def add_insight_image_path(self, x, path, id=None, label=None):
         image = PIL.Image.open(path)

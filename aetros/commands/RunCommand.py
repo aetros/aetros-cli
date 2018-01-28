@@ -5,19 +5,12 @@ from __future__ import print_function
 import argparse
 
 import sys
-
 import os
-
-import six
-import time
-
 import aetros.utils.git
-from aetros.logger import GeneralLogger
-
 from aetros.starter import start_command
 
 from aetros.backend import JobBackend
-from aetros.utils import read_config, human_size, lose_parameters_to_full, extract_parameters, stop_time, find_config, \
+from aetros.utils import human_size, lose_parameters_to_full, extract_parameters, find_config, \
     loading_text, read_home_config
 
 
@@ -96,7 +89,7 @@ class RunCommand:
         job_backend.job = {'config': {'ignore': ignore}}
 
         adding_files = loading_text("- Adding job files to index ... ")
-        files_added, size_added = job_backend.add_files(os.getcwd(), report=False)
+        files_added, size_added = job_backend.add_files(config['root'], report=False)
         adding_files("done with %d file%s added (%s)."
                      % (files_added, 's' if files_added != 1 else '', human_size(size_added, 2)))
 
@@ -168,7 +161,7 @@ class RunCommand:
         if parsed_args.local:
             create_info['server'] = 'local'
 
-        if parsed_args.config:
+        if parsed_args.config and not create_info['config']['configPath']:
             create_info['config']['configPath'] = parsed_args.config
 
         create_info['config']['sourcesAttached'] = True
@@ -221,18 +214,21 @@ class RunCommand:
                 adding_files("connected.")
             else:
                 parsed_args.offline = True
-                adding_files("failed.")
+                adding_files("failed. Continue in offline mode.")
 
-        sys.stdout.write("- Uploading job data ... ")
+        if not parsed_args.offline:
+            sys.stdout.write("- Uploading job data ... ")
+            job_backend.git.push()
+            job_backend.client.wait_until_queue_empty(['files'], clear_end=False)
 
-        job_backend.git.push()
-        job_backend.client.wait_until_queue_empty(['files'], clear_end=False)
+            sys.stdout.write(" done.\n")
 
-        sys.stdout.write(" done.\n")
-        link = "%smodel/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
-        sys.stdout.write(u"➤ Monitor job at %s\n" % (link))
+            link = "%smodel/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
+            sys.__stdout__.write(u"➤ Monitor job at %s\n" % (link))
 
         job_backend.start(collect_system=False, offline=parsed_args.offline, push=False)
+        if not parsed_args.offline:
+            job_backend.git.start_push_sync()
 
         if parsed_args.local:
             cpus = create_info['config']['resources']['cpu']

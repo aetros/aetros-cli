@@ -2,11 +2,6 @@ from __future__ import print_function, division
 from __future__ import absolute_import
 import os
 
-from aetros.backend import start_job
-from aetros.KerasCallback import KerasCallback
-from aetros.Trainer import Trainer
-
-
 def optimizer_factory(job):
     import keras.optimizers
 
