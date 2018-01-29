@@ -12,7 +12,7 @@ import sys
 from ruamel import yaml
 
 from aetros.api import ApiConnectionError
-from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config
+from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config, is_debug
 
 
 class GitCommandException(Exception):
@@ -550,6 +550,7 @@ class Git:
 
         self.stream_files_lock.acquire()
         try:
+
             full_path = os.path.normpath(self.temp_path + '/store-blob/' + self.job_id + '/' + path)
             if not os.path.exists(os.path.dirname(full_path)):
                 os.makedirs(os.path.dirname(full_path))
@@ -557,15 +558,19 @@ class Git:
             if hasattr(data, 'encode'):
                 data = data.encode("utf-8", 'replace')
 
-            try:
-                open(full_path, 'wb').write(data)
-                self.store_files[path] = True
-            except IOError as e:
-                if 'No space left' in e.__str__():
-                    sys.stderr.write(traceback.format_exc()+'\n')
-                    self.logger.error(e.__str__())
+            already_set = path in self.store_files and self.store_files[path] == data
 
-            if self.client.online:
+            if is_debug():
+                sys.__stderr__.write('git:store_file(%s, %s, %s), already_set=%s\n'
+                                     % (str(path), str(data)[0:180], str(fast_lane), str(already_set)))
+
+            if already_set:
+                return
+
+            open(full_path, 'wb').write(data)
+            self.store_files[path] = data
+
+            if self.client.online is not False:
                 self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='' if fast_lane else 'files')
         finally:
             self.stream_files_lock.release()
@@ -636,7 +641,7 @@ class Git:
                 finally:
                     self.git.stream_files_lock.release()
 
-                if self.git.client.online:
+                if self.git.client.online is not False:
                     self.git.client.send({'type': 'stream-blob', 'path': path, 'data': data}, channel='' if fast_lane else 'files')
 
         return Stream(self)
@@ -790,8 +795,11 @@ class Git:
         collect_files_from_commit(commit_sha)
 
         ssh_stream = create_ssh_stream(read_home_config())
-        self.logger.debug("warning: Call server git-cat-file-check for object diff calculation")
         shas_to_check = object_shas
+        self.logger.debug("shas_to_check: %s " % (str(shas_to_check),))
+
+        if not object_shas:
+            return [], summary
 
         for sha in shas_to_check:
             self.synced_object_shas[sha] = True
@@ -830,7 +838,6 @@ class Git:
 
     def push(self):
         self.push_lock.acquire()
-        self.logger.debug("Git push")
 
         try:
             commit_sha = self.get_head_commit()
@@ -841,6 +848,7 @@ class Git:
             self.logger.debug(str(summary))
 
             if missing_object_sha:
+                self.logger.debug("Git push")
                 try:
                     pack_process = subprocess.Popen(base + ['pack-objects', '--stdout'], stderr=subprocess.PIPE,
                                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE)

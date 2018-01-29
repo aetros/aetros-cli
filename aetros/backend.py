@@ -27,8 +27,8 @@ from aetros.cuda_gpu import CudaNotImplementedException
 from aetros.git import Git
 from aetros.logger import GeneralLogger
 from aetros.utils import git, invalid_json_values, read_config, is_ignored, prepend_signal_handler, raise_sigint, \
-    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, \
-    get_logger
+    read_parameter_by_path, stop_time, read_home_config, lose_parameters_to_full, extract_parameters, get_logger, \
+    is_debug, find_config
 from aetros.MonitorThread import MonitoringThread
 import subprocess
 
@@ -141,6 +141,8 @@ def context():
 
     if os.getenv('AETROS_JOB_ID'):
         job.load(os.getenv('AETROS_JOB_ID'))
+        if not offline:
+            job.connect()
     else:
         job.create()
         if not offline:
@@ -151,7 +153,6 @@ def context():
     job.start(offline=offline)
 
     return job
-
 
 
 class JobLossChannel:
@@ -176,10 +177,10 @@ class JobLossChannel:
 
         self.job_backend.git.commit_json_file('CREATE_CHANNEL', 'aetros/job/channel/' + name+ '/config', message)
         self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data.csv')
-        self.stream.write('"x","training","validation"\n')
+        self.stream.write('"time", "x","training","validation"\n')
 
     def send(self, x, training_loss, validation_loss):
-        line = simplejson.dumps([x, training_loss, validation_loss])[1:-1]
+        line = simplejson.dumps([self.job_backend.get_run_time(), x, training_loss, validation_loss])[1:-1]
 
         self.lock.acquire()
         try:
@@ -267,7 +268,7 @@ class JobChannel:
         if self.kpi:
             self.job_backend.git.commit_file('KPI_CHANNEL', 'aetros/job/kpi/name', name)
 
-        line = simplejson.dumps(['x'] + [str(x['name']) for x in traces])[1:-1]
+        line = simplejson.dumps(['time', 'x'] + [str(x['name']) for x in traces])[1:-1]
         self.stream.write(line + "\n")
 
     def send(self, x, y):
@@ -283,7 +284,7 @@ class JobChannel:
             if not isinstance(v, (int, float)) and not isinstance(v, six.string_types):
                 raise Exception('Could not send channel value for ' + self.name+' since type ' + type(y).__name__+' is not supported. Use int, float or string values.')
 
-        line = simplejson.dumps([x] + y)[1:-1]
+        line = simplejson.dumps([self.job_backend.get_run_time(), x] + y)[1:-1]
 
         self.lock.acquire()
         try:
@@ -338,7 +339,6 @@ class JobBackend:
         self.made_steps_since_last_sync = 0
         self.made_steps_size_since_last_sync = 0
 
-        self.start_time = time.time()
         self.current_epoch = 0
         self.total_epochs = 0
 
@@ -361,6 +361,7 @@ class JobBackend:
 
         # whether it has started once
         self.started = False
+        self.start_time = time.time()
 
         # whether we are in paused state
         self.is_paused = False
@@ -417,9 +418,12 @@ class JobBackend:
     def host(self):
         return self.home_config['host']
 
+    def get_run_time(self, precision=3):
+        return round(time.time() - self.start_time, precision)
+
     def section(self, title):
         title = title.replace("\t", "  ")
-        seconds = time.time() - self.start_time
+        seconds = self.get_run_time()
         line = "## %s\t%.2f\n" % (title, seconds)
         sys.stdout.write(line)
         sys.stdout.flush()
@@ -445,7 +449,7 @@ class JobBackend:
 
     def on_signusr1(self, signal, frame):
         self.logger.warning("USR1: backend job_id=%s (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
-                            "connected=%s, queue=%s), git (online=%s, active_thread=%s, last_push_time=%s)." % (
+                            "connected=%s, queue=%s), git (active_thread=%s, last_push_time=%s)." % (
           str(self.job_id),
           str(self.running),
           str(self.ended),
@@ -454,7 +458,6 @@ class JobBackend:
           str(self.client.registered),
           str(self.client.connected),
           str([str(i)+':'+str(len(x)) for i, x in six.iteritems(self.client.queues)]),
-          str(self.git.online),
           str(self.git.active_thread),
           str(self.git.last_push_time),
         ))
@@ -552,7 +555,6 @@ class JobBackend:
         self.lock.acquire()
         try:
             time_diff = time.time() - self.last_step_time
-            # print("steps %s/%s, size=%s, last_step=%s, made_steps=%s" % (str(step), str(total), str(size), str(self.last_step), str(step - self.last_step)))
 
             if self.last_step > step:
                 # it restarted
@@ -571,9 +573,6 @@ class JobBackend:
                 steps_per_second = self.made_steps_since_last_sync / time_diff
                 samples_per_second = self.made_steps_size_since_last_sync / time_diff
                 self.last_step_time = time.time()
-
-                # print("  samples_per_second=%s, steps_per_second=%s, made_steps=%s, time_diff=%s, " %
-                #       (str(samples_per_second), str(steps_per_second), str(self.made_steps_since_last_sync), str(time_diff)))
 
                 if size:
                     self.report_speed(samples_per_second)
@@ -619,7 +618,7 @@ class JobBackend:
         self.last_speed_time = time.time()
 
         if x is None:
-            x = math.ceil(time.time()-self.start_time)
+            x = round(time.time()-self.start_time, 3)
 
         self.set_system_info('samplesPerSecond', speed, True)
         self.speed_stream.write(simplejson.dumps([x, speed])[1:-1] + "\n")
@@ -753,7 +752,7 @@ class JobBackend:
                 self.early_stop()
                 return
 
-    def create_loss_channel(self, name, xaxis=None, yaxis=None, layout=None):
+    def create_loss_channel(self, name='loss', xaxis=None, yaxis=None, layout=None):
         """
         :param name: string
         :return: JobLossGraph
@@ -802,6 +801,7 @@ class JobBackend:
             raise Exception('Job not loaded')
 
         prepend_signal_handler(signal.SIGINT, self.on_sigint)
+        self.start_time = time.time()
 
         self.started = True
         self.running = True
@@ -820,7 +820,7 @@ class JobBackend:
         if self.is_master_process():
             # this is the process that actually starts the job.
             # other sub-processes may only modify other data.
-            self.git.commit_file('JOB_STARTED', 'aetros/job/times/started.json', str(time.time()))
+            self.git.commit_file('JOB_STARTED', 'aetros/job/times/started.json', simplejson.dumps(self.start_time))
             self.job_add_status('progress', JOB_STATUS.PROGRESS_STATUS_STARTED)
             self.git.store_file('aetros/job/times/elapsed.json', str(0))
 
@@ -838,7 +838,7 @@ class JobBackend:
                 self.start_monitoring()
 
             # log stdout to Git by using self.write_log -> git:stream_file
-            self.stream_log = self.git.stream_file('aetros/job/log.txt')
+            self.stream_log = self.git.stream_file('aetros/job/log.txt', fast_lane=False)
             self.speed_stream = self.git.stream_file('aetros/job/speed.csv')
             header = ["x", "speed"]
             self.speed_stream.write(simplejson.dumps(header)[1:-1] + "\n")
@@ -904,9 +904,9 @@ class JobBackend:
             if working_dir:
                 os.chdir(current_dir)
 
-    def start_monitoring(self, start_time=None, cpu_cores=1, gpu_devices=None, docker_container=None):
+    def start_monitoring(self, cpu_cores=1, gpu_devices=None, docker_container=None):
         if not self.monitoring_thread:
-            self.monitoring_thread = MonitoringThread(self, cpu_cores, start_time, gpu_devices, docker_container)
+            self.monitoring_thread = MonitoringThread(self, cpu_cores, gpu_devices, docker_container)
             self.monitoring_thread.daemon = True
             self.monitoring_thread.start()
 
@@ -1057,10 +1057,12 @@ class JobBackend:
             self.client.send({'type': 'sync-blob'}, channel='')
             self.client.send({'type': 'sync-blob'}, channel='files')
 
-            if self.is_master_process():
+            report = self.is_master_process() or is_debug()
+
+            if report:
                 sys.stdout.write("Uploading last job data ... ")
 
-            self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process(), clear_end=True)
+            self.client.wait_until_queue_empty(['', 'files'], report=report, clear_end=True)
             self.logger.debug("Blobs remotely stored, build latest git pack now")
             # all further client.send calls won't be included in the final git push calculation
             # and might be sent again.
@@ -1074,7 +1076,7 @@ class JobBackend:
 
             # send all last messages and git pack
             self.logger.debug("Last wait_until_queue_empty")
-            self.client.wait_until_queue_empty(['', 'files'], report=self.is_master_process(), clear_end=False)
+            self.client.wait_until_queue_empty(['', 'files'], report=report, clear_end=False)
 
             # it's important to have it here, since its tracks not only hardware but also network speed
             # for uploading last messages and Git.
@@ -1153,7 +1155,7 @@ class JobBackend:
         """
         Proxy method for GeneralLogger.
         """
-        if self.stream_log:
+        if self.stream_log and not self.ended:
             # points to the Git stream write
             self.stream_log.write(message)
             return True
@@ -1194,7 +1196,7 @@ class JobBackend:
                     'command': ' '.join(sys.argv)
                 }
             }
-            config = read_config(self.config_path, logger=self.logger)
+            config = find_config(self.config_path, logger=self.logger)
 
             # first transform simple format in the full definition with parameter types
             # (string, number, group, choice_group, etc)
@@ -1249,7 +1251,7 @@ class JobBackend:
         if self.job and 'model' in self.job:
             return self.job['model']
 
-        config = read_config(self.config_path, logger=self.logger)
+        config = find_config(self.config_path, logger=self.logger)
         self.logger.debug('config: ' + simplejson.dumps(config))
 
         if model_name is None:
@@ -1371,13 +1373,14 @@ class JobBackend:
         data = simplejson.dumps(value, default=invalid_json_values)
         self.git.commit_file('STATUS ' + str(value), path, data)
 
-        if self.client.online:
+        if self.client.online is not False:
             # just so have it faster
             self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='')
 
     def set_info(self, name, value, commit_end_of_job=False):
         if commit_end_of_job:
-            self.git.store_file('aetros/job/info/' + name + '.json', simplejson.dumps(value, default=invalid_json_values))
+            self.git.store_file('aetros/job/info/' + name + '.json',
+                                simplejson.dumps(value, default=invalid_json_values))
         else:
             self.git.commit_json_file('INFO ' + name, 'aetros/job/info/' + name, value)
 
@@ -1386,7 +1389,8 @@ class JobBackend:
 
     def set_system_info(self, key, value, commit_end_of_job=False):
         if commit_end_of_job:
-            self.git.store_file('aetros/job/system/' + key + '.json', simplejson.dumps(value, default=invalid_json_values))
+            self.git.store_file('aetros/job/system/' + key + '.json',
+                                simplejson.dumps(value, default=invalid_json_values))
         else:
             self.git.commit_json_file('SYSTEM_INFO ' + key, 'aetros/job/system/' + key, value)
 

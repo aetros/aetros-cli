@@ -15,7 +15,7 @@ import sys
 import six
 from paramiko.ssh_exception import NoValidConnectionsError
 
-from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream
+from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream, is_debug
 from threading import Thread, Lock
 from aetros.const import __version__
 
@@ -84,12 +84,16 @@ class BackendClient:
         self.stop_on_empty_queue = {}
         self.channel_closed = {}
 
+        self.bytes_sent = 0
+        self.bytes_total = 0
+        self.bytes_speed = 0
+
         self.lock = Lock()
         self.channel_lock = {}
         self.connection_errors = 0
         self.connection_tries = 0
         self.in_connecting = {}
-        self.write_speeds = {}
+        self.write_speeds = []
         self.read_speeds = []
 
         # indicates whether we are offline or not, means not connected to the internet and
@@ -138,9 +142,8 @@ class BackendClient:
             self.ssh_stream[channel] = None
             self.ssh_channel[channel] = None
             self.connected[channel] = None
-            self.was_connected_once[channel] = None
+            self.was_connected_once[channel] = False
             self.stop_on_empty_queue[channel] = False
-            self.write_speeds[channel] = []
             self.channel_lock[channel] = Lock()
             self.in_connecting[channel] = False
             self.channel_closed[channel] = False
@@ -202,7 +205,6 @@ class BackendClient:
             self.registered[channel] = None
             self.ssh_stream[channel] = False
             self.ssh_channel[channel] = False
-            self.write_speeds[channel] = []
             messages = None
             stderrdata = ''
 
@@ -365,6 +367,8 @@ class BackendClient:
                         self.logger.debug('[%s] Closed write thread: exception. %d messages left'
                                           % (channel, len(self.queues[channel]), ))
                         self.connection_error(channel, e)
+                else:
+                    time.sleep(0.1)
 
                 if self.stop_on_empty_queue[channel]:
                     if len(self.queues[channel]) == 0 or not self.is_connected(channel) or \
@@ -376,8 +380,6 @@ class BackendClient:
                 if self.active and not self.is_connected(channel) and not self.expect_close:
                     if not self.connect(channel):
                         time.sleep(5)
-
-            time.sleep(0.1)
 
         self.logger.debug('[%s] Closed write thread: disconnect. %d messages left' % (channel, len(self.queues[channel]), ))
 
@@ -464,31 +466,19 @@ class BackendClient:
         for channel in channels:
             queues += self.queues[channel][:]
 
-        total = sum(m['_total'] for m in queues)
-
         def print_progress():
             if report:
-                speeds = []
-                for channel in channels:
-                    speeds += self.write_speeds[channel]
-
                 self.logger.debug("all_empty=%s" % (str(all_empty),))
 
-                if len(speeds):
-                    speed = sum(speeds) / len(speeds)
-                else:
-                    speed = 0
+                sys.__stderr__.write('\b' * len(state['message']))
+                sys.__stderr__.write("\033[K")
 
-                sys.__stdout__.write('\b' * len(state['message']))
-                sys.__stdout__.write("\033[K")
+                state['message'] = "%.2f kB/s // %.2fkB of %.2fkB // %.2f%%" \
+                          % (self.bytes_speed / 1024, self.bytes_sent / 1024, self.bytes_total / 1024,
+                            (self.bytes_sent / self.bytes_total * 100) if self.bytes_total else 0)
 
-                sent = sum(m['_bytes_sent'] for m in queues)
-
-                state['message'] = "%.3f kB/s // %.3fkB of %.3fkB // %.2f%%" \
-                          % (speed / 1024, sent / 1024, total / 1024, (sent / total * 100) if total else 0)
-
-                sys.__stdout__.write(state['message'])
-                sys.__stdout__.flush()
+                sys.__stderr__.write(state['message'])
+                sys.__stderr__.flush()
 
         while True:
             all_empty = all(m['_sent'] for m in queues)
@@ -503,9 +493,9 @@ class BackendClient:
         print_progress()
 
         if report and clear_end:
-            sys.__stdout__.write('\b' * len(state['message']))
-            sys.__stdout__.write("\033[K")
-            sys.__stdout__.flush()
+            sys.__stderr__.write('\b' * len(state['message']))
+            sys.__stderr__.write("\033[K")
+            sys.__stderr__.flush()
 
     def wait_for_close(self):
         if not self.active or self.online is False:
@@ -574,6 +564,10 @@ class BackendClient:
 
             self.message_id += 1
 
+            if is_debug():
+                sys.__stderr__.write("JobBackend:send(%s, %s, %s)\n" % (str(data)[0:180], str(channel), str(important)))
+                sys.__stderr__.flush()
+
             message = {}
             message['_id'] = self.message_id
 
@@ -594,6 +588,8 @@ class BackendClient:
             message['_sending'] = False
             message['_sent'] = False
 
+            self.bytes_total += message['_total']
+
             if important:
                 self.queues[channel].insert(0, message)
             else:
@@ -613,60 +609,45 @@ class BackendClient:
 
         if '_data' in message:
             data = message['_data']
-            total = message['_total']
         else:
             data = msgpack.packb(message, default=invalid_json_values)
-            total = len(data)
+            self.bytes_total += len(data)
             message['_bytes_sent'] = 0
             message['_id'] = -1
 
-        sent_sizes = []
-
-        def report():
-            if not self.write_speeds[channel] or not sent_sizes:
-                return
-            # speed = sum(self.write_speeds) / len(self.write_speeds)
-            # average_size = sum(sent_sizes) / len(sent_sizes)
-            # print("[%s] Speed is at %.3f kb/s (average send() size=%.3fkb), %.3fkb of %.3fkb sent, id=%s" % (
-            #        channel, speed / 1024, average_size / 1024, message['_bytes_sent'] / 1024,
-            #        total / 1024, message['_id']))
+        if is_debug():
+            sys.__stderr__.write("[%s] send message: %s\n" % (channel, str(msgpack.unpackb(data))[0:180]))
 
         try:
             while data:
                 start = time.time()
-                # buf = data[:BUFFER_SIZE]
                 bytes_sent = self.ssh_channel[channel].send(data)
 
-                sent_sizes.append(bytes_sent)
                 data = data[bytes_sent:]
                 message['_bytes_sent'] += bytes_sent
+                self.bytes_sent += bytes_sent
 
-                # data = data[BUFFER_SIZE:]
-                # bytes_sent += len(buf)
                 end = time.time()
-                self.write_speeds[channel].append( bytes_sent / (end-start) )
+                self.write_speeds.append(bytes_sent / (end-start))
 
-                if len(self.write_speeds[channel]) > 20:
-                    self.write_speeds[channel] = self.write_speeds[channel][10:]
-                    sent_sizes = sent_sizes[10:]
+                speeds_len = len(self.write_speeds)
+                if speeds_len:
+                    self.bytes_speed = sum(self.write_speeds) / speeds_len
+                    if speeds_len > 10:
+                        self.write_speeds = self.write_speeds[5:]
 
-            report()
             message['_sent'] = True
             return True
 
         except (KeyboardInterrupt, SystemExit):
             if message['_sent']:
-                return total
+                return message['_bytes_sent']
 
             return False
 
         except Exception as error:
             self.connection_error(channel, error)
             return False
-
-        finally:
-            pass
-            # self.write_speeds[channel] = []
 
     def handle_messages(self, messages):
         self.lock.acquire()
@@ -772,32 +753,35 @@ class JobClient(BackendClient):
 
         self.logger.debug("[%s] Wait for job client registration for %s" % (channel, self.name))
         messages = self.wait_for_at_least_one_message(channel)
-        self.logger.debug("[%s] Got %s" % (channel, str(messages)))
+        self.logger.debug("[%s] Got onconnect %s" % (channel, str(messages)))
 
         if not messages:
             self.event_listener.fire('registration_failed', {'reason': 'No answer received.'})
             return False
 
         message = messages.pop(0)
-        self.logger.debug("[%s] Client: handle message: %s" % (channel, str(message)))
+        self.logger.debug("[%s] Client: onconnect handle message: %s" % (channel, str(message)))
         if isinstance(message, dict) and 'a' in message:
 
             if 'aborted' == message['a']:
+                self.logger.error("[%s] Job aborted or deleted meanwhile. Exiting" % (channel,))
                 if channel == '':
-                    self.logger.error("[%s] Job aborted or deleted meanwhile. Exiting" % (channel,))
                     self.event_listener.fire('aborted')
-                self.active = False
+
+                self.close()
                 return False
 
             if 'registration_failed' == message['a']:
                 if channel == '':
                     self.event_listener.fire('registration_failed', {'reason': message['reason']})
+                self.close()
                 return False
 
             if 'registered' == message['a']:
                 self.registered[channel] = True
                 if channel == '':
                     self.event_listener.fire('registration')
+
                 self.handle_messages(messages)
                 return True
 

@@ -18,6 +18,8 @@ import sys
 import ruamel.yaml as yaml
 import subprocess
 
+from paramiko.compress import ZlibCompressor
+
 start_time = time.time()
 last_time = None
 
@@ -186,6 +188,13 @@ def create_ssh_stream(config, exit_on_failure=True):
     key_description = key_filename if key_filename else 'from server'
 
     try:
+        def lower_compression(self):
+            import zlib
+            # Use the default level of zlib compression
+            self.z = zlib.compressobj(2)
+
+        ZlibCompressor.__init__ = lower_compression
+
         ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=True, pkey=key)
         # ssh_stream.get_transport().window_size = 2147483647
     except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException):
@@ -636,23 +645,23 @@ def git_has_remote_job(home_config, model, job_id):
             return full_job_id
 
 
-def find_config(path = None, error_on_missing=False, return_default=True):
+def find_config(path = None, error_on_missing=False, return_default=True, logger=None):
     config = None
 
     if path:
         if os.path.exists(path):
-            config = read_config(path, return_default=False)
-            config['init_config_path'] = path
+            config = read_config(path, return_default=False, logger=logger)
+            config['init_config_path'] = os.path.abspath(path)
 
     else:
         path = find_config_path()
         if path:
-            config = read_config(path, return_default=False)
-            config['init_config_path'] = path
+            config = read_config(path, return_default=False, logger=logger)
+            config['init_config_path'] = os.path.abspath(path)
 
     if config:
         if 'import' in config and config['import']:
-            inherited_config = find_config(config['import'])
+            inherited_config = find_config(os.path.dirname(os.path.abspath(path)) + '/' + config['import'])
 
             if inherited_config:
                 inherited_config.update(config)

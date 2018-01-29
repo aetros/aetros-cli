@@ -20,7 +20,7 @@ import numpy as np
 
 
 class MonitoringThread(Thread):
-    def __init__(self, job_backend, cpu_cores=1, start_time=None, gpu_devices=None, docker_container=None):
+    def __init__(self, job_backend, cpu_cores=1, gpu_devices=None, docker_container=None):
         Thread.__init__(self)
 
         self.job_backend = job_backend
@@ -47,11 +47,9 @@ class MonitoringThread(Thread):
             header += ['dpu0']
 
         self.hardware_stream.write(simplejson.dumps(header)[1:-1] + "\n")
-        self.started = start_time or time.time()
         self.running = True
         self.early_stopped = False
         self.handle_max_time = True
-        self.handle_max_time_time = self.started
         self.client = docker.from_env()
         self.docker_api = docker.APIClient(**docker.utils.kwargs_from_env())
         self.stat_stream = None
@@ -104,7 +102,7 @@ class MonitoringThread(Thread):
         while self.running:
             self.handle_early_stop()
 
-            self.job_backend.git.store_file('aetros/job/times/elapsed.json', simplejson.dumps(time.time() - self.started))
+            self.job_backend.git.store_file('aetros/job/times/elapsed.json', simplejson.dumps(time.time() - self.job_backend.start_time))
 
             if self.job_backend.is_paused:
                 # when paused, we do not monitor anything, except elapsed.
@@ -147,7 +145,7 @@ class MonitoringThread(Thread):
 
     def handle_early_stop(self):
         if not self.early_stopped and self.handle_max_time and self.max_minutes > 0:
-            minutes_run = (time.time() - self.handle_max_time_time) / 60
+            minutes_run = (time.time() - self.job_backend.start_time) / 60
             if minutes_run > self.max_minutes:
                 self.early_stopped = True
                 self.job_backend.logger.warning("Max time of "+str(self.max_minutes)+" minutes reached.")
@@ -155,22 +153,15 @@ class MonitoringThread(Thread):
 
     def network_sync(self):
         if self.job_backend.client.write_speeds:
-            average_speed = 0
-
-            for channel, write_speeds in six.iteritems(self.job_backend.client.write_speeds):
-                write_speeds = write_speeds[:]
-                if write_speeds:
-                    average_speed += sum(write_speeds) / len(write_speeds)
-
             network = {
-                'speed': average_speed,
                 'ended': self.job_backend.ended,
                 'channels': {},
                 'messages': 0,
                 'files': {},
                 'git': [],
-                'sent': 0,
-                'total': 0,
+                'sent': self.job_backend.client.bytes_sent,
+                'total': self.job_backend.client.bytes_total,
+                'speed': self.job_backend.client.bytes_speed,
             }
 
             for channel, messages in six.iteritems(self.job_backend.client.queues):
@@ -186,10 +177,6 @@ class MonitoringThread(Thread):
                     if message['type'] == 'git-unpack-objects':
                         bytes_sent = message['_bytes_sent']
                         total = message['_total']
-
-                        network['total'] += total
-                        network['sent'] += bytes_sent
-
                         network['git'].append({
                             'sent': bytes_sent,
                             'total': total,
@@ -200,12 +187,8 @@ class MonitoringThread(Thread):
                     if message['type'] == 'store-blob':
                         if message['path'].startswith('aetros/job/times'):
                             continue
-
                         bytes_sent = message['_bytes_sent']
                         total = message['_total']
-
-                        network['total'] += total
-                        network['sent'] += bytes_sent
                         network['files'][message['path']] = {
                             'sent': bytes_sent,
                             'total': total,
@@ -217,7 +200,7 @@ class MonitoringThread(Thread):
             self.job_backend.client.send({'type': 'store-blob', 'path': 'aetros/job/network.json', 'data': data}, channel='')
 
     def monitor(self, cpu_util, mem_util):
-        x = math.ceil(time.time()-self.handle_max_time_time)
+        x = math.ceil(time.time()-self.job_backend.start_time)
 
         row = [x, cpu_util, mem_util]
 

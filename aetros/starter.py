@@ -301,7 +301,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
         if isinstance(job_commands, list):
             command_stats = [{'rc': None, 'started': None, 'ended': None} for x in job_commands]
             for k, job_command in enumerate(job_commands):
-                job_backend.set_status('Command ' + str(k))
+                job_backend.set_status('Command ' + str(k+1))
 
                 command_stats[k]['started'] = time.time() - start_time
                 job_backend.set_system_info('command_stats', command_stats, True)
