@@ -59,6 +59,9 @@ on_shutdown.started_jobs = []
 atexit.register(on_shutdown)
 
 
+class StdoutApiException(Exception): pass
+
+
 def Popen(*args, **kwargs):
     """
     Executes a command using subprocess.Popen and redirects output to AETROS and stdout.
@@ -179,8 +182,8 @@ class JobLossChannel:
         self.stream = self.job_backend.git.stream_file('aetros/job/channel/' + name+ '/data.csv')
         self.stream.write('"time", "x","training","validation"\n')
 
-    def send(self, x, training_loss, validation_loss):
-        line = simplejson.dumps([self.job_backend.get_run_time(), x, training_loss, validation_loss])[1:-1]
+    def send(self, x, training, validation):
+        line = simplejson.dumps([self.job_backend.get_run_time(), x, training, validation])[1:-1]
 
         self.lock.acquire()
         try:
@@ -785,7 +788,7 @@ class JobBackend:
 
     def connect(self):
         self.client.configure(self.model_name, self.job_id, self.name)
-        return self.client.start(['', 'files'], wait=True)
+        return self.client.start(['', 'files'])
 
     def start(self, collect_system=True, offline=False, push=True):
         if self.started:
@@ -813,7 +816,7 @@ class JobBackend:
 
         if not offline:
             # Marks client as active if not already. If not already starts to connect to the server
-            self.client.start(['', 'files'], wait=True)
+            self.client.start(['', 'files'])
         else:
             self.logger.debug('Job backend not started since offline.')
 
@@ -1864,8 +1867,7 @@ class JobBackend:
         def validate_action(requires_attributes):
             for attr in requires_attributes:
                 if attr not in data:
-                    self.logger.warning("AETROS stdout API call %s requires value for '%s'. Following ignored: %s" % (action, attr, str(data)))
-                    return False
+                    raise StdoutApiException("AETROS stdout API call %s requires value for '%s'. " % (action, attr))
 
             return True
 
@@ -1938,6 +1940,14 @@ class JobBackend:
                     self.stdout_api_channels[data['name']] = self.create_channel(data['name'])
 
                 self.stdout_api_channels[data['name']].send(data['x'], data['y'])
+                return True
+
+        if action == 'loss':
+            if validate_action(['x', 'training', 'validation']):
+                if 'loss' not in self.stdout_api_channels:
+                    self.stdout_api_channels['loss'] = self.create_loss_channel('loss')
+
+                self.stdout_api_channels['loss'].send(data['x'], data['training'], data['validation'])
                 return True
 
         # if action == 'insight':

@@ -14,7 +14,7 @@ import six
 
 from aetros.logger import GeneralLogger
 from aetros.utils import unpack_full_job_id, read_home_config, flatten_parameters, get_ssh_key_for_host, \
-    extract_api_calls
+    extract_api_calls, is_debug
 from aetros.const import JOB_STATUS, __version__
 from .backend import JobBackend
 from .Trainer import Trainer
@@ -266,13 +266,15 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             f.close()
 
         def read_line(line):
-            handled, filtered_line, failed = extract_api_calls(line, job_backend.handle_stdout_api)
+            handled, filtered_line, failed = extract_api_calls(line, job_backend.handle_stdout_api, logger=logger)
 
-            for call in handled:
-                logger.debug('STDOUT API CALL: ' + str(call))
+            if is_debug():
+                for call in handled:
+                    logger.debug('STDOUT API CALL: ' + str(call))
 
             for fail in failed:
-                logger.warning('API call failed \'' + str(fail['line'])+'\': ' + str(fail['exception']))
+                logger.warning("API call failed '%s': %s %s"
+                               % (str(fail['line']), str(type(fail['exception']).__name__), str(fail['exception'])))
 
             return filtered_line
 

@@ -173,7 +173,7 @@ class Git:
         base_command += ['-c', 'user.name=' + self.git_name]
         base_command += ['-c', 'user.email=' + self.git_email]
 
-        return ''.join(base_command)
+        return ' '.join(base_command)
 
     def command_exec(self, command, inputdata=None, allowed_to_fail=False, show_output=False, no_logging=False):
         interrupted = False

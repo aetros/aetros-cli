@@ -15,7 +15,7 @@ import sys
 import six
 from paramiko.ssh_exception import NoValidConnectionsError
 
-from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream, is_debug
+from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream, is_debug, is_debug2
 from threading import Thread, Lock
 from aetros.const import __version__
 
@@ -119,7 +119,7 @@ class BackendClient:
         # when connections breaks, we do not reconnect
         self.expect_close = True
 
-    def start(self, channels=None, wait=False):
+    def start(self, channels=None):
         if self.active:
             return
 
@@ -161,18 +161,17 @@ class BackendClient:
             self.thread_write_instances[channel].daemon = True
             self.thread_write_instances[channel].start()
 
-        if wait:
-            while True:
-                # check if all was_connected_once is not-None (True or False)
-                all_set = all(x is not None for x in six.itervalues(self.registered))
-                if all_set:
-                    # When all True then success, if not unsuccess
-                    return all(six.itervalues(self.registered))
+        while True:
+            # check if all was_connected_once is not-None (True or False)
+            all_set = all(x is not None for x in six.itervalues(self.registered))
 
-                if self.online is False:
-                    return False
+            if all_set:
+                # When all True then success, if not then unsuccessful
+                self.online = all(six.itervalues(self.registered))
 
-                time.sleep(0.1)
+                return self.online
+
+            time.sleep(0.1)
 
     def on_connect(self, reconnect, channel):
         pass
@@ -227,7 +226,6 @@ class BackendClient:
 
                 self.ssh_channel[channel] = self.ssh_stream[channel].get_transport().open_session()
                 self.ssh_channel[channel].exec_command('stream')
-                self.online = True
             except NoValidConnectionsError as e:
                 self.logger.debug("Failed, go offline: " + str(e))
                 self.online = False
@@ -319,8 +317,8 @@ class BackendClient:
             return
 
         # needs to be set before logger.error, since they can call send_message again
-        self.connected = {}
-        self.registered = {}
+        self.connected[channel] = False
+        self.registered[channel] = False
 
         if socket is None:
             # python interpreter is already dying, so quit
@@ -574,7 +572,7 @@ class BackendClient:
 
             self.message_id += 1
 
-            if is_debug():
+            if is_debug2():
                 sys.__stderr__.write("JobBackend:send(%s, %s, %s)\n" % (str(data)[0:180], str(channel), str(important)))
                 sys.__stderr__.flush()
 
@@ -625,7 +623,7 @@ class BackendClient:
             message['_bytes_sent'] = 0
             message['_id'] = -1
 
-        if is_debug():
+        if is_debug2():
             sys.__stderr__.write("[%s] send message: %s\n" % (channel, str(msgpack.unpackb(data))[0:180]))
 
         try:

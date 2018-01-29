@@ -31,8 +31,12 @@ def stop_time(title=''):
     sys.__stdout__.write("STOP_TIME: " + str(time.time()-start_time) + "s - diff: "+diff+"  - " +title+ "\n")
 
 
+def is_debug2():
+    return os.getenv('DEBUG') == '2'
+
+
 def is_debug():
-    return os.getenv('DEBUG') == '1' or os.getenv('DEBUG') == '2'
+    return is_debug2() or os.getenv('DEBUG') == '1'
 
 
 def get_logger(name='', debug=None, format=None):
@@ -103,7 +107,7 @@ def get_option(dict, key, default=None, type=None):
     return dict[key]
 
 
-def extract_api_calls(line, callback):
+def extract_api_calls(line, callback, print_traceback=False, logger=None):
     failed_calls = []
     handled_calls = []
     filtered_line = line
@@ -140,7 +144,10 @@ def extract_api_calls(line, callback):
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:
-            sys.__stderr__.write(traceback.format_exc())
+            if print_traceback:
+                sys.__stderr__.write(traceback.format_exc())
+            else:
+                logger and logger.debug(traceback.format_exc())
             failed_calls.append({'line': line, 'exception': e})
 
         filtered_line = filtered_line[0:start_pos] + filtered_line[end_pos+eat_end:]
@@ -203,7 +210,7 @@ def create_ssh_stream(config, exit_on_failure=True):
 
         ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=True, pkey=key)
         # ssh_stream.get_transport().window_size = 2147483647
-    except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException):
+    except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException) as e:
         if exit_on_failure:
             sys.stdout.write("Fatal: AETROS authentication against "+config['host']+" failed using key "+key_description+": "+str(e)+
                   ". Did you setup SSH keys correctly? See https://aetros.com/docu/trainer/authentication\n")

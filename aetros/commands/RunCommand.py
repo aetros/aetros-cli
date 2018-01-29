@@ -57,6 +57,10 @@ class RunCommand:
 
         parsed_args = parser.parse_args(args)
 
+        if parsed_args.config and not os.path.exists(parsed_args.config):
+            self.logger.error("fatal: file %s does not exist." % (parsed_args.config,))
+            sys.exit(2)
+
         config = find_config(parsed_args.config)
         home_config = read_home_config()
 
