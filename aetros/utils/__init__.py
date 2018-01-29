@@ -71,7 +71,7 @@ def loading_text(label='Loading ... '):
     def display_thread(state):
         try:
             while state['active']:
-                sys.stdout.write(spinner.__next__())
+                sys.stdout.write(next(spinner))
                 sys.stdout.flush()
                 time.sleep(0.05)
                 sys.stdout.write('\b')
