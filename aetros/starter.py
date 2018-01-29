@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 from __future__ import absolute_import
 
+import hashlib
 import re
 import shutil
 import time
@@ -555,10 +556,26 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
     job_backend.set_system_info('image/dockerfile', dockerfile)
 
     image = job_backend.model_name.lower()
+
     if 'category' in job_config and job_config['category']:
         image += '_' + job_config['category'].lower()
 
-    image = re.sub('[^A-Z_\-a-z0-9]+', '', image)
+    if 'configPath' in job_config and job_config['configPath']:
+        configPath = job_config['configPath']\
+            .replace('aetros.yml', '')\
+            .replace('aetros-', '')\
+            .replace('.yml', '')
+
+        if configPath:
+            image += '_' + configPath.lower()
+
+    image = image.strip('/')
+    image = re.sub('[^A-Z_/\-a-z0-9]+', '-', image)
+
+    m = hashlib.md5()
+    m.update(simplejson.dumps([job_config['image'], job_config['install']]).encode('utf-8'))
+    image += ':' + m.hexdigest()[0:9]
+
     docker_build = [home_config['docker'], 'build']
 
     if rebuild_image:
