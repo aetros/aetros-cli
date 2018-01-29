@@ -211,7 +211,7 @@ def get_libcudart():
     version = ctypes.c_int()
     rc = libcudart.cudaRuntimeGetVersion(ctypes.byref(version))
     if rc != 0:
-        raise ValueError("Could not get version")
+        raise CudaNotImplementedException("Could not get version")
 
     if version.value < 6050:
         raise CudaNotImplementedException("CUDA version must be >= 6.5")
