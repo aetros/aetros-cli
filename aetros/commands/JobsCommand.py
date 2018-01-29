@@ -63,7 +63,7 @@ class JobsCommand:
 
         print("%d jobs found. (%d synced to remote)" % (len(job_map), len(remote_job_ids)))
         if not parsed_args.all:
-            print("Use --all to show remote jobs as well.")
+            print("Use --all to show remote-only jobs as well.")
 
         table_data = [['Short Job ID', 'Local', 'Remote', 'Long Job ID']]
 

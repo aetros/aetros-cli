@@ -543,8 +543,8 @@ class JobBackend:
 
         raise_sigint()
 
-    def batch(self, batch, total, batch_size, label='BATCH', speed_label='SAMPLES/S'):
-        self.step(batch, total, size=batch_size, label=label, speed_label=speed_label)
+    def batch(self, batch, total, size, label='BATCH', speed_label='SAMPLES/S'):
+        self.step(batch, total, size=size, label=label, speed_label=speed_label)
 
     def sample(self, sample, total, label='SAMPLE', speed_label='SAMPLES/S'):
         self.step(sample, total, size=1, label=label, speed_label=speed_label)
@@ -724,8 +724,8 @@ class JobBackend:
     def epoch(self, epoch=None, total=None):
         self.progress(epoch, total)
 
-    def progress(self, epoch=None, total=None):
-        self.current_epoch = self.current_epoch if epoch is None else epoch
+    def progress(self, progress=None, total=None):
+        self.current_epoch = self.current_epoch if progress is None else progress
         self.total_epochs = self.total_epochs if total is None else total
         epoch_limit = False
 
@@ -1646,7 +1646,7 @@ class JobBackend:
             if not os.path.exists(path):
                 raise Exception("Given word2vec file does not exist: " + path)
 
-            f = open(path, 'r')
+            f = open(path, 'rb')
 
             if not header_with_dimensions and not dimensions:
                 raise Exception('Either the word2vec file should contain the dimensions as header or it needs to be'
@@ -1673,7 +1673,7 @@ class JobBackend:
                     raise Exception(message)
 
                 labels += line[:space_pos] + b'\n'
-                vectors += np.fromstring(line[space_pos+1:], dtype=np.float32, sep=' ').tobytes()
+                vectors += np.fromstring(str(line[space_pos+1:]), dtype=np.float32, sep=' ').tobytes()
         else:
             raise Exception("Given word2vec is not a .txt file. Other file formats are not supported.")
 
@@ -1878,16 +1878,18 @@ class JobBackend:
         def default(attr, default=None):
             return data[attr] if attr in data else default
 
-        if action == 'epoch' or action == 'progress':
-            if 'epoch' not in data and 'total' not in data:
-                failed("requires value for 'epoch' or 'total'")
-                return False
+        if action == 'progress':
+            if validate_action(['progress', 'total']):
+                self.progress(**data)
+                return True
 
-            self.progress(**data)
-            return True
+        if action == 'epoch':
+            if validate_action(['epoch', 'total']):
+                self.epoch(**data)
+                return True
 
         if action == 'batch':
-            if validate_action(['batch', 'total', 'batch_size']):
+            if validate_action(['batch', 'total', 'size']):
                 self.batch(**data)
                 return True
 

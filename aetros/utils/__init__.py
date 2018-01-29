@@ -635,7 +635,7 @@ def git_remote_job_ids(home_config, model):
     job_ids = []
 
     for line in output.split('\n'):
-        if not '\t' in line:
+        if '\t' not in line:
             continue
         target, ref_name = line.split('\t')
         if ref_name.startswith('refs/aetros/job/'):

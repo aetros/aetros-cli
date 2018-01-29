@@ -24,7 +24,7 @@ class JobCheckoutCommand:
         parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter, prog=aetros.const.__prog__ + ' job-checkout')
         parser.add_argument('job_id', help="Short or long job id like ed4d6a204")
         parser.add_argument('file', nargs='*', help="Checkout only one file.")
-        parser.add_argument('--target', '-t', help="Target path where job files (or a single file) should be saved. Default current folder")
+        parser.add_argument('--target', '-t', help="Target directory where job files (or a single file) should be saved. Default current folder")
         parser.add_argument('--overwrite', '-p', help="Overwrite existing files.")
         parser.add_argument('--model', help="Model name like peter/mnist. Per default from current directory")
         parser.add_argument('-c', '--config', help="Default aetros.yml in current working directory.")
@@ -48,8 +48,9 @@ class JobCheckoutCommand:
 
         if not parsed_args.file and not os.path.exists(target):
             os.makedirs(target)
+
         if parsed_args.file and not os.path.exists(target):
-            os.makedirs(os.path.dirname(target))
+            os.makedirs(target)
 
         id_map = {}
 
