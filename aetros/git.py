@@ -87,6 +87,17 @@ class Git:
             self.logger.error(git_not_found)
             sys.exit(2)
 
+        ssh_not_found = 'SSH binary not available. Please install SSH first and make it available in $PATH.'
+        try:
+            if subprocess.Popen(['ssh', '-V'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait() > 0:
+                self.logger.error(ssh_not_found)
+                sys.exit(2)
+        except OSError:
+            self.logger.error(ssh_not_found)
+            sys.exit(2)
+
+        self.delete_git_ssh = setup_git_ssh(config)
+        self.logger.debug("GIT_SSH='" + str(os.getenv('GIT_SSH'))+"'")
         self.git_name = None
         self.git_email = None
 
@@ -138,7 +149,7 @@ class Git:
             # todo, shouldn't it be the same as master's?
             my_env['GIT_INDEX_FILE'] = self.index_path
 
-        # my_env['GIT_SSH'] = os.getenv('GIT_SSH', '')
+        my_env['GIT_SSH'] = os.getenv('GIT_SSH', '')
 
         return my_env
 
@@ -481,6 +492,10 @@ class Git:
 
         if os.path.exists(self.index_path):
             os.remove(self.index_path)
+
+        if self.delete_git_ssh:
+            self.delete_git_ssh()
+            self.delete_git_ssh = None
 
     def batch_commit(self, message):
         """

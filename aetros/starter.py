@@ -168,6 +168,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             job_backend.set_system_info('cpu_name', cpu['brand'])
             job_backend.set_system_info('cpu', [cpu['hz_actual_raw'][0], cpus])
 
+        job_backend.start_monitoring(cpu_cores=cpus, gpu_devices=gpu_devices, docker_container=job_backend.job_id)
+
         if not docker_image_built:
             docker_pull_image(logger, home_config, job_backend)
 
@@ -185,8 +187,6 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
 
         command.append(docker_image)
         command += ['/bin/sh', '-c', trap + 'trapIt /bin/sh /job/aetros/command.sh']
-
-        job_backend.start_monitoring(cpu_cores=cpus, gpu_devices=gpu_devices, docker_container=job_backend.job_id)
     else:
         # non-docker
         # env['PYTHONPATH'] += ':' + os.getcwd()

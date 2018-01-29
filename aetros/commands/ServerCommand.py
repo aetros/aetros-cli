@@ -126,7 +126,7 @@ class ServerCommand:
         parser.add_argument('--max-cpus',
             help="How many cores are available. Per default all available CPU cores.")
         parser.add_argument('--max-gpus',
-            help="How many GPUs are available. Comma separate list of device ids (pciBusId)."
+            help="How many GPUs are available. Comma separate list of device ids."
                  "Per default all available GPU cards. Use 'aetros gpu' too see the ids.")
 
         parser.add_argument('--no-gpus', action='store_true', help="Disable all GPUs")

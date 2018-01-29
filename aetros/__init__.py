@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 
 import sys
+import coloredlogs
 import aetros.const
 
 __version__ = const.__version__
@@ -111,7 +112,9 @@ def main(args=None):
         sys.exit(1)
 
     from aetros.utils import get_logger
-    logger = get_logger('aetros-' + cmd_name)
+
+    format = coloredlogs.DEFAULT_LOG_FORMAT if cmd_name == 'server' else None
+    logger = get_logger('aetros-' + cmd_name, format=format)
     command = commands_dict[cmd_name](logger)
 
     code = command.main(cmd_args)

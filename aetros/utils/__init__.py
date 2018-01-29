@@ -35,16 +35,21 @@ def is_debug():
     return os.getenv('DEBUG') == '1' or os.getenv('DEBUG') == '2'
 
 
-def get_logger(name=''):
+def get_logger(name='', debug=None, format=None):
 
     import coloredlogs
     logger = logging.getLogger(name if name else 'aetros')
 
     level = 'INFO'
-    fmt = '%(message)s'
-    if is_debug():
+    fmt = '%(message)s' if format is None else format
+
+    if debug is None:
+        debug = is_debug()
+
+    if debug:
         level = 'DEBUG'
-        fmt = coloredlogs.DEFAULT_LOG_FORMAT
+        if format is None:
+            fmt = coloredlogs.DEFAULT_LOG_FORMAT
 
     atty = None
     if '1' == os.getenv('AETROS_ATTY'):
