@@ -73,7 +73,6 @@ class Git:
         self.streamed_files = {}
         self.store_files = {}
 
-        self.prepare_index_file()
 
         git_not_found = 'Git binary not available. Please install Git >= 2.3.0 first and make it available in $PATH.'
         try:
@@ -113,8 +112,12 @@ class Git:
             self.command_exec(['init'])
             self.command_exec(['remote', 'add', 'origin', self.git_url])
 
+        # make sure its not called before git init
         if not os.path.exists(self.temp_path):
             os.makedirs(self.temp_path)
+
+        # requires the temp folder
+        self.prepare_index_file()
 
         # check if given repo_path is current folder.
         # check its origin remote and see if model_name matches
