@@ -90,6 +90,7 @@ class BackendClient:
 
         self.lock = Lock()
         self.channel_lock = {}
+        self.queue_lock = {}
         self.connection_errors = 0
         self.connection_tries = 0
         self.in_connecting = {}
@@ -130,6 +131,8 @@ class BackendClient:
         self.thread_read_instances = {}
         self.thread_write_instances = {}
         self.stop_on_empty_queue = {}
+        self.connected = {}
+        self.registered = {}
         self.ssh_stream = {}
         self.was_connected_once = {}
 
@@ -142,9 +145,11 @@ class BackendClient:
             self.ssh_stream[channel] = None
             self.ssh_channel[channel] = None
             self.connected[channel] = None
+            self.registered[channel] = None
             self.was_connected_once[channel] = False
             self.stop_on_empty_queue[channel] = False
             self.channel_lock[channel] = Lock()
+            self.queue_lock[channel] = Lock()
             self.in_connecting[channel] = False
             self.channel_closed[channel] = False
 
@@ -197,6 +202,11 @@ class BackendClient:
 
         try:
             if self.is_connected(channel) or self.online is False:
+                if self.is_connected(channel):
+                    self.logger.debug('[%s] Already connected' % (channel, ))
+                if self.online is False:
+                    self.logger.debug('[%s] self.online=False' % (channel, ))
+
                 return True
 
             self.channel_lock[channel].acquire()
@@ -357,11 +367,11 @@ class BackendClient:
                             self.send_message(message, channel)
                             sent.append(message)
 
-                        self.channel_lock[channel].acquire()
+                        self.queue_lock[channel].acquire()
                         if message in self.queues[channel]:
                             if message['_sent']:
                                 self.queues[channel].remove(message)
-                        self.channel_lock[channel].release()
+                        self.queue_lock[channel].release()
 
                     except Exception as e:
                         self.logger.debug('[%s] Closed write thread: exception. %d messages left'
@@ -379,7 +389,7 @@ class BackendClient:
 
                 if self.active and not self.is_connected(channel) and not self.expect_close:
                     if not self.connect(channel):
-                        time.sleep(5)
+                        time.sleep(1)
 
         self.logger.debug('[%s] Closed write thread: disconnect. %d messages left' % (channel, len(self.queues[channel]), ))
 
@@ -548,7 +558,7 @@ class BackendClient:
             # as we would lose information in git streams.
             return
 
-        self.channel_lock[channel].acquire()
+        self.queue_lock[channel].acquire()
 
         try:
             if self.channel_closed[channel]:
@@ -596,7 +606,7 @@ class BackendClient:
                 self.queues[channel].append(message)
 
         finally:
-            self.channel_lock[channel].release()
+            self.queue_lock[channel].release()
 
     def send_message(self, message, channel):
         """

@@ -92,6 +92,7 @@ def loading_text(label='Loading ... '):
 
     return stop
 
+
 def get_option(dict, key, default=None, type=None):
     if key not in dict or dict[key] == '':
         return default
