@@ -190,7 +190,7 @@ class BackendClient:
         Also, when more than 10 connection tries are detected, we delay extra 15 seconds.
         """
         if self.connection_tries > 10:
-            time.sleep(15)
+            time.sleep(10)
 
         if self.in_connecting[channel]:
             return False
@@ -226,9 +226,10 @@ class BackendClient:
 
                 self.ssh_channel[channel] = self.ssh_stream[channel].get_transport().open_session()
                 self.ssh_channel[channel].exec_command('stream')
-            except NoValidConnectionsError as e:
-                self.logger.debug("Failed, go offline: " + str(e))
-                self.online = False
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as e:
+                self.logger.debug('[%s] connection failed: %s'  % (channel, str(e)))
                 return False
             finally:
                 self.channel_lock[channel].release()
@@ -243,8 +244,19 @@ class BackendClient:
                 self.logger.debug('[%s] opened and received %d messages' % (channel, len(messages)))
                 self.connected[channel] = True
                 self.registered[channel] = self.on_connect(self.was_connected_once[channel], channel)
+                if self.registered[channel] and self.was_connected_once[channel]:
+                    self.logger.info("[%s] successfully reconnected." % (channel, ))
 
             if not self.registered[channel]:
+                # make sure to close channel and connection first
+                try:
+                    self.ssh_channel[channel] and self.ssh_channel[channel].close()
+                except: pass
+
+                try:
+                    self.ssh_stream[channel] and self.ssh_stream[channel].close()
+                except: pass
+
                 self.logger.debug("[%s] Client: registration failed. stderrdata: %s" % (channel, stderrdata))
                 self.connected[channel] = False
 
@@ -306,8 +318,14 @@ class BackendClient:
 
         # make sure ssh connection is closed, so we can recover
         try:
+            if self.ssh_channel[channel]:
+                self.ssh_channel[channel].close()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+
+        try:
             if self.ssh_stream[channel]:
-                self.logger.debug('[%s] Client: ssh_tream close due to connection error' % (channel,))
+                self.logger.debug('[%s] Client: ssh_stream close due to connection error' % (channel,))
                 self.ssh_stream[channel].close()
         except (KeyboardInterrupt, SystemExit):
             raise

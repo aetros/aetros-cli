@@ -387,7 +387,6 @@ class JobBackend:
         self.stop_requested_force = False
 
         self.kpi_channel = None
-        self.registered = None
         self.progresses = {}
 
         self.event_listener.on('stop', self.external_stop)
@@ -445,10 +444,7 @@ class JobBackend:
         self.git.online = False
 
     def on_registration(self, params):
-        if not self.registered:
-            self.registered = True
-        else:
-            self.logger.info("Successfully reconnected.")
+        pass
 
     def on_signusr1(self, signal, frame):
         self.logger.warning("USR1: backend job_id=%s (running=%s, ended=%s), client (online=%s, active=%s, registered=%s, "
@@ -1070,12 +1066,15 @@ class JobBackend:
             # all further client.send calls won't be included in the final git push calculation
             # and might be sent again.
 
+            failure_in_last_sync = False
+
             # do now the last final git push, where we upload commits and trees.
             # blobs should be added already via streaming
             if self.is_master_process():
                 # non-master commit and upload only.
                 # master tracks what commits habe been sent already
-                self.git.push()
+                if self.git.push() is False:
+                    failure_in_last_sync = True
 
             # send all last messages and git pack
             self.logger.debug("Last wait_until_queue_empty")
@@ -1099,16 +1098,19 @@ class JobBackend:
             self.client.end()
 
             if self.is_master_process():
-                # check if we have uncommitet stuff
+                # check if we have uncommitted stuff
                 objects_to_sync, types = self.git.diff_objects(self.git.get_head_commit())
 
                 if objects_to_sync:
-                    self.logger.warning("Not all job data have been uploaded.")
-                    self.logger.warning("Please run following command to make sure your job is stored on the server.")
-                    self.logger.warning("$ aetros job-push " + self.job_id[0:9])
+                    failure_in_last_sync = True
+
+            if self.is_master_process() and failure_in_last_sync:
+                self.logger.warning("Not all job data have been uploaded.")
+                self.logger.warning("Please run following command to make sure your job is stored on the server.")
+                self.logger.warning("$ aetros job-push " + self.job_id[0:9])
 
         elif self.is_master_process():
-            self.logger.warning("Not all job data have been uploaded because you are offline.")
+            self.logger.warning("Not all job data have been uploaded because you went offline.")
             self.logger.warning("Run following command to make sure your job is stored on the server.")
             self.logger.warning("$ aetros job-push " + self.job_id[0:9])
 

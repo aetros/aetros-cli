@@ -9,10 +9,8 @@ import six
 from threading import Thread, Lock
 import time
 import sys
-from ruamel import yaml
 
-from aetros.api import ApiConnectionError
-from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config, is_debug
+from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config, is_debug2
 
 
 class GitCommandException(Exception):
@@ -72,7 +70,6 @@ class Git:
 
         self.streamed_files = {}
         self.store_files = {}
-
 
         git_not_found = 'Git binary not available. Please install Git >= 2.3.0 first and make it available in $PATH.'
         try:
@@ -412,27 +409,6 @@ class Git:
         # every caller needs to make sure to call git.push
         return self.job_id
 
-    def thread_push(self):
-        last_synced_head = self.get_head_commit()
-
-        failures = 0
-        while self.active_thread:
-            try:
-                if last_synced_head != self.get_head_commit():
-                    self.push()
-                    failures = 0
-
-                time.sleep(0.5)
-            except (SystemExit, KeyboardInterrupt):
-                return
-            except Exception as e:
-                failures += 1
-                if failures > 10:
-                    message = str(type(e).__name__) + ': ' + str(e)
-                    self.logger.error("Too many failures in Git sync. Stopped automatic sync: " + message)
-                    return
-                time.sleep(2)
-
     def start_push_sync(self):
         """
         Starts the detection of unsynced Git data.
@@ -583,7 +559,7 @@ class Git:
 
             already_set = path in self.store_files and self.store_files[path] == data
 
-            if is_debug():
+            if is_debug2():
                 sys.__stderr__.write('git:store_file(%s, %s, %s), already_set=%s\n'
                                      % (str(path), str(data)[0:180], str(fast_lane), str(already_set)))
 
@@ -817,16 +793,17 @@ class Git:
 
         collect_files_from_commit(commit_sha)
 
-        ssh_stream = create_ssh_stream(read_home_config(), exit_on_failure=False)
         shas_to_check = object_shas
         self.logger.debug("shas_to_check: %s " % (str(shas_to_check),))
 
-        if not object_shas:
+        if not shas_to_check:
             return [], summary
 
         for sha in shas_to_check:
             self.synced_object_shas[sha] = True
 
+        self.logger.debug("Do git-cat-file-check.sh")
+        ssh_stream = create_ssh_stream(read_home_config(), exit_on_failure=False)
         channel = ssh_stream.get_transport().open_session()
         channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
         channel.sendall('\n'.join(shas_to_check))
@@ -846,6 +823,8 @@ class Git:
             return content
 
         missing_objects = readall(channel).decode('utf-8').splitlines()
+        channel.close()
+        ssh_stream.close()
 
         # make sure we have in objects only SHAs we actually will sync
         for type in six.iterkeys(summary):
@@ -861,6 +840,7 @@ class Git:
 
     def push(self):
         self.push_lock.acquire()
+        missing_object_sha = []
 
         try:
             commit_sha = self.get_head_commit()
@@ -890,10 +870,28 @@ class Git:
                 except Exception:
                     # next push we sync self.synced_object_shas with server again
                     self.synced_object_shas = {}
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            return False
         finally:
             self.push_lock.release()
 
         return missing_object_sha
+
+    def thread_push(self):
+        last_synced_head = self.get_head_commit()
+
+        while self.active_thread:
+            try:
+                if last_synced_head != self.get_head_commit():
+                    self.push()
+
+                time.sleep(0.5)
+            except (SystemExit, KeyboardInterrupt):
+                return
+            except Exception as e:
+                time.sleep(5)
 
     def commit_index(self, message):
         """

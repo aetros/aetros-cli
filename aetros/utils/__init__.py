@@ -42,6 +42,7 @@ def is_debug():
 def get_logger(name='', debug=None, format=None):
 
     import coloredlogs
+    # logging.basicConfig() # this will make paramiko log a lot of stuff
     logger = logging.getLogger(name if name else 'aetros')
 
     level = 'INFO'
@@ -210,7 +211,9 @@ def create_ssh_stream(config, exit_on_failure=True):
 
         ssh_stream.connect(config['host'], port=config['ssh_port'], key_filename=key_filename, username='git', compress=True, pkey=key)
         # ssh_stream.get_transport().window_size = 2147483647
-    except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException) as e:
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except Exception as e:
         if exit_on_failure:
             message = str(type(e).__name__) + ': ' + str(e)
             sys.stdout.write("Fatal: AETROS authentication against "+config['host']+" failed using key " +
