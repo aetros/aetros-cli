@@ -68,8 +68,16 @@ class RunCommand:
             parsed_args.model = config['model']
 
         if not parsed_args.model:
-            print("No model defined. Use --model or switch into a directory where you executed 'aetros init model-name'.")
+            print("fatal: no model defined. Use --model or switch into a directory where you executed 'aetros init model-name'.")
             sys.exit(2)
+
+        if not parsed_args.local and parsed_args.volume:
+            print("fatal: can not use volume with jobs on the cluster. Use datasets instead.")
+            sys.exit(1)
+
+        if parsed_args.local and parsed_args.priority:
+            print("fatal: the priority can only be set for jobs in the cluster.")
+            sys.exit(1)
 
         env = {}
         if parsed_args.e:
@@ -186,7 +194,7 @@ class RunCommand:
         if parsed_args.local:
             summary += 'locally'
         else:
-            summary += 'remotely'
+            summary += 'on the cluster'
 
         if create_info['config']['image']:
             summary += ' in Docker using image %s with %d CPU cores, %d memory and %d GPUs.' \
@@ -230,11 +238,12 @@ class RunCommand:
             link = "%smodel/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
             sys.__stdout__.write(u"➤ Monitor job at %s\n" % (link))
 
-        job_backend.start(collect_system=False, offline=parsed_args.offline, push=False)
-        if not parsed_args.offline:
-            job_backend.git.start_push_sync()
-
         if parsed_args.local:
+            job_backend.start(collect_system=False, offline=parsed_args.offline, push=False)
+
+            if not parsed_args.offline:
+                job_backend.git.start_push_sync()
+
             cpus = create_info['config']['resources']['cpu']
             memory = create_info['config']['resources']['memory']
 
@@ -246,12 +255,3 @@ class RunCommand:
 
             start_command(self.logger, job_backend, env, parsed_args.volume, cpus=cpus, memory=memory, gpu_devices=parsed_args.gpu_device,
                 offline=parsed_args.offline)
-
-        else:
-            if parsed_args.volume:
-                print("Can not use volume with jobs on the cluster. Use datasets instead.")
-                sys.exit(1)
-
-            # todo, make it visible
-            job_backend.git.push()
-            print("Open http://%s/model/%s/job/%s to monitor it." % (job_backend.host, job_backend.model_name, job_backend.job_id))

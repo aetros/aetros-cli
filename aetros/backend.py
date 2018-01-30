@@ -1879,14 +1879,12 @@ class JobBackend:
             return data[attr] if attr in data else default
 
         if action == 'progress':
-            if validate_action(['progress', 'total']):
-                self.progress(**data)
-                return True
+            self.progress(**data)
+            return True
 
         if action == 'epoch':
-            if validate_action(['epoch', 'total']):
-                self.epoch(**data)
-                return True
+            self.epoch(**data)
+            return True
 
         if action == 'batch':
             if validate_action(['batch', 'total', 'size']):
