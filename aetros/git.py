@@ -415,18 +415,23 @@ class Git:
     def thread_push(self):
         last_synced_head = self.get_head_commit()
 
+        failures = 0
         while self.active_thread:
             try:
                 if last_synced_head != self.get_head_commit():
                     self.push()
+                    failures = 0
 
                 time.sleep(0.5)
-            except GitCommandException:
-                pass
-            except SystemExit:
+            except (SystemExit, KeyboardInterrupt):
                 return
-            except KeyboardInterrupt:
-                return
+            except Exception as e:
+                failures += 1
+                if failures > 10:
+                    message = str(type(e).__name__) + ': ' + str(e)
+                    self.logger.error("Too many failures in Git sync. Stopped automatic sync: " + message)
+                    return
+                time.sleep(2)
 
     def start_push_sync(self):
         """
@@ -812,7 +817,7 @@ class Git:
 
         collect_files_from_commit(commit_sha)
 
-        ssh_stream = create_ssh_stream(read_home_config())
+        ssh_stream = create_ssh_stream(read_home_config(), exit_on_failure=False)
         shas_to_check = object_shas
         self.logger.debug("shas_to_check: %s " % (str(shas_to_check),))
 
