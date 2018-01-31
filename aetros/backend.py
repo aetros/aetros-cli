@@ -1648,7 +1648,7 @@ class JobBackend:
             if not os.path.exists(path):
                 raise Exception("Given word2vec file does not exist: " + path)
 
-            f = open(path, 'rb')
+            f = open(path, 'r')
 
             if not header_with_dimensions and not dimensions:
                 raise Exception('Either the word2vec file should contain the dimensions as header or it needs to be'
@@ -1661,21 +1661,21 @@ class JobBackend:
                 dimensions = np.fromstring(line, dtype=np.uint, sep=' ').tolist()
 
             vectors = b''
-            labels = b''
+            labels = ''
 
             line_pos = 1 if header_with_dimensions else 0
 
             # while '' != (line = f.readline())
-            for line in iter(f.readline, b''):
+            for line in iter(f.readline, ''):
                 line_pos += 1
-                space_pos = line.find(b' ')
+                space_pos = line.find(' ')
                 if -1 == space_pos:
                     message = 'Given word2vec does not have correct format in line ' + str(line_pos)
                     message += '\nGot: ' + str(line)
                     raise Exception(message)
 
-                labels += line[:space_pos] + b'\n'
-                vectors += np.fromstring(str(line[space_pos+1:]), dtype=np.float32, sep=' ').tobytes()
+                labels += line[:space_pos] + '\n'
+                vectors += np.fromstring(line[space_pos+1:], dtype=np.float32, sep=' ').tobytes()
         else:
             raise Exception("Given word2vec is not a .txt file. Other file formats are not supported.")
 

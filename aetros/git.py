@@ -176,7 +176,7 @@ class Git:
         interrupted = False
 
         if inputdata is not None and not isinstance(inputdata, six.binary_type):
-            inputdata = inputdata.encode("utf-8", 'replace')
+            inputdata = inputdata.encode('utf-8')
 
         if command[0] != 'git':
             base_command = ['git', '--bare', '--git-dir', self.git_path]
@@ -794,7 +794,7 @@ class Git:
         collect_files_from_commit(commit_sha)
 
         shas_to_check = object_shas
-        self.logger.debug("shas_to_check: %s " % (str(shas_to_check),))
+        self.logger.debug("shas_to_check %d: %s " % (len(shas_to_check), str(shas_to_check),))
 
         if not shas_to_check:
             return [], summary
@@ -826,7 +826,7 @@ class Git:
         channel.close()
         ssh_stream.close()
 
-        # make sure we have in objects only SHAs we actually will sync
+        # make sure we have in summary only SHAs we actually will sync
         for type in six.iterkeys(summary):
             ids = summary[type][:]
             for sha in ids:
@@ -884,8 +884,11 @@ class Git:
 
         while self.active_thread:
             try:
+                head = self.get_head_commit()
                 if last_synced_head != self.get_head_commit():
-                    self.push()
+                    self.logger.debug("Git head moved from %s to %s" % (last_synced_head, head))
+                    if self.push() is not False:
+                        last_synced_head = head
 
                 time.sleep(0.5)
             except (SystemExit, KeyboardInterrupt):

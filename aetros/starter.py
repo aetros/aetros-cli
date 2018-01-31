@@ -561,16 +561,16 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
         image += '_' + job_config['category'].lower()
 
     if 'configPath' in job_config and job_config['configPath']:
-        configPath = job_config['configPath']\
+        config_path = job_config['configPath']\
             .replace('aetros.yml', '')\
             .replace('aetros-', '')\
             .replace('.yml', '')
 
-        if configPath:
-            image += '_' + configPath.lower()
+        if config_path:
+            image += '_' + config_path.lower()
 
     image = image.strip('/')
-    image = re.sub('[^A-Z_/\-a-z0-9]+', '-', image)
+    image = re.sub('[^A-Z_/\-a-z0-9]+', '-', image).strip('-')
 
     m = hashlib.md5()
     m.update(simplejson.dumps([job_config['image'], job_config['install']]).encode('utf-8'))
@@ -583,8 +583,8 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
 
     docker_build += ['-t', image, '-f', dockerfile, '.', ]
 
-    logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
     job_backend.set_status('IMAGE BUILD')
+    logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
     p = execute_command(args=docker_build, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
     if p.returncode:

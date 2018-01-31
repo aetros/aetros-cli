@@ -65,6 +65,22 @@ def get_logger(name='', debug=None, format=None):
     return logger
 
 
+def ensure_docker_installed(logger, home_config=None):
+    home_config = home_config or read_home_config()
+    try:
+        out = subprocess.check_output([home_config['docker'], '-v'])
+        return True
+    except Exception as e:
+        logger.error('Docker is not installed: ' + (str(e)))
+        sys.exit(2)
+
+
+def docker_call(args, home_config=None):
+    home_config = home_config or read_home_config()
+    base = [home_config['docker']]
+    return subprocess.check_output(base + args)
+
+
 def loading_text(label='Loading ... '):
     import itertools, sys
     spinner = itertools.cycle(['-', '/', '|', '\\'])
@@ -588,9 +604,9 @@ def is_ignored(path, ignore_patters):
             regex = regex.replace('\\*', '[^/\\\\]+')
             regex = '(' + regex + ')'
             if pattern[0] == '/' or (pattern[0] == '!' and pattern[1] == '/'):
-                regex = '^' + regex
+                regex = '^' + regex + '$'
             else:
-                regex = '^.*' + regex
+                regex = '^.*' + regex + '$'
 
             reobj = re.compile(regex)
             ignore_pattern_cache[pattern] = reobj

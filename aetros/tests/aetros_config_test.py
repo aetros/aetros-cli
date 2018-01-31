@@ -110,6 +110,8 @@ class TestConfig(unittest.TestCase):
         self.assertNotIgnored('script.py', '')
         self.assertNotIgnored('script.py', '!script.py')
 
+        self.assertNotIgnored('script.py', 'script')
+
         self.assertIgnored('script.py', 'script.py')
         self.assertIgnored('script.py', '*.py')
         self.assertNotIgnored('script.py', 'script.py\n!*.py')
@@ -141,7 +143,8 @@ class TestConfig(unittest.TestCase):
 
         self.assertNotIgnored('folder/script.py', '/*er2/script.py')
         self.assertIgnored('folder2/script.py', '/*er2/script.py')
-        self.assertIgnored('folder/script.py', '/*er2/script.py\nfolder')
+        self.assertNotIgnored('folder/script.py', '/*er2/script.py\nfolder')
+        self.assertIgnored('folder/script.py', '/*er/script.py\nfolder')
 
         self.assertIgnored('very/deep/datasets/dataset.zip', '*.zip')
         self.assertIgnored('very/deep/datasets/dataset.zip', 'datasets/*')
@@ -151,6 +154,8 @@ class TestConfig(unittest.TestCase):
         self.assertIgnored('very/deep/datasets/dataset.zip', '/very/**/*.zip')
         self.assertNotIgnored('very/deep/dataset.zip', '/very/**/*.zip')
         self.assertIgnored('very/deep/dataset.zip', '/very/*/*.zip')
-        self.assertIgnored('very/deep/dataset.zip', '/very/')
+
+        self.assertNotIgnored('very/deep/dataset.zip', '/very/')
+        self.assertIgnored('very/deep/dataset.zip', '/very/**')
 
 

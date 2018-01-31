@@ -2,16 +2,23 @@
 
 from __future__ import absolute_import
 from __future__ import print_function
+from __future__ import division
 import argparse
 
 import sys
 import os
+from math import ceil
+
+import psutil
+from cpuinfo import cpuinfo
+
 import aetros.utils.git
+from aetros.cuda_gpu import get_ordered_devices, CudaNotImplementedException
 from aetros.starter import start_command
 
 from aetros.backend import JobBackend
-from aetros.utils import human_size, lose_parameters_to_full, extract_parameters, find_config, \
-    loading_text, read_home_config
+from aetros.utils import human_size, lose_parameters_to_full, extract_parameters, find_config, loading_text, \
+    read_home_config, ensure_docker_installed, docker_call
 
 
 class RunCommand:
@@ -29,7 +36,7 @@ class RunCommand:
         parser.add_argument('command', nargs='?', help="The command to run. Default read in configuration file")
         parser.add_argument('-i', '--image', help="Which Docker image to use for the command. Default read in configuration file. If not specified, command is executed on the host.")
         parser.add_argument('--no-image', action='store_true', help="Forces not to use docker, even when image is defined in the configuration file.")
-        
+
         parser.add_argument('-s', '--server', action='append', help="Limits the server pool to this server. Default not limitation or read in configuration file. Multiple --server allowed.")
         parser.add_argument('-m', '--model', help="Under which model this job should be listed. Default read in configuration file")
         parser.add_argument('-l', '--local', action='store_true', help="Start the job immediately on the current machine.")
@@ -41,7 +48,7 @@ class RunCommand:
         parser.add_argument('--gpu', help="How many GPU cards should be assigned to job. Docker only.")
         parser.add_argument('--gpu_memory', help="Memory requirement for the GPU. Docker only.")
 
-        parser.add_argument('--offline', help="Whether the execution should happen offline.")
+        parser.add_argument('--offline', '-o', action='store_true', help="Whether the execution should happen offline.")
 
         parser.add_argument('--rebuild-image', action='store_true', help="Makes sure the Docker image is re-built without cache.")
 
@@ -79,6 +86,9 @@ class RunCommand:
             print("fatal: the priority can only be set for jobs in the cluster.")
             sys.exit(1)
 
+        if config['image']:
+            ensure_docker_installed(self.logger)
+
         env = {}
         if parsed_args.e:
             for item in parsed_args.e:
@@ -105,7 +115,6 @@ class RunCommand:
         adding_files("done with %d file%s added (%s)."
                      % (files_added, 's' if files_added != 1 else '', human_size(size_added, 2)))
 
-        creating_git_job = loading_text("- Create job in local Git ... ")
         create_info = {
             'type': 'custom',
             'config': config
@@ -165,6 +174,7 @@ class RunCommand:
 
         create_info['config']['resources'] = create_info['config'].get('resources', {})
         resources = create_info['config']['resources']
+
         resources['cpu'] = int(parsed_args.cpu or resources.get('cpu', 1))
         resources['memory'] = int(parsed_args.memory or resources.get('memory', 1))
         resources['gpu'] = int(parsed_args.gpu or resources.get('gpu', 0))
@@ -173,11 +183,55 @@ class RunCommand:
         if parsed_args.local:
             create_info['server'] = 'local'
 
+            # make sure we do not limit the resources to something that is not available on the local machine
+            warning = []
+            cpu = cpuinfo.get_cpu_info()
+            mem = psutil.virtual_memory().total
+            gpu = 0
+            try:
+                gpu = len(get_ordered_devices())
+            except CudaNotImplementedException: pass
+
+            if not create_info['config']['image'] and not all([x == 0 for x in resources]):
+                self.logger.warning("! No Docker virtualization since no `image` defined, resources limitation ignored.")
+
+            if create_info['config']['image'] and resources['gpu'] > 0:
+                if not (sys.platform == "linux" or sys.platform == "linux2"):
+                    self.logger.warning("! Your operating system does not support GPU allocation for "
+                                        "Docker virtualization. "
+                                        "NVIDIA-Docker2 is only supported on Linux.")
+
+            local_max_resources = {'cpu': cpu['count'], 'memory': ceil(mem / 1024 / 1024 / 1024), 'gpu': gpu}
+            if create_info['config']['image']:
+                # read max hardware within Docker
+                out = docker_call(['run', 'alpine', 'sh', '-c', 'nproc && cat /proc/meminfo | grep MemTotal'])
+                cpus, memory = out.decode('utf-8').strip().split('\n')
+                local_max_resources['cpu'] = int(cpus)
+
+                memory = memory.replace('MemTotal:', '').replace('kB', '').strip()
+                local_max_resources['memory'] = ceil(int(memory) / 1024 / 1024)
+
+            if local_max_resources['cpu'] < resources['cpu']:
+                warning.append('CPU cores %d -> %d' % (resources['cpu'], local_max_resources['cpu']))
+                resources['cpu'] = local_max_resources['cpu']
+
+            if local_max_resources['memory'] < resources['memory']:
+                warning.append('memory %dGB -> %dGB' % (resources['memory'], local_max_resources['memory']))
+                resources['memory'] = local_max_resources['memory']
+
+            if local_max_resources['gpu'] < resources['gpu']:
+                warning.append('GPU cards %d -> %d' % (resources['gpu'], local_max_resources['gpu']))
+                resources['gpu'] = local_max_resources['gpu']
+
+            if warning:
+                self.logger.warning("! Resources downgrade due to missing hardware: %s." % (', '.join(warning),))
+
         if parsed_args.config and not create_info['config']['configPath']:
             create_info['config']['configPath'] = parsed_args.config
 
         create_info['config']['sourcesAttached'] = True
 
+        creating_git_job = loading_text("- Create job in local Git ... ")
         if aetros.utils.git.get_current_commit_hash():
             create_info['origin_git_source'] = {
                 'origin': aetros.utils.git.get_current_remote_url(),

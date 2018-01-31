@@ -25,7 +25,7 @@ class InitCommand:
             prog=aetros.const.__prog__ + ' init')
         parser.add_argument('name', help="Model name")
         parser.add_argument('directory', nargs='?', help="Directory, default in current.")
-        parser.add_argument('--organisation', '-o', help="Create the model in given space. If space does not exist, create it.")
+        parser.add_argument('--organisation', '-o', help="Create the model in the organisation instead of the user account.")
         parser.add_argument('--space', '-s', help="Create the model in given space. If space does not exist, create it.")
         parser.add_argument('--private', action='store_true', help="Make the model private. Example: aetros init my-model --private")
         parser.add_argument('--force', '-f', action='store_true', help="Force overwriting of already existing configuration file.")
