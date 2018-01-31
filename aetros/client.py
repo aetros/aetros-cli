@@ -419,7 +419,7 @@ class BackendClient:
 
                         if messages is not None:
                             self.logger.debug("[%s] Client: handle message: %s" % (channel, str(messages)))
-                            self.handle_messages(messages)
+                            self.handle_messages(channel, messages)
 
                         if self.stop_on_empty_queue[channel]:
                             return
@@ -675,7 +675,7 @@ class BackendClient:
             self.connection_error(channel, error)
             return False
 
-    def handle_messages(self, messages):
+    def handle_messages(self, channel, messages):
         self.lock.acquire()
         try:
             for message in messages:
@@ -808,21 +808,26 @@ class JobClient(BackendClient):
                 if channel == '':
                     self.event_listener.fire('registration')
 
-                self.handle_messages(messages)
+                self.handle_messages(channel, messages)
                 return True
 
         self.logger.error("[%s] Registration of job %s failed." % (channel, self.job_id,))
         return False
 
-    def handle_messages(self, messages):
+    def handle_messages(self, channel, messages):
+        BackendClient.handle_messages(self, channel, messages)
 
-        BackendClient.handle_messages(self, messages)
+        # only main channel should handle following messages
+        if channel != '':
+            return
+
         for message in messages:
             if self.external_stopped:
                 continue
 
             if not isinstance(message, dict):
                 continue
+
 
             if 'a' in message and 'parameter-changed' == message['a']:
                 self.event_listener.fire('parameter_changed', {'values': message['values']})

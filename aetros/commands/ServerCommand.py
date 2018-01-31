@@ -54,7 +54,7 @@ class ServerClient(BackendClient):
             if "registered" in message['a']:
                 self.registered[channel] = True
                 self.event_listener.fire('registration', {'username': message['username'], 'server': self.server_name})
-                self.handle_messages(messages)
+                self.handle_messages(channel, messages)
                 return True
 
         self.logger.error("Registration of server %s failed due to protocol error." % (self.server_name,))
@@ -63,7 +63,7 @@ class ServerClient(BackendClient):
 
         return False
 
-    def handle_messages(self, messages):
+    def handle_messages(self, channel, messages):
         for message in messages:
             if not isinstance(message, dict):
                 return

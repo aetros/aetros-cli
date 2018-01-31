@@ -1424,7 +1424,7 @@ class JobBackend:
 
     registered_actions = {}
 
-    def register_action(self,  callback, name=None, label=None, description=None):
+    def register_action(self, callback, name=None, label=None, description=None):
         if name is None:
             name = callback.__name__
 
@@ -1435,8 +1435,8 @@ class JobBackend:
 
             start_default_idx = len(inspect_args.args) - len(defaults)
 
-            for idx, name in enumerate(inspect_args.args):
-                args[name] = {'default': None, 'type': 'mixed'}
+            for idx, argname in enumerate(inspect_args.args):
+                args[argname] = {'default': None, 'type': 'mixed'}
 
                 if idx >= start_default_idx:
                     default_value = defaults[idx - start_default_idx]
@@ -1446,7 +1446,7 @@ class JobBackend:
                     if isinstance(default_value, float): arg_type = 'float'
                     if isinstance(default_value, bool): arg_type = 'bool'
 
-                    args[name] = {'default': default_value, 'type': arg_type}
+                    args[argname] = {'default': default_value, 'type': arg_type}
 
         value = {
             'label': label,
@@ -1471,9 +1471,6 @@ class JobBackend:
         action_name = params['name']
         action_value = params['value']
 
-        self.logger.debug("Trigger action: " + str(params))
-        self.logger.info("Trigger action %s(%s)" %( action_name, str(action_value)))
-
         if action_name in ['pause', 'continue']:
             try:
                 if action_name == 'pause': return self.on_pause()
@@ -1487,8 +1484,11 @@ class JobBackend:
                 self.logger.warning("Trigger action %s failed: %s" % (action_name, type(e).__name__ + ': ' + str(e)))
 
         if action_name not in self.registered_actions:
-            self.logger.warning('Received action ' + str(action_name) + ' but no callback registered.')
+            # Received action ' + str(action_name) + ' but no callback registered.')
             return
+
+        self.logger.debug("Trigger action: " + str(params))
+        self.logger.info("Trigger action %s(%s)" %( action_name, str(action_value)))
 
         config = self.registered_actions[action_name]
         callback = config['callback']
@@ -1874,7 +1874,7 @@ class JobBackend:
             return True
 
         def failed(message):
-            self.logger.warning(
+            raise StdoutApiException(
                 "AETROS stdout API call %s failed: %s Following ignored: %s" % (action, message, str(data)))
 
         def default(attr, default=None):
