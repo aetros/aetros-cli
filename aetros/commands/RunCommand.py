@@ -10,6 +10,7 @@ import os
 from math import ceil
 
 import psutil
+import six
 from cpuinfo import cpuinfo
 
 import aetros.utils.git
@@ -175,8 +176,9 @@ class RunCommand:
         create_info['config']['resources'] = create_info['config'].get('resources', {})
         resources = create_info['config']['resources']
 
-        resources['cpu'] = int(parsed_args.cpu or resources.get('cpu', 1))
-        resources['memory'] = int(parsed_args.memory or resources.get('memory', 1))
+        default_cpu_and_memory = 1 if create_info['config']['image'] else 0
+        resources['cpu'] = int(parsed_args.cpu or resources.get('cpu', default_cpu_and_memory))
+        resources['memory'] = int(parsed_args.memory or resources.get('memory', default_cpu_and_memory))
         resources['gpu'] = int(parsed_args.gpu or resources.get('gpu', 0))
         resources['gpu_memory'] = int(parsed_args.gpu_memory or resources.get('gpu_memory', 0))
 
@@ -192,7 +194,7 @@ class RunCommand:
                 gpu = len(get_ordered_devices())
             except CudaNotImplementedException: pass
 
-            if not create_info['config']['image'] and not all([x == 0 for x in resources]):
+            if not create_info['config']['image'] and not all([x == 0 for x in six.itervalues(resources)]):
                 self.logger.warning("! No Docker virtualization since no `image` defined, resources limitation ignored.")
 
             if create_info['config']['image'] and resources['gpu'] > 0:

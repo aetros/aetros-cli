@@ -194,12 +194,12 @@ class JobLossChannel:
 
 
 class JobImage:
-    def __init__(self, id, image, label=None, pos=None):
-        self.id = id
-        if not isinstance(image, PIL.Image.Image):
+    def __init__(self, name, pil_image, label=None, pos=None):
+        self.id = name
+        if not isinstance(pil_image, PIL.Image.Image):
             raise Exception('JobImage requires a PIL.Image as image argument.')
 
-        self.image = image
+        self.image = pil_image
         self.label = label
         self.pos = pos
 
@@ -258,6 +258,7 @@ class JobChannel:
             'type': type or JobChannel.NUMBER,
             'main': main,
             'kpi': kpi,
+            'timed': True,
             'kpiTrace': kpiTrace,
             'maxOptimization': max_optimization,
             'xaxis': xaxis,
@@ -309,7 +310,7 @@ class JobBackend:
     :type job: dict
     """
 
-    def __init__(self, model_name=None, logger=None, config_path = 'aetros.yml', name=None):
+    def __init__(self, model_name=None, logger=None, config_path='aetros.yml', name=None):
         self.event_listener = EventListener()
 
         self.log_file_handle = None
@@ -643,22 +644,22 @@ class JobBackend:
     def on_parameter_changed(self, params):
         pass
 
-    def create_progress(self, id, total_steps=100):
-        if id in self.progresses:
-            return self.progresses[id]
+    def create_progress(self, name, total_steps=100):
+        if name in self.progresses:
+            return self.progresses[name]
 
         class Controller():
-            def __init__(self, git, id, total_steps=100):
+            def __init__(self, git, name, total_steps=100):
                 self.started = False
                 self.stopped = False
                 self.lock = Lock()
-                self.id = id
+                self.name = name
                 self.step = 0
                 self.steps = total_steps
                 self.eta = 0
                 self.last_call = 0
                 self.git = git
-                self._label = id
+                self._label = name
 
                 self.store()
 
@@ -671,7 +672,7 @@ class JobBackend:
                     'steps': self.steps,
                     'eta': self.eta,
                 }
-                self.git.store_file('aetros/job/progress/' + self.id + '.json', simplejson.dumps(info))
+                self.git.store_file('aetros/job/progress/' + self.name + '.json', simplejson.dumps(info))
 
             def label(self, label):
                 self._label = label
@@ -713,9 +714,9 @@ class JobBackend:
                 self.store()
                 self.lock.release()
 
-        self.progresses[id] = Controller(self.git, id, total_steps)
+        self.progresses[name] = Controller(self.git, name, total_steps)
 
-        return self.progresses[id]
+        return self.progresses[name]
 
     def epoch(self, epoch=None, total=None):
         self.progress(epoch, total)
@@ -1202,6 +1203,8 @@ class JobBackend:
                 }
             }
             config = find_config(self.config_path, logger=self.logger)
+            if not config['model']:
+                raise Exception('AETROS config file (aetros.yml) not found.')
 
             # first transform simple format in the full definition with parameter types
             # (string, number, group, choice_group, etc)
@@ -1232,13 +1235,6 @@ class JobBackend:
         self.logger.debug("Job created with Git ref " + self.git.ref_head)
 
         return self.job_id
-
-    def create_task(self, job_id, task_config, name, index):
-        # move to git
-        task_config['task'] = name
-        task_config['index'] = index
-
-        self.git.create_task_id(job_id, task_config)
 
     def is_simple_model(self):
         if not self.job:
@@ -1733,13 +1729,13 @@ class JobBackend:
 
             self.git.commit_index('INSIGHT_EMBEDDING ' + str(x))
 
-    def add_insight_image_path(self, x, path, id=None, label=None):
+    def add_insight_image_path(self, x, path, name=None, label=None):
         image = PIL.Image.open(path)
 
-        if not id:
-            id = os.path.basename(path)
+        if not name:
+            name = os.path.basename(path)
 
-        return self.add_insight_image(x, JobImage(id, image, label))
+        return self.add_insight_image(x, JobImage(name, image, label))
 
     def add_insight_image(self, x, image):
         self.add_insight_images(x, [image])

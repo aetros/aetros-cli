@@ -730,6 +730,11 @@ def find_config_path(dir = None):
         else:
             new_path = os.path.realpath(dir + '/..')
             if new_path == dir:
+                # means we are at the end
+                return None
+
+            if new_path == os.path.realpath(os.path.expanduser('~')):
+                # means we are at the home folder, where the home configuration is
                 return None
 
             dir = new_path
