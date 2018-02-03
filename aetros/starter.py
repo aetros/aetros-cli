@@ -448,7 +448,8 @@ def docker_image_information(logger, home_config, job_backend):
             job_backend.set_system_info('image/architecture', inspection['Architecture'])
             job_backend.set_system_info('image/os', inspection['Os'])
             job_backend.set_system_info('image/size', inspection['Size'])
-            job_backend.set_system_info('image/rootfs', inspection['RootFS'])
+            if 'RootFS' in inspection:
+                job_backend.set_system_info('image/rootfs', inspection['RootFS'])
 
 
 def docker_pause(logger, home_config, job_backend):

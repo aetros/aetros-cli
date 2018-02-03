@@ -731,7 +731,7 @@ class Git:
             self.add_file(path, content)
             self.git_batch_commit_messages.append(message)
 
-    def diff_objects(self, commit_sha):
+    def diff_objects(self, latest_commit_sha):
         """
                 Push all changes to origin, based on objects, not on commits.
                 Important: Call this push after every new commit, or we lose commits.
@@ -742,6 +742,14 @@ class Git:
         summary = {'commits': [], 'trees': [], 'files': []}
 
         def read_parents_and_tree_from(commit):
+            if commit in self.synced_object_shas or commit in object_shas:
+                # this commit has already been synced or read
+                return None, None
+
+            self.synced_object_shas[commit] = True
+            summary['commits'].append(commit)
+            object_shas.append(commit)
+
             object_content = subprocess.check_output(base + ['cat-file', '-p', commit]).decode('utf-8').strip()
             parents = []
             tree = ''
@@ -753,24 +761,14 @@ class Git:
 
             return parents, tree
 
-        def collect_files_from_commit(commit):
-            if commit in self.synced_object_shas:
-                # this commit has already been synced
+        def collect_files_from_tree(tree):
+            if tree in self.synced_object_shas or tree in object_shas:
+                # we have exactly this tree already synced or read, meaning all its objects as well
                 return
 
-            not commit in object_shas and object_shas.append(commit)
-            summary['commits'].append(commit)
-            parents, tree = read_parents_and_tree_from(commit)
-
-            if tree in self.synced_object_shas:
-                # we have exactly this tree already synced, meaning all its objects as well
-                return
-
-            not tree in object_shas and object_shas.append(tree)
+            self.synced_object_shas[tree] = True
             summary['trees'].append(tree)
-
-            for parent in parents:
-                collect_files_from_commit(parent)
+            object_shas.append(tree)
 
             object_content = subprocess.check_output(base + ['ls-tree', '-r', '-t', tree]).decode('utf-8').strip()
 
@@ -785,55 +783,77 @@ class Git:
                 path = str(exploded[2][41:])
 
                 if object_to_add in self.synced_object_shas or object_to_add in object_shas:
-                    # we pushed that object already.
+                    # have it already in the list or already synced
                     continue
 
                 object_shas.append(object_to_add)
+                self.synced_object_shas[object_to_add] = True
                 summary['files'].append([object_to_add, path])
 
-        collect_files_from_commit(commit_sha)
+        commits_to_check = [latest_commit_sha]
 
-        shas_to_check = object_shas
-        self.logger.debug("shas_to_check %d: %s " % (len(shas_to_check), str(shas_to_check),))
+        while len(commits_to_check):
+            sha = commits_to_check.pop(0)
+            parents, tree = read_parents_and_tree_from(sha)
 
-        if not shas_to_check:
+            if parents:
+                for parent in parents:
+                    if parent not in commits_to_check:
+                        commits_to_check.append(parent)
+
+            if tree:
+                collect_files_from_tree(tree)
+
+        self.logger.debug("shas_to_check %d: %s " % (len(object_shas), str(object_shas),))
+
+        if not object_shas:
             return [], summary
 
-        for sha in shas_to_check:
-            self.synced_object_shas[sha] = True
+        try:
+            self.logger.debug("Do git-cat-file-check.sh")
+            ssh_stream = create_ssh_stream(read_home_config(), exit_on_failure=False)
+            channel = ssh_stream.get_transport().open_session()
+            channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
+            channel.sendall('\n'.join(object_shas))
+            channel.shutdown_write()
 
-        self.logger.debug("Do git-cat-file-check.sh")
-        ssh_stream = create_ssh_stream(read_home_config(), exit_on_failure=False)
-        channel = ssh_stream.get_transport().open_session()
-        channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
-        channel.sendall('\n'.join(shas_to_check))
-        channel.shutdown_write()
+            def readall(c):
+                content = b''
+                while True:
+                    try:
+                        chunk = c.recv(1024)
+                        if chunk == b'':
+                            break
+                        content += chunk
+                    except (KeyboardInterrupt, SystemExit):
+                        return
 
-        def readall(c):
-            content = b''
-            while True:
-                try:
-                    chunk = c.recv(1024)
-                    if chunk == b'':
-                        break
-                    content += chunk
-                except (KeyboardInterrupt, SystemExit):
-                    return
+                return content
 
-            return content
+            missing_objects = readall(channel).decode('utf-8').splitlines()
+            channel.close()
+            ssh_stream.close()
 
-        missing_objects = readall(channel).decode('utf-8').splitlines()
-        channel.close()
-        ssh_stream.close()
+            # make sure we have in summary only SHAs we actually will sync
+            for stype in six.iterkeys(summary):
+                ids = summary[stype][:]
+                for sha in ids:
+                    if stype == 'files':
+                        if sha[0] not in missing_objects:
+                            summary[stype].remove(sha)
+                    else:
+                        if sha not in missing_objects:
+                            summary[stype].remove(sha)
 
-        # make sure we have in summary only SHAs we actually will sync
-        for type in six.iterkeys(summary):
-            ids = summary[type][:]
-            for sha in ids:
-                if sha not in missing_objects:
-                    summary[type].remove(sha)
-
-        return missing_objects, summary
+            return missing_objects, summary
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            self.logger.error("Failed to generate diff_objects: %s" % (str(e),))
+            for sha in object_shas:
+                if sha in self.synced_object_shas:
+                    del self.synced_object_shas[sha]
+            return None, None
 
     def get_head_commit(self):
         return self.command_exec(['rev-parse', self.ref_head])[0].decode('utf-8').strip()
@@ -847,32 +867,47 @@ class Git:
             missing_object_sha, summary = self.diff_objects(commit_sha)
             base = ['git', '--bare', '--git-dir', self.git_path]
 
+            if not missing_object_sha:
+                return False
+
             self.logger.debug("Found %d missing objects" % (len(missing_object_sha),))
             self.logger.debug(str(summary))
 
             if missing_object_sha:
                 self.logger.debug("Git push")
                 try:
-                    pack_process = subprocess.Popen(base + ['pack-objects', '--stdout'], stderr=subprocess.PIPE,
+                    opts = [
+                        '--no-reuse-delta',
+                        '--compression=0',
+                    ]
+                    pack_process = subprocess.Popen(base + ['pack-objects', '--stdout'] + opts, stderr=subprocess.PIPE,
                                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE)
                     pack_content, stderr = pack_process.communicate(('\n'.join(missing_object_sha)).encode())
 
+                    if pack_process.returncode:
+                        self.logger.error("Git pack-objects failed: %s, error: %s" % (pack_content, stderr))
+                        self.synced_object_shas = {}
+                        return False
+
                     message = {
                         'type': 'git-unpack-objects',
-                        'pack': pack_content,
                         'ref': self.ref_head,
+                        'commit': self.get_head_commit(),
+                        'pack': pack_content,
                         'objects': summary,
-                        'commit': self.get_head_commit()
                     }
-                    self.client.send(message, 'files')
+                    size = self.client.send(message, 'files')
+                    self.logger.debug("Git pack of size %d is on the way" % (size,))
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:
-                    # next push we sync self.synced_object_shas with server again
+                    # next push we check again all objects in that job history
                     self.synced_object_shas = {}
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
+        except:
+            import traceback
+            self.logger.error(traceback.format_exc())
             return False
         finally:
             self.push_lock.release()

@@ -127,12 +127,13 @@ class EventListener:
 def context():
     """
     Returns a new JobBackend instance which connects to AETROS Trainer
-    based on "model" in aetros.yml or env:AETROS_MODEL_NAME environment variable.
+    based on "model" in aetros.yml or (internal: env:AETROS_MODEL_NAME environment variable).
 
-    If env:AETROS_JOB_ID is not defined, it creates a new job.
+    internal: If env:AETROS_JOB_ID is not defined, it creates a new job.
 
     Job is ended either by calling JobBackend.done(), JobBackend.fail() or JobBackend.abort().
-    If the script ends without calling one of the methods above, JobBackend.done is automatically called.
+    If the script ends without calling one of the methods above, JobBackend.stop() is called and exit code defines
+    whether it is a fail() or done() result.
 
     :return: JobBackend
     """
@@ -150,8 +151,6 @@ def context():
         job.create()
         if not offline:
             job.connect()
-            if job.client.online:
-                job.git.push()
 
     job.start(offline=offline)
 
@@ -1203,6 +1202,7 @@ class JobBackend:
                 }
             }
             config = find_config(self.config_path, logger=self.logger)
+
             if not config['model']:
                 raise Exception('AETROS config file (aetros.yml) not found.')
 

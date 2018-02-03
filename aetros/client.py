@@ -113,6 +113,7 @@ class BackendClient:
         self.connected = {}
 
         self.was_connected_once = {}
+        self.connected_since = {}
         self.read_unpacker = msgpack.Unpacker(encoding='utf-8')
 
     def on_sigint(self, sig, frame):
@@ -146,6 +147,7 @@ class BackendClient:
             self.ssh_channel[channel] = None
             self.connected[channel] = None
             self.registered[channel] = None
+            self.connected_since[channel] = 0
             self.was_connected_once[channel] = False
             self.stop_on_empty_queue[channel] = False
             self.channel_lock[channel] = Lock()
@@ -244,6 +246,8 @@ class BackendClient:
                 self.logger.debug('[%s] opened and received %d messages' % (channel, len(messages)))
                 self.connected[channel] = True
                 self.registered[channel] = self.on_connect(self.was_connected_once[channel], channel)
+                self.connected_since[channel] = time.time()
+
                 if self.registered[channel] and self.was_connected_once[channel]:
                     self.logger.info("[%s] successfully reconnected." % (channel, ))
 
@@ -342,7 +346,16 @@ class BackendClient:
             # python interpreter is already dying, so quit
             return
 
-        message = "[%s] Connection error" % (channel,)
+        if channel != '':
+            # we don't care about the file channel,
+            # it will reconnect anyway
+            return
+
+        since = 0
+        if self.connected_since[channel]:
+            since = time.time() - self.connected_since[channel]
+
+        message = "[%s] Connection error (connected for %d seconds) " % (channel, since)
 
         if error:
             import traceback
@@ -414,7 +427,7 @@ class BackendClient:
             if self.online is not False:
                 if self.is_connected(channel) and self.is_registered(channel):
                     try:
-                        # this blocks
+                        # this blocks if we have data
                         messages = self.read(channel)
 
                         if messages is not None:
@@ -621,6 +634,7 @@ class BackendClient:
             else:
                 self.queues[channel].append(message)
 
+            return message['_total']
         finally:
             self.queue_lock[channel].release()
 
