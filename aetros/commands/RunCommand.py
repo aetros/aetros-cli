@@ -204,6 +204,7 @@ class RunCommand:
                                         "NVIDIA-Docker2 is only supported on Linux.")
 
             local_max_resources = {'cpu': cpu['count'], 'memory': ceil(mem / 1024 / 1024 / 1024), 'gpu': gpu}
+
             if create_info['config']['image']:
                 # read max hardware within Docker
                 out = docker_call(['run', 'alpine', 'sh', '-c', 'nproc && cat /proc/meminfo | grep MemTotal'])

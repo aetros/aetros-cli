@@ -50,13 +50,22 @@ class JobModel:
 
     @property
     def resources(self):
-        if 'resources' in self.config:
+        if 'resources' in self.config and isinstance(self.config['resources'], dict):
             return self.config['resources']
 
         return {}
 
     def has_dpu(self):
         return 'dpu' in self.resources and self.resources['dpu'] > 0
+
+    def get_cpu(self):
+        return self.resources.get('cpu', 1)
+
+    def get_memory(self):
+        return self.resources.get('memory', 1)
+
+    def get_gpu(self):
+        return self.resources.get('gpu', 1)
 
     def get_batch_size(self):
         return self.job['config']['batchSize']

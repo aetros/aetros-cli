@@ -127,7 +127,10 @@ def raise_response_exception(message, response):
 
 
 def parse_json(content):
-    a = simplejson.loads(content)
+    try:
+        a = simplejson.loads(content)
+    except simplejson.errors.JSONDecodeError as e:
+        raise ApiError("Could not decode response from server: %s, response: %s\n" % (str(e), content))
 
     if isinstance(a, dict) and 'error' in a:
         raise ApiError('API request failed %s: %s.' % (a['error'], a['message']), a['error'])
@@ -145,11 +148,11 @@ def user():
     return parse_json(request('user'))
 
 
-def create_job(model_name, local=False, parameters=None, dataset_id=None, config=None):
+def create_job(model_name, config_path, local=False, parameters=None, dataset_id=None, config=None):
     content = request(
         'job',
         {'modelId': model_name},
-        {'parameters': parameters, 'datasetId': dataset_id, 'config': config, 'local': local},
+        {'parameters': parameters, 'configPath': config_path, 'datasetId': dataset_id, 'config': config, 'local': local},
         'put'
     )
     return parse_json(content)

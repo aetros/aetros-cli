@@ -24,7 +24,7 @@ class GitCommandException(Exception):
     cmd = None
 
 
-def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=1, memory=1, gpu_devices=None, offline=False):
+def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=None, memory=None, gpu_devices=None, offline=False):
     """
     Starts the job with all logging of a job_id
     """
@@ -43,6 +43,20 @@ def start(logger, full_id, fetch=True, env=None, volumes=None, cpus=1, memory=1,
     job_backend.restart(id)
     job_backend.start(collect_system=False, offline=offline)
     job_backend.set_status('PREPARE', add_section=False)
+
+    job = job_backend.get_job_model()
+
+    if not cpus:
+        cpus = job.get_cpu()
+
+    if not memory:
+        memory = job.get_memory()
+
+    if not gpu_devices and job.get_gpu():
+        # if requested 2 GPUs and we have 3 GPUs with id [0,1,2], gpus should be [0,1]
+        gpu_devices = []
+        for i in range(0, job.get_gpu()):
+            gpu_devices.append(i)
 
     start_command(logger, job_backend, env, volumes, cpus=cpus, memory=memory, gpu_devices=gpu_devices, offline=offline)
 

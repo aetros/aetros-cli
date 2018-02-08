@@ -202,6 +202,9 @@ class JobImage:
         self.label = label
         self.pos = pos
 
+        if self.pos is None:
+            self.pos = time.time()
+
 
 class JobChannel:
     NUMBER = 'number'

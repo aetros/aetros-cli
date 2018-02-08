@@ -719,7 +719,10 @@ class Git:
         :param content: str
         :return: 
         """
-        if not self.git_batch_commit:
+        if self.git_batch_commit:
+            self.add_file(path, content)
+            self.git_batch_commit_messages.append(message)
+        else:
             with self.lock_write():
                 if self.job_id:
                     self.read_tree(self.ref_head)
@@ -727,9 +730,6 @@ class Git:
                 self.add_file(path, content)
 
                 return self.commit_index(message)
-        else:
-            self.add_file(path, content)
-            self.git_batch_commit_messages.append(message)
 
     def diff_objects(self, latest_commit_sha):
         """
@@ -892,7 +892,7 @@ class Git:
                     message = {
                         'type': 'git-unpack-objects',
                         'ref': self.ref_head,
-                        'commit': self.get_head_commit(),
+                        'commit': commit_sha,
                         'pack': pack_content,
                         'objects': summary,
                     }
@@ -920,7 +920,7 @@ class Git:
         while self.active_thread:
             try:
                 head = self.get_head_commit()
-                if last_synced_head != self.get_head_commit():
+                if last_synced_head != head:
                     self.logger.debug("Git head moved from %s to %s" % (last_synced_head, head))
                     if self.push() is not False:
                         last_synced_head = head

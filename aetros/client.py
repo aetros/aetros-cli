@@ -248,8 +248,8 @@ class BackendClient:
                 self.registered[channel] = self.on_connect(self.was_connected_once[channel], channel)
                 self.connected_since[channel] = time.time()
 
-                if self.registered[channel] and self.was_connected_once[channel]:
-                    self.logger.info("[%s] successfully reconnected." % (channel, ))
+                if channel == '' and self.registered[channel] and self.was_connected_once[channel]:
+                    self.logger.info("Successfully reconnected.")
 
             if not self.registered[channel]:
                 # make sure to close channel and connection first
