@@ -76,7 +76,7 @@ class JobModel:
         return self.resources.get('memory', 1)
 
     def get_gpu(self):
-        return self.resources.get('gpu', 1)
+        return self.resources.get('gpu', 0)
 
     def get_batch_size(self):
         return self.job['config']['batchSize']
