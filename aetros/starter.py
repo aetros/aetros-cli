@@ -91,6 +91,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
         env['AETROS_SSH_KEY_BASE64'] = open(get_ssh_key_for_host(home_config['host']), 'r').read()
 
     job_config = job_backend.job['config']
+    job = job_backend.get_job_model()
 
     if 'command' not in job_config:
         job_backend.fail('No "command" given. See Configuration section in the documentation.')
@@ -274,8 +275,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
                 # new shells unset LD_LIBRARY_PATH automatically, so we make sure it will be there again
                 f.write('export LD_LIBRARY_PATH=$LD_LIBRARY_PATH_ORI;\n')
 
-            if 'working_dir' in job_config and job_config['working_dir']:
-                f.write('cd %s;\n' % (job_config['working_dir'],))
+            if job.get_working_dir():
+                f.write('cd %s;\n' % (job.get_working_dir(),))
 
             f.write(job_command)
             f.close()
@@ -295,7 +296,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
 
         def exec_command(id, command, job_command):
             write_command_sh(job_command)
-            print('$ ' + job_command.strip() + '\n')
+            print('%s $ %s' % ('/' + job.get_working_dir(), job_command.strip()))
             args = command
             logger.debug('$ ' + ' '.join([simplejson.dumps(a) for a in args]))
             state['last_process'] = subprocess.Popen(

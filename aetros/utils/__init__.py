@@ -703,7 +703,6 @@ def find_config(path = None, error_on_missing=False, return_default=True, logger
 
         if config['model']:
             if 'init_config_path' in config:
-                config['working_dir'] = os.path.relpath(os.path.dirname(config['init_config_path']), config['root'])
                 config['configPath'] = os.path.relpath(config['init_config_path'], config['root'])
                 del config['init_config_path']
 

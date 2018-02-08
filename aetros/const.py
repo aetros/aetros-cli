@@ -1,4 +1,4 @@
-__version__ = '0.14.7'
+__version__ = '0.14.8'
 __prog__ = "aetros"
 
 class bcolors:

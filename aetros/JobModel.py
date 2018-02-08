@@ -55,6 +55,17 @@ class JobModel:
 
         return {}
 
+    def get_working_dir(self):
+        job_config = self.config
+
+        dir = '/'
+        if 'working_dir' in job_config and job_config['working_dir']:
+            dir = job_config['working_dir']
+        elif 'configPath' in job_config and job_config['configPath']:
+            dir = os.path.dirname(job_config['configPath'])
+
+        return dir.strip('/')
+
     def has_dpu(self):
         return 'dpu' in self.resources and self.resources['dpu'] > 0
 
