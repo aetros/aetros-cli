@@ -170,6 +170,7 @@ class JobLossChannel:
             'traces': [{'name': 'training'}, {'name': 'validation'}],
             'type': JobChannel.NUMBER,
             'main': True,
+            'timed': True,
             'xaxis': xaxis,
             'yaxis': yaxis,
             'layout': layout,
