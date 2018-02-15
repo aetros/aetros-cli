@@ -231,6 +231,8 @@ class BackendClient:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as e:
+                self.connected[channel] = False
+                self.registered[channel] = False
                 self.logger.debug('[%s] connection failed: %s'  % (channel, str(e)))
                 return False
             finally:
@@ -242,6 +244,7 @@ class BackendClient:
             if not messages:
                 stderrdata = self.ssh_channel[channel].recv_stderr().decode("utf-8").strip()
                 self.connected[channel] = False
+                self.registered[channel] = False
             else:
                 self.logger.debug('[%s] opened and received %d messages' % (channel, len(messages)))
                 self.connected[channel] = True

@@ -44,6 +44,12 @@ class Git:
         self.model_name = model_name
         self.is_master = is_master
 
+        if not self.storage_dir:
+            raise Exception('No storage_dir given from home configuration.')
+
+        if not model_name:
+            raise Exception('No model_name given.')
+
         self.git_path = os.path.normpath(self.storage_dir + '/' + model_name + '.git')
 
         self.command_lock = Lock()

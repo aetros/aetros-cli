@@ -536,7 +536,7 @@ def read_parameter_by_path(dictionary, path, return_group=False):
     for item in path.split('.'):
         current_group = None
         if item not in current:
-            raise Exception('Parameter ' + str(path) + ' not found and no default value given.')
+            return None
 
         current = current[item]
 
