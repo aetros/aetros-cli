@@ -109,6 +109,7 @@ class GeneralLogger(object):
                     current_line += chunk
 
                     while b'\n' in current_line:
+                        current_line = current_line.replace(b'\r', b'')
                         pos = current_line.find(b'\n')
                         line = current_line[:pos+1]
                         current_line = current_line[pos+1:]
@@ -143,7 +144,7 @@ class GeneralLogger(object):
             if hasattr(message, 'decode'):
                 # don't decode string again
                 # necessary for Python3
-                message = message.decode("utf-8", 'replace')
+                message = message.decode("utf-8")
 
             self.logger.write(message)
             self.logger.flush()

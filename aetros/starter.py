@@ -77,6 +77,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     env['AETROS_GIT_INDEX_FILE'] = job_backend.git.index_path
     env['DEBUG'] = os.getenv('DEBUG', '')
     env['PYTHONUNBUFFERED'] = os.getenv('PYTHONUNBUFFERED', '1')
+    env['PYTHONIOENCODING'] = os.getenv('PYTHONIOENCODING', 'UTF-8')
     env['AETROS_ATTY'] = '1'
     env['AETROS_GIT'] = job_backend.git.get_base_command()
 
@@ -307,8 +308,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             command_env['AETROS_JOB_NAME'] = 'command_' + str(index)
 
             state['last_process'] = subprocess.Popen(
-                args=args, bufsize=0, universal_newlines=True,
-                stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
+                args=args, bufsize=0, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
             )
             job_backend.set_system_info('processRunning', True, True)
             wait_stdout = sys.stdout.attach(state['last_process'].stdout, read_line=read_line)
