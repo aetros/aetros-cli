@@ -99,22 +99,25 @@ class GeneralLogger(object):
 
                 self.write(buf)
 
+            flush_chars = [b'\n', b'\r']
+
             while True:
                 try:
                     # needs to be 1 so we fetch data in near real-time
                     chunk = buffer.read(1)
                     if chunk == b'':
+                        if current_line:
+                            handle_line(current_line)
                         return
 
                     current_line += chunk
 
-                    while b'\n' in current_line:
-                        current_line = current_line.replace(b'\r', b'')
-                        pos = current_line.find(b'\n')
-                        line = current_line[:pos+1]
-                        current_line = current_line[pos+1:]
-
-                        handle_line(line)
+                    for char in flush_chars:
+                        while char in current_line:
+                            pos = current_line.find(char)
+                            line = current_line[:pos+1]
+                            current_line = current_line[pos+1:]
+                            handle_line(line)
 
                 except (KeyboardInterrupt, SystemExit):
                     raise
