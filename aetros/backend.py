@@ -1633,7 +1633,7 @@ class JobBackend:
     def add_embedding_word2vec(self, x, path, dimensions=None, header_with_dimensions=True):
         """
         Parse the word2vec file and extracts vectors as bytes and labels as TSV file.
-        The format is simple: It a UTF-8 encoded file, each word + vectors separated by new line.
+        The format is simple: It's a UTF-8 encoded file, each word + vectors separated by new line.
         Vector is space separated.
         At the very first line might be dimensions, given as space separated value.
 
@@ -1662,12 +1662,13 @@ class JobBackend:
                     raise Exception('Given word2vec file should have in first line the dimensions, e.g.: 1000 200')
                 dimensions = np.fromstring(line, dtype=np.uint, sep=' ').tolist()
 
-            vectors = b''
             labels = ''
-
+            vectors = ''
             line_pos = 1 if header_with_dimensions else 0
 
-            # while '' != (line = f.readline())
+            if len(dimensions) != 2:
+                raise Exception('dimensions invalid shape. e.g. [200, 32] => 200 rows, 32 cols.')
+
             for line in iter(f.readline, ''):
                 line_pos += 1
                 space_pos = line.find(' ')
@@ -1677,7 +1678,9 @@ class JobBackend:
                     raise Exception(message)
 
                 labels += line[:space_pos] + '\n'
-                vectors += np.fromstring(line[space_pos+1:], dtype=np.float32, sep=' ').tobytes()
+                vectors += line[space_pos+1:] + ' '
+
+            vectors = np.fromstring(vectors, dtype=np.float32, sep=' ').tobytes()
         else:
             raise Exception("Given word2vec is not a .txt file. Other file formats are not supported.")
 
