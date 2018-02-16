@@ -1615,12 +1615,14 @@ class JobBackend:
                 if path.endswith('.pyc'):
                     return 0, 0
 
-                if is_ignored(path, self.config['ignore']):
+                relative_path = os.path.relpath(path, working_tree)
+
+                if is_ignored(relative_path, self.config['ignore']):
                     return 0, 0
 
-                self.logger.debug("added file to job " + path)
+                self.logger.debug("added file to job " + relative_path)
                 if report:
-                    print("Added job file: " + os.path.relpath(path, working_tree))
+                    print("Added job file: " + relative_path)
 
                 self.git.add_file_path(path, working_tree, verbose=False)
 

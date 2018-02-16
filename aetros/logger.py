@@ -6,6 +6,8 @@ import traceback
 import six
 from threading import Timer, Thread, Lock
 
+from aetros.utils import thread_join_non_blocking
+
 
 def drain_stream(stream, decode='utf-8'):
     content = six.b('')
@@ -76,34 +78,43 @@ class GeneralLogger(object):
         bid = id(buffer)
         self.attach_last_messages[bid] = b''
 
-        lock = Lock()
-
         def reader():
-            lock.acquire()
+            current_line = b''
+
+            def handle_line(buf):
+                if read_line and callable(read_line):
+                    res = read_line(buf)
+                    if res is False:
+                        return False
+
+                    elif res is not None:
+                        buf = res
+                        if hasattr(buf, 'encode'):
+                            buf = buf.encode("utf-8", 'replace')
+
+                self.attach_last_messages[bid] += buf
+
+                if len(self.attach_last_messages[bid]) > 21 * 1024:
+                    self.attach_last_messages[bid] = self.attach_last_messages[bid][-20 * 1024:]
+
+                self.write(buf)
+
             while True:
-
                 try:
-                    # readline() needs to block
-                    # buf = os.read(buffer.fileno(), 4096)
-                    buf = buffer.readline()
-                    if buf == b'':
-                        break
+                    # needs to be 1 so we fetch data in near real-time
+                    chunk = buffer.read(1)
+                    if chunk == b'':
+                        return
 
-                    if read_line and callable(read_line):
-                        res = read_line(buf)
-                        if res is False:
-                            continue
-                        elif res is not None:
-                            buf = res
-                            if hasattr(buf, 'encode'):
-                                buf = buf.encode("utf-8", 'replace')
+                    current_line += chunk
 
-                    self.attach_last_messages[bid] += buf
+                    while b'\n' in current_line:
+                        pos = current_line.find(b'\n')
+                        line = current_line[:pos+1]
+                        current_line = current_line[pos+1:]
 
-                    if len(self.attach_last_messages[bid]) > 21 * 1024:
-                        self.attach_last_messages[bid] = self.attach_last_messages[bid][-20 * 1024:]
+                        handle_line(line)
 
-                    self.write(buf)
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:
@@ -112,16 +123,13 @@ class GeneralLogger(object):
                     sys.__stderr__.write(traceback.format_exc() + '\n')
                     sys.__stderr__.flush()
 
-            lock.release()
-
         thread = Thread(target=reader)
         thread.daemon = True
         thread.start()
 
         def wait():
-            lock.acquire()
+            thread_join_non_blocking(thread)
             self.send_buffer()
-            lock.release()
 
         return wait
 

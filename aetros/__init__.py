@@ -9,6 +9,7 @@ __version__ = const.__version__
 command_summaries = [
     ['run', 'Starts a job from source code of the current directory.'],
     ['start', 'Starts a job from the model\'s remote Git repository.'],
+    ['authenticate', 'Authenticates your local PC with AETROS Trainer.'],
     # ['predict', 'Runs a prediction locally'],
     # ['upload-weights', 'Uploads weights as new or existing job.'],
     # ['prediction-server', 'Spawns a http server that handles incoming data as input and predicts output.'],

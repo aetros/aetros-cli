@@ -254,7 +254,7 @@ class RunCommand:
             summary += 'on the cluster'
 
         if create_info['config']['image']:
-            summary += ' in Docker using image %s with %d CPU cores, %d memory and %d GPUs.' \
+            summary += ' in Docker using image %s with %d CPU cores, %dGB memory and %d GPUs.' \
                        % (create_info['config']['image'], resources['cpu'], resources['memory'], resources['gpu'])
         else:
             summary += ' on host using all available resources.'

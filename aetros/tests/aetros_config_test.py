@@ -155,7 +155,15 @@ class TestConfig(unittest.TestCase):
         self.assertNotIgnored('very/deep/dataset.zip', '/very/**/*.zip')
         self.assertIgnored('very/deep/dataset.zip', '/very/*/*.zip')
 
-        self.assertNotIgnored('very/deep/dataset.zip', '/very/')
+        self.assertIgnored('scripts/script', '/scripts/script')
+        self.assertNotIgnored('scripts/script2', '/scripts/script')
+
+        self.assertIgnored('very/deep/dataset.zip', '/very/')
         self.assertIgnored('very/deep/dataset.zip', '/very/**')
+
+        self.assertIgnored('very/deep/dataset.zip', 'dataset.zip')
+
+        self.assertIgnored('dataset/questions-phrases.txt', 'dataset/*')
+        self.assertNotIgnored('dataset/questions-phrases.txt', 'dataset')
 
 

@@ -31,6 +31,10 @@ def stop_time(title=''):
     sys.__stdout__.write("STOP_TIME: " + str(time.time()-start_time) + "s - diff: "+diff+"  - " +title+ "\n")
 
 
+def is_debug3():
+    return os.getenv('DEBUG') == '3'
+
+
 def is_debug2():
     return os.getenv('DEBUG') == '2'
 
@@ -64,6 +68,20 @@ def get_logger(name='', debug=None, format=None):
 
     return logger
 
+
+def thread_join_non_blocking(thread):
+    try:
+        while True:
+            if thread.isAlive():
+                thread.join(0.5)
+
+            if not thread.isAlive():
+                break
+
+            time.sleep(0.5)
+
+    except (KeyboardInterrupt, SystemExit):
+        raise
 
 def ensure_docker_installed(logger, home_config=None):
     home_config = home_config or read_home_config()
@@ -603,6 +621,10 @@ def is_ignored(path, ignore_patters):
             regex = regex.replace('\\*\\*', '([^/\\\\]+[//\\\\])+([^/\\\\]+)')
             regex = regex.replace('\\*', '[^/\\\\]+')
             regex = '(' + regex + ')'
+
+            if pattern[-1] == '/':
+                regex += '.*'
+
             if pattern[0] == '/' or (pattern[0] == '!' and pattern[1] == '/'):
                 regex = '^' + regex + '$'
             else:

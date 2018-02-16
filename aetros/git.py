@@ -10,7 +10,7 @@ from threading import Thread, Lock
 import time
 import sys
 
-from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config, is_debug2
+from aetros.utils import invalid_json_values, setup_git_ssh, create_ssh_stream, read_home_config, is_debug2, is_debug3
 
 
 class GitCommandException(Exception):
@@ -228,8 +228,7 @@ class Git:
             stderrdata = stderrdata.decode('utf-8')
         except Exception: pass
 
-        if os.getenv('DEBUG', 0) == '2':
-            self.logger.debug("Git command: " + (' '.join(command)))
+        is_debug3() and self.logger.debug("Git command: " + (' '.join(command)))
 
         # When working on Git in several threads, sometimes it can not get the lock file, like:
         #
@@ -565,7 +564,7 @@ class Git:
 
             already_set = path in self.store_files and self.store_files[path] == data
 
-            if is_debug2():
+            if is_debug3():
                 sys.__stderr__.write('git:store_file(%s, %s, %s), already_set=%s\n'
                                      % (str(path), str(data)[0:180], str(fast_lane), str(already_set)))
 
@@ -810,13 +809,14 @@ class Git:
             if tree:
                 collect_files_from_tree(tree)
 
-        self.logger.debug("shas_to_check %d: %s " % (len(object_shas), str(object_shas),))
+        is_debug2() and self.logger.debug("shas_to_check %d: %s " % (len(object_shas), str(object_shas),))
 
         if not object_shas:
             return [], summary
 
         try:
-            self.logger.debug("Do git-cat-file-check.sh")
+            is_debug2() and self.logger.debug("Do git-cat-file-check.sh")
+
             ssh_stream = create_ssh_stream(read_home_config(), exit_on_failure=False)
             channel = ssh_stream.get_transport().open_session()
             channel.exec_command('git-cat-file-check.sh "%s"' % (self.model_name + '.git',))
@@ -876,11 +876,11 @@ class Git:
             if not missing_object_sha:
                 return False
 
-            self.logger.debug("Found %d missing objects" % (len(missing_object_sha),))
-            self.logger.debug(str(summary))
+            is_debug2() and self.logger.debug("Found %d missing objects" % (len(missing_object_sha),))
+            is_debug2() and self.logger.debug(str(summary))
 
             if missing_object_sha:
-                self.logger.debug("Git push")
+                is_debug2() and self.logger.debug("Git push")
                 try:
                     opts = [
                         '--no-reuse-delta',
@@ -903,7 +903,7 @@ class Git:
                         'objects': summary,
                     }
                     size = self.client.send(message, 'files')
-                    self.logger.debug("Git pack of size %d is on the way" % (size,))
+                    is_debug2() and self.logger.debug("Git pack of size %d is on the way" % (size,))
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except Exception:

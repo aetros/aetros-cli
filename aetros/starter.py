@@ -294,23 +294,35 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
 
             return filtered_line
 
-        def exec_command(id, command, job_command):
+        def exec_command(index, command, job_command):
             write_command_sh(job_command)
             print('%s $ %s' % ('/' + job.get_working_dir(), job_command.strip()))
             args = command
             logger.debug('$ ' + ' '.join([simplejson.dumps(a) for a in args]))
+
+            command_stats[index]['started'] = time.time() - start_time
+            job_backend.set_system_info('command_stats', command_stats, True)
+
+            # important to prefix it, otherwise name='master' would reset all stats in controller backend
+            command_env['AETROS_JOB_NAME'] = 'command_' + str(index)
+
             state['last_process'] = subprocess.Popen(
-                args=args, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
+                args=args, bufsize=0, universal_newlines=True,
+                stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=command_env, **kwargs
             )
             job_backend.set_system_info('processRunning', True, True)
             wait_stdout = sys.stdout.attach(state['last_process'].stdout, read_line=read_line)
             wait_stderr = sys.stderr.attach(state['last_process'].stderr)
             state['last_process'].wait()
+            command_stats[index]['rc'] = last_return_code
+            command_stats[index]['ended'] = time.time() - start_time
+            job_backend.set_system_info('command_stats', command_stats, True)
             job_backend.set_system_info('processRunning', True, False)
             wait_stdout()
             wait_stderr()
             # make sure a new line is printed after a command
             print("")
+
             return state['last_process']
 
         done = 0
@@ -321,16 +333,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             for k, job_command in enumerate(job_commands):
                 job_backend.set_status('Command ' + str(k+1))
 
-                command_stats[k]['started'] = time.time() - start_time
-                job_backend.set_system_info('command_stats', command_stats, True)
-
-                command_env['AETROS_JOB_NAME'] = 'command_' + str(k)
                 p = exec_command(k, command, job_command)
                 last_return_code = p.poll()
-
-                command_stats[k]['rc'] = last_return_code
-                command_stats[k]['ended'] = time.time() - start_time
-                job_backend.set_system_info('command_stats', command_stats, True)
 
                 if last_return_code == 0:
                     done += 1
@@ -346,17 +350,8 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             for name, job_command in six.iteritems(job_commands):
                 job_backend.set_status('Command ' + name)
 
-                command_stats[name]['started'] = time.time() - start_time
-                job_backend.set_system_info('command_stats', command_stats, True)
-
-                # important to prefix it, otherwise name='master' would reset all stats in controller backend
-                command_env['AETROS_JOB_NAME'] = 'command_' + name
                 p = exec_command(name, command, job_command)
                 last_return_code = p.poll()
-
-                command_stats[name]['rc'] = last_return_code
-                command_stats[name]['ended'] = time.time() - start_time
-                job_backend.set_system_info('command_stats', command_stats, True)
 
                 if last_return_code == 0:
                     done += 1
@@ -390,7 +385,7 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
                 stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             p.wait()
             if p.poll() == 0:
-                subprocess.Popen(args=[home_config['docker'], 'stop', '-t', '5', job_backend.job_id]).wait()
+                subprocess.Popen(args=[home_config['docker'], 'kill', job_backend.job_id]).wait()
         elif not exited and state['last_process'] and state['last_process'].poll() is None:
             # wait for last command
             os.killpg(os.getpgid(state['last_process'].pid), signal.SIGINT)

@@ -15,7 +15,8 @@ import sys
 import six
 from paramiko.ssh_exception import NoValidConnectionsError
 
-from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream, is_debug, is_debug2
+from aetros.utils import invalid_json_values, prepend_signal_handler, create_ssh_stream, is_debug, is_debug2, \
+    thread_join_non_blocking
 from threading import Thread, Lock
 from aetros.const import __version__
 
@@ -457,18 +458,7 @@ class BackendClient:
         # it won't loop forever since we've set self.stop_on_empty_queue=True
         write_thread = self.thread_write_instances[channel]
 
-        try:
-            while True:
-                if write_thread.isAlive():
-                    write_thread.join(0.5)
-
-                if not write_thread.isAlive():
-                    break
-
-                time.sleep(0.5)
-
-        except (KeyboardInterrupt, SystemExit):
-            raise
+        thread_join_non_blocking(write_thread)
 
     def wait_sending_last_messages(self):
         """
