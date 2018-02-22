@@ -339,7 +339,8 @@ class Git:
 
             # make the working tree reflect exactly the tree of ref_head.
             # since we removed the dir before, we have exactly the tree of the reference
-            self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+            # '--', '.' is important to not update HEAD
+            self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '--', '.'])
 
     def read_tree(self, ref):
         """
@@ -407,9 +408,8 @@ class Git:
             os.makedirs(self.work_tree)
 
         # updates index and working tree
-        # this leaves other files in self.work_tree alone, which needs to be because this is also the working tree
-        # of files checked out by start.py (custom models)
-        self.command_exec(['--work-tree', self.work_tree, 'reset', '--hard', self.ref_head])
+        # '--', '.' is important to not update HEAD
+        self.command_exec(['--work-tree', self.work_tree, 'checkout', self.ref_head, '--', '.'])
 
         # every caller needs to make sure to call git.push
         return self.job_id

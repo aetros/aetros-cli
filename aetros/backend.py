@@ -483,6 +483,7 @@ class JobBackend:
             self.logger.warning('Force stopped: ' + str(sig))
 
             # just kill the process, we don't care about the results
+            self.on_force_exit()
             os._exit(1)
             # with force_exit we really close the process, killing it in unknown state
             # self.fail('Force stopped', force_exit=True)
@@ -833,7 +834,7 @@ class JobBackend:
 
             # make sure we get the progress first, before monitoring sends elapses and
             # updates the job cache
-            if not offline and self.client.online and push:
+            if not offline and self.client.is_online() and push:
                 self.git.push()
                 self.git.start_push_sync()
 
@@ -1052,7 +1053,7 @@ class JobBackend:
         self.logger.debug("Git stopping ...")
         self.git.stop()
 
-        if self.client.online and not force_exit:
+        if self.client.is_online() and not force_exit:
             # make sure all queues are empty and everything has been sent
             self.logger.debug("Wait for queue empty and store Git blobs on server: master=" +str(self.is_master_process()))
 
@@ -1114,7 +1115,11 @@ class JobBackend:
                 self.logger.warning("$ aetros job-push " + self.job_id[0:9])
 
         elif self.is_master_process():
-            self.logger.warning("Not all job data have been uploaded because you went offline.")
+            if force_exit:
+                self.logger.warning("Not all job data have been uploaded because you force the exit.")
+            else:
+                self.logger.warning("Not all job data have been uploaded because you went offline.")
+
             self.logger.warning("Run following command to make sure your job is stored on the server.")
             self.logger.warning("$ aetros job-push " + self.job_id[0:9])
 
@@ -1234,6 +1239,7 @@ class JobBackend:
         if 'insights' not in self.job['config']:
             self.job['config']['insights'] = insights
 
+        self.job['created'] = time.time()
         self.git.create_job_id(self.job)
 
         self.logger.debug("Job created with Git ref " + self.git.ref_head)
@@ -1378,7 +1384,7 @@ class JobBackend:
         data = simplejson.dumps(value, default=invalid_json_values)
         self.git.commit_file('STATUS ' + str(value), path, data)
 
-        if self.client.online is not False:
+        if self.client.is_online():
             # just so have it faster
             self.client.send({'type': 'store-blob', 'path': path, 'data': data}, channel='')
 

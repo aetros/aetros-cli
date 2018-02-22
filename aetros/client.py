@@ -138,43 +138,50 @@ class BackendClient:
         self.ssh_stream = {}
         self.was_connected_once = {}
 
+        self.start_channel('')
+        registered = False
+
+        while True:
+            # check if registered has been set
+            if self.registered[''] is not None:
+                registered = self.registered['']
+                break
+
+            time.sleep(0.1)
+
         if not channels:
             channels = ['']
 
-        for channel in channels:
-            self.queues[channel] = []
+        if registered:
+            # main(='') channel is registered, start now all other channels
+            for channel in channels:
+                if channel != '':
+                    self.start_channel(channel)
 
-            self.ssh_stream[channel] = None
-            self.ssh_channel[channel] = None
-            self.connected[channel] = None
-            self.registered[channel] = None
-            self.connected_since[channel] = 0
-            self.was_connected_once[channel] = False
-            self.stop_on_empty_queue[channel] = False
-            self.channel_lock[channel] = Lock()
-            self.queue_lock[channel] = Lock()
-            self.in_connecting[channel] = False
-            self.channel_closed[channel] = False
+        return registered
 
-            self.thread_read_instances[channel] = Thread(target=self.thread_read, args=[channel])
-            self.thread_read_instances[channel].daemon = True
-            self.thread_read_instances[channel].start()
+    def start_channel(self, channel):
+        self.queues[channel] = []
 
-            self.thread_write_instances[channel] = Thread(target=self.thread_write, args=[channel])
-            self.thread_write_instances[channel].daemon = True
-            self.thread_write_instances[channel].start()
+        self.ssh_stream[channel] = None
+        self.ssh_channel[channel] = None
+        self.connected[channel] = None
+        self.registered[channel] = None
+        self.connected_since[channel] = 0
+        self.was_connected_once[channel] = False
+        self.stop_on_empty_queue[channel] = False
+        self.channel_lock[channel] = Lock()
+        self.queue_lock[channel] = Lock()
+        self.in_connecting[channel] = False
+        self.channel_closed[channel] = False
 
-        while True:
-            # check if all was_connected_once is not-None (True or False)
-            all_set = all(x is not None for x in six.itervalues(self.registered))
+        self.thread_read_instances[channel] = Thread(target=self.thread_read, args=[channel])
+        self.thread_read_instances[channel].daemon = True
+        self.thread_read_instances[channel].start()
 
-            if all_set:
-                # When all True then success, if not then unsuccessful
-                self.online = all(six.itervalues(self.registered))
-
-                return self.online
-
-            time.sleep(0.1)
+        self.thread_write_instances[channel] = Thread(target=self.thread_write, args=[channel])
+        self.thread_write_instances[channel].daemon = True
+        self.thread_write_instances[channel].start()
 
     def on_connect(self, reconnect, channel):
         pass
@@ -567,6 +574,12 @@ class BackendClient:
 
         self.ssh_stream = {}
         self.online = False
+
+    def is_online(self):
+        """
+        Whether we are/were able to connect to Aetros server.
+        """
+        return self.online is not False
 
     def is_connected(self, channel):
         return channel in self.connected and self.connected[channel]

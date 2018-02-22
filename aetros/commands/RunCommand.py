@@ -292,7 +292,7 @@ class RunCommand:
 
             sys.stdout.write(" done.\n")
 
-            link = "%smodel/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
+            link = "%s/model/%s/job/%s" % (home_config['url'], job_backend.model_name, job_backend.job_id)
             sys.__stdout__.write(u"➤ Monitor job at %s\n" % (link))
 
         if parsed_args.local:

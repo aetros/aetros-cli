@@ -222,7 +222,6 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
     state['last_process'] = None
     all_done = False
     command_stats = None
-    files = job_backend.file_list()
 
     def clean():
         # clear working tree
@@ -297,7 +296,12 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
 
         def exec_command(index, command, job_command):
             write_command_sh(job_command)
-            print('%s $ %s' % ('/' + job.get_working_dir(), job_command.strip()))
+
+            working_dir = '/'
+            if job.get_working_dir():
+                working_dir = job.get_working_dir() + '/'
+
+            print('%s $ %s' % (working_dir, job_command.strip()))
             args = command
             logger.debug('$ ' + ' '.join([simplejson.dumps(a) for a in args]))
 
@@ -528,8 +532,6 @@ def docker_command_wrapper(logger, home_config, job_backend, volumes, cpus, memo
         # only supported on linux
         docker_command += ['--runtime', 'nvidia']
         docker_command += ['-e', 'NVIDIA_VISIBLE_DEVICES=' + (','.join(map(str,gpu_devices)))]
-        # support nvidia-docker1 as well
-        # docker_command += ['--device', '/dev/nvidia1']
 
     return docker_command
 
@@ -549,12 +551,24 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
         else:
             if image is None:
                 job_backend.fail("Image name missing, needed by `install` in aetros.yml")
-            dockerfile_content = 'FROM ' + image + '\nRUN '
+
+            dockerfile_content = ['FROM ' + image]
+
+            if 'install_files' in job_config:
+                if isinstance(job_config['install_files'], list):
+                    for path in job_config['install_files']:
+                        dockerfile_content.append('ADD %s %s' % (path, path))
+                elif job_config['install_files']:
+                    path = job_config['install_files']
+                    dockerfile_content.append('ADD %s %s' % (path, path))
 
             if isinstance(job_config['install'], list):
-                dockerfile_content += '\n RUN '.join(job_config['install'])
+                for run in job_config['install']:
+                    dockerfile_content.append('RUN %s' % (run,))
             else:
-                dockerfile_content += job_config['install']
+                dockerfile_content.append('RUN %s' % (job_config['install'],))
+
+            dockerfile_content = '\n'.join(dockerfile_content)
 
         dockerfile_content = '# CREATED BY AETROS because of "install" or "dockerfile" config in aetros.yml.\n' + dockerfile_content
 
@@ -592,7 +606,7 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
     if rebuild_image:
         docker_build += ['--no-cache']
 
-    docker_build += ['-t', image, '-f', dockerfile, '.', ]
+    docker_build += ['-t', image, '-f', dockerfile, job_backend.git.work_tree]
 
     job_backend.set_status('IMAGE BUILD')
     logger.info("Prepare docker image: $ " + (' '.join(docker_build)))
@@ -607,7 +621,11 @@ def docker_build_image(logger, home_config, job_backend, rebuild_image=False):
 
 def execute_command_stdout(command, input=None):
     p = subprocess.Popen(command, bufsize=1, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-    out, err = p.communicate(input)
+    try:
+        out, err = p.communicate(input)
+    except KeyboardInterrupt:
+        p.kill()
+        raise
 
     if p.returncode:
         sys.stderr.write(out)
@@ -619,13 +637,18 @@ def execute_command_stdout(command, input=None):
 
 def execute_command(**kwargs):
     p = subprocess.Popen(**kwargs)
-    wait_stdout = sys.stdout.attach(p.stdout)
-    wait_stderr = sys.stderr.attach(p.stderr)
 
-    p.wait()
+    try:
+        wait_stdout = sys.stdout.attach(p.stdout)
+        wait_stderr = sys.stderr.attach(p.stderr)
 
-    wait_stdout()
-    wait_stderr()
+        p.wait()
+
+        wait_stdout()
+        wait_stderr()
+    except KeyboardInterrupt:
+        p.kill()
+        raise
 
     return p
 

@@ -82,6 +82,9 @@ class GeneralLogger(object):
             current_line = b''
 
             def handle_line(buf):
+                if chunk == b'':
+                    return
+
                 if read_line and callable(read_line):
                     res = read_line(buf)
                     if res is False:
@@ -90,7 +93,7 @@ class GeneralLogger(object):
                     elif res is not None:
                         buf = res
                         if hasattr(buf, 'encode'):
-                            buf = buf.encode("utf-8", 'replace')
+                            buf = buf.encode('utf-8')
 
                 self.attach_last_messages[bid] += buf
 
@@ -99,7 +102,7 @@ class GeneralLogger(object):
 
                 self.write(buf)
 
-            flush_chars = [b'\n', b'\r']
+            flush_char = b'\n'
 
             while True:
                 try:
@@ -112,12 +115,14 @@ class GeneralLogger(object):
 
                     current_line += chunk
 
-                    for char in flush_chars:
-                        while char in current_line:
-                            pos = current_line.find(char)
-                            line = current_line[:pos+1]
-                            current_line = current_line[pos+1:]
-                            handle_line(line)
+                    while flush_char in current_line:
+                        pos = current_line.find(flush_char)
+                        line = current_line[:pos+1]
+                        current_line = current_line[pos+1:]
+                        handle_line(line)
+
+                    # todo, periodically flush by '\r' only (progress bars for example)
+                    # and make sure only necessary data is sent (by applying \r and \b control characters)
 
                 except (KeyboardInterrupt, SystemExit):
                     raise
