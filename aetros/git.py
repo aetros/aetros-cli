@@ -688,22 +688,23 @@ class Git:
 
         return Controller(self)
 
-    def add_file(self, path, content):
+    def add_file(self, git_path, content):
         """
         Add a new file as blob in the storage and add its tree entry into the index.
         
-        :param path: str
+        :param git_path: str
         :param content: str
         """
         blob_id = self.write_blob(content)
-        self.add_index('100644', blob_id, path)
+        self.add_index('100644', blob_id, git_path)
 
-    def add_file_path(self, path, work_tree, verbose=True):
+    def add_file_path(self, git_path, local_path):
+        with open(local_path, 'rb') as f:
+            self.add_file(git_path, f.read())
+
+    def add_file_path_in_work_tree(self, path, work_tree, verbose=True):
         """
         Add a new file as blob in the storage and add its tree entry into the index.
-
-        :param path: str
-        :param content: str
         """
         args = ['--work-tree', work_tree, 'add', '-f']
         if verbose:

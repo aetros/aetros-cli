@@ -282,7 +282,11 @@ def start_command(logger, job_backend, env_overwrite=None, volumes=None, cpus=1,
             f.close()
 
         def read_line(line):
-            handled, filtered_line, failed = extract_api_calls(line, job_backend.handle_stdout_api, logger=logger)
+            handled, filtered_line, failed = extract_api_calls(
+                line,
+                job_backend.handle_stdout_api,
+                print_traceback=True,
+                logger=logger)
 
             if is_debug():
                 for call in handled:
@@ -429,7 +433,7 @@ def upload_output_files(job_backend, files):
     for file in files:
         path = job_backend.git.work_tree + '/' + file
         if os.path.exists(path):
-            job_backend.git.add_file_path(file, job_backend.git.work_tree, verbose=True)
+            job_backend.git.add_file_path_in_work_tree(file, job_backend.git.work_tree, verbose=True)
         else:
             print("Warning: Job output file %s does not exist." % (file, ))
 

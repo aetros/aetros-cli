@@ -180,7 +180,7 @@ def extract_api_calls(line, callback, print_traceback=False, logger=None):
             raise
         except Exception as e:
             if print_traceback:
-                sys.__stderr__.write(traceback.format_exc())
+                sys.stderr.write(traceback.format_exc())
             else:
                 logger and logger.debug(traceback.format_exc())
             failed_calls.append({'line': line, 'exception': e})

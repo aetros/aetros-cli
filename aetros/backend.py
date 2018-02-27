@@ -1630,7 +1630,7 @@ class JobBackend:
                 if report:
                     print("Added job file: " + relative_path)
 
-                self.git.add_file_path(path, working_tree, verbose=False)
+                self.git.add_file_path_in_work_tree(path, working_tree, verbose=False)
 
                 return 1, os.path.getsize(path)
 
@@ -1702,29 +1702,63 @@ class JobBackend:
             self.git.commit_file('WORD2VEC', remote_path + name + '/metadata.tsv', labels)
             self.git.commit_file('WORD2VEC', remote_path + name + '/info.json', simplejson.dumps(info))
 
-    def add_embedding_path(self, x, dimensions, tensor, metadata=None, image_shape=None, image=None):
+    def add_embedding_path(self, x, dimensions, vectors_path, metadata=None, image_shape=None, image=None):
         """
         Adds a new embedding with optional metadata.
+        
+        Example how to generate vectors based on 2D numpy array:
 
-        Vectors is a floats64 bytes file, no separators sum(dimensions)*floats64 long.
+        # 4 vectors, each size of 3
+        vectors = [
+            [2.3, 4.0, 33],
+            [2.4, 4.2, 44],
+            [2.5, 3.9, 34],
+            [5.5, 200.2, 66]
+        ]
 
-        Metadata is a TSV file. If only one column long (=no tab separator per line), then there's no need for a header.
-        If you have more than one column, use the first line as header.
+        metadata = [
+            # header, only necessary when more then on column
+            # can be anything.
+            ['label', 'count'],
 
-        Metadata example:
+            # for each vector from above an entry.
+            ['red', '123'],
+            ['white', '143'],
+            ['yellow', '344'],
+            ['house', '24'],
+        ]
 
-        Label\tcount\n
+        numpy.array(vectors, dtype=numpy.float32).tofile('vectors.bytes')
+        numpy.savetxt('metadata.tsv', numpy.array(metadata), delimiter='\t', fmt='%s')
+
+        job.add_embedding_path([4, 3], 'vectors.bytes', 'metadata.tsv')
+
+        Metadata format example:
+
+        Label\tCount\n
         red\t4\n
         yellow\t6\n
 
+        :param x: The x axis of the insights. 
+        :param dimensions: 2D List of dimension, e.g [200, 20], means 200 vectors and each vector has size of 20.
+        
+        :param vectors_path: A path to a floats64 bytes file, no separators, sum(dimensions)*floats64 long.
+                       Example: If dimensions [200, 20] then the tensor file has 200*20 float32 bytes in it
+                        
+        :param metadata: A TSV file. If only one column long (=no tab separator per line), then there's no need for a header.
+                         If you have more than one column, use the first line as header.
+                       
+        :param image_shape: Size of the image of each vector.
+        :param image: Path to an image sprite.
+        :return: 
         """
-        if not os.path.exists(tensor):
-            raise Exception("Given embedding vectors file does not exist: " + tensor)
+        if not os.path.exists(vectors_path):
+            raise Exception("Given embedding vectors file does not exist: " + vectors_path)
 
         if metadata and not os.path.exists(metadata):
             raise Exception("Given embedding metadata file does not exist: " + metadata)
 
-        name = os.path.basename(tensor)
+        name = os.path.basename(vectors_path)
         self._ensure_insight(x)
         remote_path = 'aetros/job/insight/'+str(x)+'/embedding/'
 
@@ -1735,7 +1769,7 @@ class JobBackend:
         }
 
         with self.git.lock_write():
-            self.git.add_file_path(remote_path + name + '/tensor.bytes', tensor)
+            self.git.add_file_path(remote_path + name + '/tensor.bytes', vectors_path)
             self.git.add_file_path(remote_path + name + '/metadata.tsv', metadata)
             self.git.add_file(remote_path + name + '/info.json', simplejson.dumps(info))
 
@@ -1932,6 +1966,11 @@ class JobBackend:
         if action == 'add_embedding_word2vec':
             if validate_action(['x', 'path']):
                 self.add_embedding_word2vec(**data)
+                return True
+
+        if action == 'add_embedding_path':
+            if validate_action(['x', 'dimensions', 'vectors_path']):
+                self.add_embedding_path(**data)
                 return True
 
         if action == 'add_insight_image':
